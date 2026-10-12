@@ -24,8 +24,16 @@
   /* ---------- backend ---------- */
   async function call(body) {
     if (!CFG.BACKEND_URL || /PASTE_/.test(CFG.BACKEND_URL)) throw new Error('The app isn\'t connected yet (backend address missing).');
-    const res = await fetch(CFG.BACKEND_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) });
-    const out = await res.json();
+    let res;
+    try {
+      res = await fetch(CFG.BACKEND_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body), redirect: 'follow' });
+    } catch (e) {
+      const err = new Error(navigator.onLine ? 'Couldn\'t reach the Home Ground server.' : 'No signal.');
+      err.offline = !navigator.onLine; throw err;
+    }
+    let out;
+    try { out = await res.json(); }
+    catch (e) { const err = new Error('The Home Ground server sent back something unexpected (status ' + res.status + '). Please tell the office.'); err.fatal = true; throw err; }
     if (!out.ok) { const e = new Error(out.error || 'Something went wrong.'); e.fatal = true; throw e; }
     return out;
   }
@@ -138,7 +146,7 @@
         me = { hunter: out.hunter, pin, name: out.name, properties: out.properties, refreshed: Date.now() };
         save(me); showHome();
       } catch (e) {
-        showLogin(e.fatal ? e.message : 'No signal. The first sign-in needs a connection.');
+        showLogin(e.fatal ? e.message : e.offline ? 'No signal. The first sign-in needs a connection.' : e.message + ' Try again in a minute.');
       }
     };
   }
