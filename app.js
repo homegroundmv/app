@@ -166,6 +166,7 @@
     $app.innerHTML = header() +
       (note ? '<div class="note ok">' + note + '</div>' : '') +
       '<div id="outbox-status" class="status"></div>' +
+      '<div id="alerts"></div>' +
       '<button class="big" data-go="book">Book a Hunt<small>By 5 pm the day before. Required before every hunt.</small></button>' +
       '<button class="big" data-go="hunt">Report Your Hunt<small>Every outing, within 48 hours, even if you saw nothing.</small></button>' +
       '<button class="big alt" data-go="harvest">Report Your Harvest<small>One report for each deer, the day you take it.</small></button>' +
@@ -173,12 +174,13 @@
         ? '<button class="big" style="background:#8A2E1F" data-go="after">Finished tracking on ' + esc(me.track.property) + '<small>Tap when you\'re done, found or not.</small></button>'
         : '<button class="big alt" data-go="before">Tracking After Dark<small>Before you go in after dark. Needs signal: Home Ground is alerted at once.</small></button>') +
       '<button class="big alt" data-go="stand">Stand &amp; Camera Log<small>Every placement, move or removal.</small></button>' +
+      '<button class="big" style="background:#8A5A00" data-go="help">Need a hand?<small>Ask other Island hunters to help track or drag a deer.</small></button>' +
       '<h2>Your properties</h2><div class="card">' +
       (me.properties && me.properties.length
         ? me.properties.map(p => '<div>' + esc(p.code) + (p.town ? ' · ' + esc(p.town) : '') + '</div>').join('')
         : '<span class="status">None assigned yet. Home Ground will email you when you have one.</span>') +
       '</div><p class="center"><button class="plain" id="out">Sign out</button></p>';
-    const screens = { book: showBook, hunt: showHunt, harvest: showHarvest, before: showBefore, after: showAfter, stand: showStand };
+    const screens = { book: showBook, hunt: showHunt, harvest: showHarvest, before: showBefore, after: showAfter, stand: showStand, help: showHelp };
     $app.querySelectorAll('[data-go]').forEach(b => b.onclick = () => screens[b.dataset.go]());
     document.getElementById('out').onclick = async () => {
       const waiting = (await outbox('all')).length;
@@ -186,7 +188,7 @@
       for (const i of await outbox('all')) await outbox('delete', i.clientId);
       me = null; save(null); showLogin();
     };
-    refreshStatus(); flush();
+    refreshStatus(); flush(); renderAlerts(); checkAlerts();
   }
 
   function propertySelect() {
@@ -207,6 +209,7 @@
     $app.innerHTML = header() + '<h1>Book a Hunt</h1>' +
       '<div class="note warn">Book by 5 pm the day before. You\'re not booked until Home Ground emails to confirm. No confirmation, no hunt.</div>' +
       propertySelect() +
+      '<div id="cal"></div>' +
       '<label for="day">Date of hunt</label><input id="day" type="date" min="' + min + '" value="' + min + '">' +
       '<label for="time">Time of hunt</label><select id="time"><option value="">Choose…</option>' +
       '<option>AM</option><option>PM</option><option>All day</option></select>' +
@@ -215,6 +218,8 @@
       '<div id="err" class="err"></div><button class="submit" id="send">Send booking</button>' +
       '<p class="center"><button class="plain" id="back">Back</button></p>';
     document.getElementById('back').onclick = () => showHome();
+    const propSel = document.getElementById('prop');
+    if (propSel) { propSel.onchange = () => loadCalendar(propSel.value); loadCalendar(propSel.value); }
     document.getElementById('send').onclick = async () => {
       const f = id => document.getElementById(id);
       const prop = f('prop') ? f('prop').value : '';
@@ -223,6 +228,10 @@
       if (!f('day').value) err.push('Pick a date.');
       else if (f('day').value < earliestBookable()) err.push('That date is past the 5 pm cutoff. Pick a later day.');
       if (!f('time').value) err.push('Choose a time.');
+      else if (prop && f('day').value) {
+        const why = slotProblem(prop, f('day').value, f('time').value);
+        if (why) err.push(why);
+      }
       if (!f('agree').checked) err.push('Tick the box to confirm you understand.');
       if (err.length) { f('err').innerHTML = err.map(esc).join('<br>'); return; }
       await queue('Booking for ' + usDate(f('day').value), {
@@ -233,6 +242,137 @@
         '. Watch your email for Home Ground\'s confirmation.' + (navigator.onLine ? '' : ' It will send as soon as you have signal.'));
     };
   }
+
+  /* ---------- property calendar ---------- */
+  const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const overlap = (a, b) => a === 'All day' || b === 'All day' || a === b;
+  function calFor(prop) { return (me.cal || {})[prop] || null; }
+  async function loadCalendar(prop) {
+    const box = document.getElementById('cal');
+    if (!box) return;
+    if (!prop) { box.innerHTML = ''; return; }
+    drawCalendar(prop);
+    if (!navigator.onLine) return;
+    try {
+      const out = await call({ action: 'calendar', hunter: me.hunter, pin: me.pin, property: prop });
+      me.cal = me.cal || {}; me.cal[prop] = out; save(me);
+      const sel = document.getElementById('prop');
+      if (sel && sel.value === prop) drawCalendar(prop);
+    } catch (e) { if (!calFor(prop)) box.innerHTML = '<p class="status">Calendar not available right now. You can still book.</p>'; }
+  }
+  function slotState(c, iso, slot) {
+    const d = new Date(iso + 'T12:00:00');
+    const b = c.blackouts.find(x => iso >= x.from && iso <= x.to && (!x.days.length || x.days.indexOf(d.getDay()) >= 0) && overlap(x.slot, slot));
+    if (b) return { kind: 'blocked', label: 'Paused', note: b.note };
+    const taken = c.bookings.filter(x => x.date === iso && overlap(x.slot, slot));
+    if (taken.some(x => x.mine)) return { kind: 'mine', label: 'You' };
+    if (taken.length >= c.max) return { kind: 'full', label: 'Full · ' + taken.map(x => x.hunter).join(', ') };
+    return { kind: 'open', label: taken.length ? taken.length + ' of ' + c.max + ' · ' + taken.map(x => x.hunter).join(', ') : 'Open' };
+  }
+  function slotProblem(prop, iso, time) {
+    const c = calFor(prop);
+    if (!c) return '';
+    const slots = time === 'All day' ? ['AM', 'PM'] : [time];
+    for (const sl of slots) {
+      const st = slotState(c, iso, sl);
+      if (st.kind === 'blocked') return 'The landowner has paused hunting then' + (st.note ? ' (' + st.note + ')' : '') + '. Pick another time.';
+      if (st.kind === 'full') return prop + ' is full then. Pick another time.';
+    }
+    return '';
+  }
+  function drawCalendar(prop) {
+    const box = document.getElementById('cal');
+    const c = calFor(prop);
+    if (!box) return;
+    if (!c) { box.innerHTML = '<p class="status">Loading the calendar for ' + esc(prop) + '…</p>'; return; }
+    const style = { open: 'background:#E7F1E8;color:#24402A', mine: 'background:#32553A;color:#fff', full: 'background:#FCE8E6;color:#A12A1F', blocked: 'background:#EEE;color:#777;text-decoration:line-through' };
+    const start = new Date(earliestBookable() + 'T12:00:00');
+    let rows = '';
+    for (let i = 0; i < 14; i++) {
+      const d = new Date(start); d.setDate(d.getDate() + i);
+      const iso = isoDate(d);
+      const cell = sl => { const st = slotState(c, iso, sl); const tap = st.kind === 'open';
+        return '<button type="button" ' + (tap ? 'data-pick="' + iso + '|' + sl + '"' : 'disabled') + ' style="flex:1;border:0;border-radius:8px;padding:8px 6px;font-size:13px;text-align:left;' + style[st.kind] + '"><b>' + sl + '</b> ' + esc(st.label) + '</button>'; };
+      rows += '<div style="display:flex;gap:6px;align-items:center;margin:4px 0"><div style="width:72px;font-size:14px;font-weight:600">' + DOW[d.getDay()] + ' ' + (d.getMonth() + 1) + '/' + d.getDate() + '</div>' + cell('AM') + cell('PM') + '</div>';
+    }
+    box.innerHTML = '<div class="card"><b>' + esc(prop) + ' · next two weeks</b><div class="status">Up to ' + c.max + ' hunter' + (c.max > 1 ? 's' : '') +
+      ' at a time. Tap an open slot to pick it. Paused = the landowner has asked for no hunting.' +
+      (navigator.onLine ? '' : ' Shown as last seen; no signal.') + '</div>' + rows + '</div>';
+    box.querySelectorAll('[data-pick]').forEach(b => b.onclick = () => {
+      const [iso, sl] = b.dataset.pick.split('|');
+      document.getElementById('day').value = iso; document.getElementById('time').value = sl;
+      document.getElementById('day').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  }
+
+  /* ---------- help requests and alerts ---------- */
+  function showHelp() {
+    $app.innerHTML = header() + '<h1>Need a hand?</h1>' +
+      '<div class="note warn">This emails every active Island hunter at once and shows an alert in their app. Only your property code and town are shared; helpers call you to meet up.</div>' +
+      propertySelect() +
+      '<label>What do you need?</label>' +
+      ['Tracking', 'Dragging', 'Tracking and dragging'].map((x, i) => '<label class="choice"><input type="radio" name="needs" value="' + x + '"' + (i === 1 ? ' checked' : '') + '> ' + x + '</label>').join('') +
+      '<label for="hphone">Your phone</label><input id="hphone" type="tel" value="' + esc(me.phone || '') + '">' +
+      '<label for="hnote">Anything helpers should know <span class="hint">Optional. No addresses.</span></label><textarea id="hnote" maxlength="300" placeholder="e.g. Big doe, about 200 yards in, meet at the road"></textarea>' +
+      '<div id="err" class="err"></div><button class="submit" id="send">Send for help</button>' +
+      '<p class="center"><button class="plain" id="back">Back</button></p>';
+    document.getElementById('back').onclick = () => showHome();
+    document.getElementById('send').onclick = async () => {
+      const f = id => document.getElementById(id), btn = f('send');
+      const prop = f('prop') ? f('prop').value : '';
+      const needs = (document.querySelector('input[name=needs]:checked') || {}).value;
+      if (!prop) { f('err').textContent = 'Choose the property.'; return; }
+      if (!f('hphone').value.trim()) { f('err').textContent = 'Add your phone so helpers can reach you.'; return; }
+      btn.disabled = true; btn.textContent = 'Sending…';
+      try {
+        const out = await call({ action: 'help', hunter: me.hunter, pin: me.pin, clientId: uid(),
+          fields: { property: prop, needs, phone: f('hphone').value.trim(), note: f('hnote').value.trim() } });
+        showHome('Help request sent to ' + (out.sentTo || 0) + ' hunter' + (out.sentTo === 1 ? '' : 's') + '. Keep your phone on. Mark it found when someone\'s on the way.');
+      } catch (e) {
+        btn.disabled = false; btn.textContent = 'Send for help';
+        f('err').textContent = e.offline ? 'No signal, so it couldn\'t send. Call or text a hunter you know, or the office at ' + CFG.OFFICE_PHONE + '.' : e.message;
+      }
+    };
+  }
+
+  let alertsCache = [];
+  function seenAlerts() { try { return JSON.parse(localStorage.getItem('hg-seen-alerts') || '[]'); } catch (e) { return []; } }
+  async function checkAlerts() {
+    if (!me || !navigator.onLine || document.hidden) return;
+    try {
+      const out = await call({ action: 'alerts', hunter: me.hunter, pin: me.pin });
+      alertsCache = out.alerts || [];
+      const seen = seenAlerts(), fresh = alertsCache.filter(a => !a.mine && seen.indexOf(a.id) < 0);
+      if (fresh.length) {
+        if (navigator.vibrate) navigator.vibrate([300, 150, 300]);
+        if (window.Notification && Notification.permission === 'granted' && navigator.serviceWorker) {
+          const reg = await navigator.serviceWorker.getRegistration();
+          fresh.forEach(a => reg && reg.showNotification('Hunter needs help: ' + a.needs.toLowerCase(), { body: a.name + ' near ' + (a.town || a.property) + '. Call ' + a.phone + '.', icon: 'icon-192.png', tag: a.id }));
+        }
+        try { localStorage.setItem('hg-seen-alerts', JSON.stringify(seen.concat(fresh.map(a => a.id)).slice(-50))); } catch (e) { /* ignore */ }
+      }
+      renderAlerts();
+    } catch (e) { /* quiet: alerts are a bonus, email is the backup */ }
+  }
+  function renderAlerts() {
+    const box = document.getElementById('alerts');
+    if (!box) return;
+    const ask = window.Notification && Notification.permission === 'default'
+      ? '<p class="status"><button class="plain" id="notif">Turn on alerts on this phone</button></p>' : '';
+    box.innerHTML = alertsCache.map(a => a.mine
+      ? '<div class="note warn"><b>Your help request is out</b> (' + esc(a.needs.toLowerCase()) + ', ' + esc(a.property) + '). <button class="plain" data-done="' + esc(a.id) + '">Help found, close it</button></div>'
+      : '<div class="note bad"><b>' + esc(a.name) + ' needs help ' + esc(a.needs.toLowerCase()) + '</b> near ' + esc(a.town || a.property) +
+        (a.note ? '<br>' + esc(a.note) : '') + '<br><a href="tel:' + esc(a.phone) + '">Call ' + esc(a.phone) + '</a> · <a href="sms:' + esc(a.phone) + '">Text</a></div>').join('') + ask;
+    box.querySelectorAll('[data-done]').forEach(b => b.onclick = async () => {
+      b.disabled = true;
+      try { await call({ action: 'helpdone', hunter: me.hunter, pin: me.pin, requestId: b.dataset.done }); alertsCache = alertsCache.filter(a => a.id !== b.dataset.done); renderAlerts(); }
+      catch (e) { b.disabled = false; b.textContent = 'Couldn\'t close it. Try again.'; }
+    });
+    const n = document.getElementById('notif');
+    if (n) n.onclick = () => Notification.requestPermission().then(renderAlerts);
+  }
+  setInterval(checkAlerts, 60000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkAlerts(); });
 
   function showHunt() {
     const outcomes = ['Took a deer', 'Hit a deer but couldn\'t recover it', 'Saw deer, but no shot', 'Saw no deer'];
