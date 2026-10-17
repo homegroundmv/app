@@ -252,37 +252,94 @@
     };
   }
 
-  function showSettings() {
+  function showSettings(done) {
     stopThread();
+    window.scrollTo(0, 0);
     const h = homeCache;
     const s = h ? h.settings : null;
     const owner = me.role === 'owner';
     const yn = v => v ? 'Yes' : 'No';
-    $app.innerHTML = header() + '<h1>Settings</h1>' +
+    const week = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    const picked = s && s.days ? s.days.split(/,\s*/) : [];
+    const sw = (id, label, hint, on, enabled) => '<label class="switch"><span>' + label + (hint ? '<br><span class="status">' + hint + '</span>' : '') +
+      '</span><input type="checkbox" id="' + id + '"' + (on ? ' checked' : '') + (enabled ? '' : ' disabled') + '></label>';
+    $app.innerHTML = header() + '<h1>Settings</h1>' + (done ? '<div class="note ok">' + esc(done) + '</div>' : '') +
       (s ? '<h2>What your hunters see</h2><div class="card">' +
-        '<label class="switch"><span>Show my first name to my hunters<br><span class="status">Now they see: ' + esc(s.label) + '</span></span><input type="checkbox" id="showName"' + (s.showName ? ' checked' : '') + (owner ? '' : ' disabled') + '></label>' +
-        '<label class="switch"><span>Let my hunters message me<br><span class="status">You can always message them.</span></span><input type="checkbox" id="allowMessages"' + (s.allowMessages ? ' checked' : '') + (owner ? '' : ' disabled') + '></label>' +
-        (owner ? '' : '<p class="status">Only the owner can change these.</p>') + '<div id="set-msg" class="status"></div></div>' +
-        '<h2>Notices you asked for</h2><div class="card">' +
-        '<div class="feed-item"><b>When a hunter is booked, and the morning of the hunt:</b> ' + yn(s.hunt) + (s.hunt && s.days ? ' (' + esc(s.days) + ')' : '') + '</div>' +
-        '<div class="feed-item"><b>When a hunter goes in after dark to recover a deer:</b> ' + yn(s.dark) + '</div>' +
-        '<div class="feed-item"><b>When a deer is harvested:</b> ' + yn(s.harvest) + '</div>' +
-        '<div class="feed-item"><b>Notices are also emailed to:</b> ' + (s.emails.length ? esc(s.emails.join(', ')) : 'nobody') + '</div>' +
-        '<p class="status">These come from your permission form. To change them, use the "UPDATE MY PREFERENCES" form on <a href="' + esc(CFG.WEBSITE) + '">' + esc(CFG.WEBSITE.replace(/^https?:\/\//, '')) + '</a> or email ' + esc(CFG.OFFICE_EMAIL) + '.</p></div>'
+        sw('showName', 'Show my first name to my hunters', 'Now they see: ' + esc(s.label), s.showName, owner) +
+        sw('allowMessages', 'Let my hunters message me', 'You can always message them.', s.allowMessages, owner) +
+        '<div id="set-msg" class="status"></div></div>' +
+        '<h2>Your notices</h2><div class="card">' +
+        sw('n-hunt', 'When a hunter is booked, and the morning of the hunt', '', s.hunt, owner) +
+        '<div id="n-days"' + (s.hunt ? '' : ' hidden') + '><p class="status" style="margin:4px 0">Only on these days (leave all unticked for every day):</p>' +
+        week.map(d => '<label class="choice"><input type="checkbox" name="nd" value="' + d + '"' + (picked.indexOf(d) >= 0 ? ' checked' : '') + (owner ? '' : ' disabled') + '> ' + d + '</label>').join('') + '</div>' +
+        sw('n-dark', 'When a hunter goes in after dark to recover a deer', '', s.dark, owner) +
+        sw('n-harvest', 'When a deer is harvested', '', s.harvest, owner) +
+        '<label for="n-emails">Also email notices to <span class="hint">Separate addresses with commas. Leave blank for app only.</span></label>' +
+        '<input id="n-emails" type="text" inputmode="email" value="' + esc(s.emails.join(', ')) + '"' + (owner ? '' : ' disabled') + '>' +
+        (owner ? '<div id="n-err" class="err"></div><button class="submit" id="n-save">Save notices</button>' : '<p class="status">Only the owner can change these.</p>') + '</div>' +
+        '<h2>Your property details</h2><div class="card"><p class="status" style="margin-top:0">Cameras, restrictions, parking and access, your caretaker, your contact details and the rest of your permission form.</p>' +
+        '<button class="big alt" id="details-btn" style="margin-bottom:0">Update property details<small>Joe confirms each change with you before it takes effect.</small></button></div>'
         : '<div class="note warn">Settings will show when you have signal.</div>') +
       '<p class="center"><button class="plain" id="back">Back</button></p>';
     document.getElementById('back').onclick = showHome;
-    if (!s || !owner) return;
+    if (!s) return;
+    document.getElementById('details-btn').onclick = showDetails;
+    if (!owner) return;
     ['showName', 'allowMessages'].forEach(id => {
       document.getElementById(id).onchange = async (ev) => {
         const box = document.getElementById('set-msg'); box.textContent = 'Saving…';
-        try {
-          const out = await call({ action: 'settings', [id]: ev.target.checked });
-          homeCache = out; keep('hg-lo-home', out); showSettings();
-          document.getElementById('set-msg').textContent = 'Saved.';
-        } catch (e) { ev.target.checked = !ev.target.checked; box.textContent = e.offline ? 'No signal. Not saved.' : e.message; }
+        try { const out = await call({ action: 'settings', [id]: ev.target.checked }); homeCache = out; keep('hg-lo-home', out); showSettings('Saved.'); }
+        catch (e) { ev.target.checked = !ev.target.checked; box.textContent = e.offline ? 'No signal. Not saved.' : e.message; }
       };
     });
+    document.getElementById('n-hunt').onchange = e => { document.getElementById('n-days').hidden = !e.target.checked; };
+    document.getElementById('n-save').onclick = async () => {
+      const b = document.getElementById('n-save'), err = document.getElementById('n-err');
+      b.disabled = true; b.textContent = 'Saving…'; err.textContent = '';
+      try {
+        const out = await call({ action: 'notices', hunt: document.getElementById('n-hunt').checked, dark: document.getElementById('n-dark').checked,
+          harvest: document.getElementById('n-harvest').checked, emails: document.getElementById('n-emails').value,
+          days: [...document.querySelectorAll('input[name=nd]:checked')].map(x => x.value) });
+        homeCache = out; keep('hg-lo-home', out); showSettings('Your notices are saved and take effect now.');
+      } catch (e) { b.disabled = false; b.textContent = 'Save notices'; err.textContent = e.offline ? 'No signal. Not saved.' : e.message; }
+    };
+  }
+
+  function showDetails() {
+    stopThread();
+    window.scrollTo(0, 0);
+    const sel = (id, label, opts) => '<label for="' + id + '">' + label + '</label><select id="' + id + '"><option>No change</option>' + opts.map(o => '<option>' + esc(o) + '</option>').join('') + '</select>';
+    const txt = (id, label, hint) => '<label for="' + id + '">' + label + (hint ? ' <span class="hint">' + hint + '</span>' : '') + '</label><input id="' + id + '" type="text" placeholder="No change">';
+    $app.innerHTML = header() + '<h1>Update property details</h1>' +
+      '<p class="status">Fill in only what\'s changing and leave the rest. Joe will confirm each change with you, update your property checklist and tell your hunters before it takes effect. To pause hunting, use Pause hunting on the home screen instead.</p>' +
+      '<h2>Hunting on your property</h2><div class="card">' +
+      sel('cameras', 'Game cameras', ['Yes, anywhere on the property', 'Yes, after I approve the location', 'No cameras']) +
+      txt('restrictions', 'Restrictions', 'Areas to avoid, times, methods allowed') +
+      txt('parking', 'Hunter parking and access', 'Please give gate codes by phone, not here.') +
+      sel('occupied', 'Will your home be occupied during hunting season?', ['Yes', 'No', 'Varies']) +
+      txt('deerWhere', 'Where you most often see deer, and when') +
+      sel('tribal', 'Wampanoag Tribe members hunting outside the regular seasons', ['Yes, year-round', 'Yes, except June, July and August', 'No']) +
+      txt('species', 'Game species allowed') + '</div>' +
+      '<h2>Your caretaker</h2><div class="card">' +
+      txt('careName', 'Caretaker name') + txt('carePhone', 'Caretaker phone') + txt('careEmail', 'Caretaker email') +
+      sel('careOk', 'May we contact your caretaker?', ['Yes', 'No']) + '</div>' +
+      '<h2>How to reach you</h2><div class="card">' +
+      txt('phone', 'Your phone') + txt('email', 'Your email') +
+      sel('best', 'Best way to reach you', ['Text message', 'Phone call', 'Email']) +
+      txt('textTimes', 'When it\'s OK to text you') + txt('callTimes', 'When it\'s OK to call you') + '</div>' +
+      '<label for="other">Anything else?</label><textarea id="other" maxlength="500" placeholder="No change"></textarea>' +
+      '<div id="err" class="err"></div><button class="submit" id="go">Send to Home Ground</button>' +
+      '<p class="center"><button class="plain" id="back">Back</button></p>';
+    document.getElementById('back').onclick = () => showSettings();
+    document.getElementById('go').onclick = async () => {
+      const ids = ['cameras', 'restrictions', 'parking', 'occupied', 'deerWhere', 'tribal', 'species', 'careName', 'carePhone', 'careEmail', 'careOk', 'phone', 'email', 'best', 'textTimes', 'callTimes', 'other'];
+      const fields = {}; ids.forEach(id => { const v = document.getElementById(id).value.trim(); if (v && v !== 'No change') fields[id] = v; });
+      const err = document.getElementById('err'), b = document.getElementById('go');
+      if (!Object.keys(fields).length) { err.textContent = 'Nothing to send: fill in only what\'s changing.'; return; }
+      b.disabled = true; b.textContent = 'Sending…';
+      try { await call({ action: 'details', fields }); showSettings('Sent. Joe will confirm the changes with you before they take effect.'); }
+      catch (e) { b.disabled = false; b.textContent = 'Send to Home Ground'; err.textContent = e.offline ? 'No signal. Nothing was sent.' : e.message; }
+    };
   }
 
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

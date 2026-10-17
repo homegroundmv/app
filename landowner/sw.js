@@ -1,6 +1,6 @@
 // Home Ground landowner app — keeps the app shell available with no signal.
 // Bump VERSION whenever any landowner app file changes so phones pick up the new copy.
-const VERSION = 'hg-landowner-v2';
+const VERSION = 'hg-landowner-v3';
 const ICON = '../icon-192.png';
 const SHELL = ['./', 'index.html', 'app.js', 'config.js', 'manifest.webmanifest', '../push.js', '../logo.png', '../icon-192.png'];
 
