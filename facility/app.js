@@ -38,7 +38,7 @@
   st.home = st.home || {};
   function save() { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { /* keep in memory */ } }
   save();
-  const S = () => st.home.settings || { coolerCap: 30, coolerAlert: 80, startBy: 72, maxHold: 120, maxAtOnce: 6, slots: [], pieceRate: 125, minWage: 15, pkgSize: 2, fatDonated: 10, fatPrivate: 10, pantries: [], helpHours: 4 };
+  const S = () => st.home.settings || { coolerCap: 30, coolerAlert: 80, startBy: 72, maxHold: 120, maxAtOnce: 6, slots: [], pieceRate: 125, minWage: 15, pkgSize: 2, fatDonated: 10, fatPrivate: 10, privatePrice: 250, porkAddOn: 20, porkInStock: true, pantries: [], helpHours: 4 };
   const isMgr = () => !!(st.staff && st.staff.manager);
 
   /* ---------- backend ---------- */
@@ -122,7 +122,7 @@
       const f = x.fields, b = band(f.band);
       if (!b) return;
       const d = by(b);
-      if (x.action === 'intake' && !d) list.push({ Band: b, Intake: x.at, 'Hunter number': f.hunterNumber, 'Hunter name': f.hunterName, 'MassWildlife confirmation': f.confirmation, Deer: f.deer, Type: f.type, Status: 'Hanging', pending: true });
+      if (x.action === 'intake' && !d) list.push({ Band: b, Intake: x.at, 'Hunter number': f.hunterNumber, 'Hunter name': f.hunterName, 'MassWildlife confirmation': f.confirmation, Deer: f.deer, Type: f.type, 'Pork fat added': f.porkFat ? 'Yes' : (f.type === 'Donated' ? 'Yes' : 'No'), Status: 'Hanging', pending: true });
       if (!d) return;
       d.pending = true;
       if (x.action === 'start') { d.Status = 'Processing'; d['Processing started'] = x.at; d['Processor number'] = f.processor || st.staff.number; d.Butcher = f.processorName || st.staff.name; d['Carcass weight (lb)'] = f.weight; }
@@ -272,6 +272,7 @@
       return '<div class="card' + cls + (d.Type === 'Donated' ? ' donated' : '') + '" data-band="' + esc(d.Band) + '">' +
         '<div class="deer"><div><span class="band">' + esc(d.Band) + '</span> ' +
         '<span class="tag ' + (d.Type === 'Donated' ? 'don">DONATED' : 'prv">PRIVATE') + '</span>' + (d['DDP deer'] === 'Yes' ? '<span class="tag">DDP</span>' : '') +
+        (d.Type !== 'Donated' && d['Pork fat added'] === 'Yes' ? '<span class="tag">+ PORK FAT</span>' : '') +
         (d.pending ? '<span class="pill wait">not sent yet</span>' : '') +
         '<div class="status">' + (dot ? '<span class="dot" style="background:' + dot[2] + '"></span>' + dot[1] + ' dot · ' : '') +
         'in ' + esc(d.Intake) + ' · ' + esc(d.Deer || '') + ' · ' + esc(d['Hunter number'] || d['Hunter name'] || '') +
@@ -300,6 +301,7 @@
   function act(kind, d, box) {
     if (kind === 'print') return printBand(d);
     const s = S();
+    const fatPct = d.Type === 'Donated' ? s.fatDonated : (d['Pork fat added'] === 'Yes' ? s.fatPrivate : 0), fatOn = fatPct > 0, fat = fatPct / 100;
     const v = id => (document.getElementById(id) || {}).value || '';
     const forms = {
       start: () => '<div class="note warn" style="font-size:17px">Tag confirmation number: <b>' + esc(d['MassWildlife confirmation'] || 'none recorded') + '</b></div>' +
@@ -313,25 +315,28 @@
         '<div><label>Intact cuts total (lb)</label><input id="f3" type="number" inputmode="decimal" min="0" step="0.1" value="0"></div>' +
         '<div><label>Trim discarded (lb) <span class="hint">optional</span></label><input id="f4" type="number" inputmode="decimal" min="0" step="0.1"></div></div>' +
         '<div class="calc" id="calc"></div>' +
-        '<label class="choice"><input id="f5" type="checkbox"> Allergen labels on every package (alpha-gal; ground also says it contains pork)</label>' +
+        '<div class="note ' + (fatOn ? 'warn">Grind with <b>' + esc(fatPct) + '% pork fat</b>.' : 'ok">All-venison grind: <b>no pork fat</b>.') + '</div>' +
+        (fatOn && d.Type !== 'Donated' ? '<label class="choice"><input id="f7" type="checkbox"> Out of pork fat: grind all venison and take the $' + esc(s.porkAddOn || 20) + ' off the hunter\'s price</label>' : '') +
+        '<label class="choice"><input id="f5" type="checkbox"> Allergen labels on every package (alpha-gal)' + (fatOn ? '; ground also says "Contains pork"' : '') + '</label>' +
         '<label class="choice"><input id="f6" type="checkbox"> Knives, hooks, luggers and grinder sanitized after this deer</label>',
       release: () => '<label>Released to</label><select id="f1"><option value="">Choose…</option><option>Hunter pickup</option>' +
         (s.pantries || []).map(p => '<option>' + esc(p) + '</option>').join('') + '<option value="other">Other…</option></select>' +
         '<input id="f3" type="text" placeholder="Who?" hidden style="margin-top:8px">' +
-        '<label>Pounds out</label><input id="f2" type="number" inputmode="decimal" min="0" value="' + esc(d['Pounds packaged'] || '') + '">',
+        '<label>Pounds out</label><input id="f2" type="number" inputmode="decimal" min="0" value="' + esc(d['Pounds packaged'] || '') + '">' +
+        (d['Hunter price ($)'] ? '<div class="note warn">Hunter pickup: collect <b>$' + esc(d['Hunter price ($)']) + '</b>' + (d['Pork fat added'] === 'Yes' ? ' (includes the pork fat add-on)' : '') + '.</div>' : ''),
     };
     box.innerHTML = forms[kind]() + '<div class="err" id="ferr"></div><button class="btn" id="fok" style="margin-top:12px">Save</button> <button class="btn ghost" id="fx">Cancel</button>';
     if (kind === 'release') document.getElementById('f1').onchange = e => { document.getElementById('f3').hidden = e.target.value !== 'other'; };
-    const fat = (d.Type === 'Donated' ? s.fatDonated : s.fatPrivate) / 100;
     const calc = () => {
+      const drop = !!(document.getElementById('f7') || {}).checked, fr = drop ? 0 : fat;
       const pk = Math.round(num(v('f1'))), il = num(v('f3')), groundLb = pk * s.pkgSize;
-      const ven = r1(groundLb * (1 - fat)), pork = r1(groundLb * fat), total = r1(groundLb + il), carcass = num(d['Carcass weight (lb)']);
+      const ven = r1(groundLb * (1 - fr)), pork = r1(groundLb * fr), total = r1(groundLb + il), carcass = num(d['Carcass weight (lb)']);
       const el = document.getElementById('calc');
       if (el) el.innerHTML = 'Ground: <b>' + fmt(groundLb) + ' lb</b> (' + fmt(ven) + ' lb venison + ' + fmt(pork) + ' lb pork fat) · Intact: <b>' + fmt(il) + ' lb</b><br>' +
         'Total packaged: <b>' + fmt(total) + ' lb</b>' + (carcass ? ' · Venison yield: <b>' + Math.round((ven + il) / carcass * 100) + '%</b> of ' + fmt(carcass) + ' lb carcass' : '');
       return { pk, il, total };
     };
-    if (kind === 'finish') { ['f1', 'f3'].forEach(id => { document.getElementById(id).oninput = calc; }); calc(); }
+    if (kind === 'finish') { ['f1', 'f3'].forEach(id => { document.getElementById(id).oninput = calc; }); const f7 = document.getElementById('f7'); if (f7) f7.onchange = calc; calc(); }
     document.getElementById('fx').onclick = () => { box.innerHTML = ''; };
     document.getElementById('fok').onclick = () => {
       const err = m => { document.getElementById('ferr').textContent = m; };
@@ -348,7 +353,7 @@
         if (ip && !(c.il > 0)) return err('Weigh the intact cuts and enter the total.');
         if (!document.getElementById('f5').checked) return err('Allergen labels must go on every package before it leaves the table.');
         if (!document.getElementById('f6').checked) return err('Sanitize knives, hooks, luggers and the grinder before the next deer, then tick the box.');
-        queue('finish', { band: d.Band, groundPackages: c.pk, intactPackages: ip, intactLb: c.il, trimLb: v('f4'), total: c.total, allergen: true, sanitized: true }, 'Finish ' + d.Band);
+        queue('finish', { band: d.Band, groundPackages: c.pk, intactPackages: ip, intactLb: c.il, trimLb: v('f4'), total: c.total, allergen: true, sanitized: true, noPork: !!(document.getElementById('f7') || {}).checked }, 'Finish ' + d.Band);
       }
       if (kind === 'release') {
         const to = v('f1') === 'other' ? v('f3').trim() : v('f1');
@@ -371,7 +376,9 @@
       '<label for="band">Field band number <span class="hint">On the hock. No band? Use a new one from the box.</span></label><input id="band" type="text" autocapitalize="characters">' +
       '<label>Donated or private?</label>' +
       '<label class="choice"><input type="radio" name="type" value="Donated"> <span><b>Donated</b> (Share the Harvest). TFMV pays the hunter $' + esc(s.payDoe || 150) + ' a doe, $' + esc(s.payBuck || 100) + ' a buck.</span></label>' +
-      '<label class="choice"><input type="radio" name="type" value="Private"> <span><b>Private</b>: processed for the hunter.</span></label>' +
+      '<label class="choice"><input type="radio" name="type" value="Private"> <span><b>Private</b>: processed for the hunter, $' + esc(s.privatePrice || 250) + '.</span></label>' +
+      (s.porkInStock === false ? '<p class="status" id="porkbox" hidden>Pork fat add-on: not available right now. The grind will be all venison.</p>'
+        : '<label class="choice" id="porkbox" hidden><input id="pork" type="checkbox"> <span>Add pork fat to the ground (' + esc(s.fatPrivate || 10) + '%), <b>+$' + esc(s.porkAddOn || 20) + '</b>. Local-farm pork fat, as available. Without it, the grind is all venison.</span></label>') +
       '<label for="deer">Deer</label><select id="deer"><option value="">Choose…</option><option>Doe</option><option>Button buck</option><option>Antlered buck</option></select>' +
       '<div class="grid2"><div><label for="hn">Hunter number <span class="hint">if enrolled</span></label><input id="hn" type="text" autocapitalize="characters" placeholder="H-001"></div>' +
       '<div><label for="nm">Hunter name</label><input id="nm" type="text"></div>' +
@@ -396,6 +403,7 @@
       return h;
     };
     ['sd', 'stm'].forEach(id => { document.getElementById(id).onchange = ageNote; });
+    document.querySelectorAll('input[name=type]').forEach(r => r.onchange = () => { document.getElementById('porkbox').hidden = r.value !== 'Private' || !r.checked; });
     const err = m => { document.getElementById('err').textContent = m; };
     document.getElementById('save').onclick = () => {
       const type = (document.querySelector('input[name=type]:checked') || {}).value;
@@ -414,7 +422,8 @@
       if (!document.getElementById('sk').checked) return err('Deer are skinned at the station before they hang. Tick the box once it\'s done.');
       if (type === 'Private' && coolerCount() >= S().coolerCap) return err('The cooler is full. Hold private deer until there\'s room.');
       const f = { band: b, type, deer: v('deer'), hunterNumber: v('hn'), hunterName: v('nm'), hunterPhone: v('ph'), confirmation: v('cf'),
-        shotAt: stamp(t), dressed4h: document.getElementById('fd').checked, ddp: document.getElementById('ddp').checked, skinned: true, notes: v('nt') };
+        shotAt: stamp(t), dressed4h: document.getElementById('fd').checked, ddp: document.getElementById('ddp').checked, skinned: true, notes: v('nt'),
+        porkFat: type === 'Private' && !!document.getElementById('pork') && document.getElementById('pork').checked };
       queue('intake', f, 'Check-in ' + b);
       printBand({ Band: b, Intake: stamp(), Type: type, Deer: f.deer, 'Hunter number': f.hunterNumber });
       showBoard();
