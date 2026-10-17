@@ -237,7 +237,7 @@
   }
   function showWithdraw() {
     $app.innerHTML = header() + '<h1>Withdraw from the program</h1>' +
-      '<p>If you\'d like hunting on your property to end, let us know here. Joe will call you to confirm before anything changes, and to arrange for any stands or cameras to be removed at times that suit you.</p>' +
+      '<p>If you\'d like hunting on your property to end, let us know here. Home Ground will call you to confirm before anything changes, and arrange for any stands or cameras to be removed at times that suit you.</p>' +
       '<p class="status">If you just need a break, a pause may be simpler: hunting stops right away and you can lift it any time.</p>' +
       '<label for="wnote">Anything you\'d like us to know? <span class="hint">Optional. No reason needed.</span></label><textarea id="wnote" maxlength="500"></textarea>' +
       '<div id="err" class="err"></div><button class="submit" id="go" style="background:var(--bad)">Send my request to Home Ground</button>' +
@@ -246,7 +246,7 @@
     document.getElementById('go').onclick = async () => {
       const b = document.getElementById('go'); b.disabled = true; b.textContent = 'Sending…';
       try { await call({ action: 'withdraw', note: document.getElementById('wnote').value.trim() });
-        $app.innerHTML = header() + '<div class="note ok">Request sent. Joe will call you to confirm. Nothing changes until then.</div><p class="center"><button class="plain" id="back">Back to home</button></p>';
+        $app.innerHTML = header() + '<div class="note ok">Request sent. Home Ground will call you to confirm. Nothing changes until then.</div><p class="center"><button class="plain" id="back">Back to home</button></p>';
         document.getElementById('back').onclick = showHome; }
       catch (e) { b.disabled = false; b.textContent = 'Send my request to Home Ground'; document.getElementById('err').textContent = e.offline ? 'No signal. Try again, or call ' + CFG.OFFICE_PHONE + '.' : e.message; }
     };
@@ -278,7 +278,7 @@
         '<input id="n-emails" type="text" inputmode="email" value="' + esc(s.emails.join(', ')) + '"' + (owner ? '' : ' disabled') + '>' +
         (owner ? '<div id="n-err" class="err"></div><button class="submit" id="n-save">Save notices</button>' : '<p class="status">Only the owner can change these.</p>') + '</div>' +
         '<h2>Your property details</h2><div class="card"><p class="status" style="margin-top:0">Cameras, restrictions, parking and access, your caretaker, your contact details and the rest of your permission form.</p>' +
-        '<button class="big alt" id="details-btn" style="margin-bottom:0">Update property details<small>Joe confirms each change with you before it takes effect.</small></button></div>'
+        '<button class="big alt" id="details-btn" style="margin-bottom:0">Update property details<small>Home Ground will confirm each change with you before it takes effect.</small></button></div>'
         : '<div class="note warn">Settings will show when you have signal.</div>') +
       '<p class="center"><button class="plain" id="back">Back</button></p>';
     document.getElementById('back').onclick = showHome;
@@ -311,7 +311,7 @@
     const sel = (id, label, opts) => '<label for="' + id + '">' + label + '</label><select id="' + id + '"><option>No change</option>' + opts.map(o => '<option>' + esc(o) + '</option>').join('') + '</select>';
     const txt = (id, label, hint) => '<label for="' + id + '">' + label + (hint ? ' <span class="hint">' + hint + '</span>' : '') + '</label><input id="' + id + '" type="text" placeholder="No change">';
     $app.innerHTML = header() + '<h1>Update property details</h1>' +
-      '<p class="status">Fill in only what\'s changing and leave the rest. Joe will confirm each change with you, update your property checklist and tell your hunters before it takes effect. To pause hunting, use Pause hunting on the home screen instead.</p>' +
+      '<p class="status">Fill in only what\'s changing and leave the rest. Home Ground will confirm each change with you, update your property checklist and tell your hunters before it takes effect. To pause hunting, use Pause hunting on the home screen instead.</p>' +
       '<h2>Hunting on your property</h2><div class="card">' +
       sel('cameras', 'Game cameras', ['Yes, anywhere on the property', 'Yes, after I approve the location', 'No cameras']) +
       txt('restrictions', 'Restrictions', 'Areas to avoid, times, methods allowed') +
@@ -337,7 +337,7 @@
       const err = document.getElementById('err'), b = document.getElementById('go');
       if (!Object.keys(fields).length) { err.textContent = 'Nothing to send: fill in only what\'s changing.'; return; }
       b.disabled = true; b.textContent = 'Sending…';
-      try { await call({ action: 'details', fields }); showSettings('Sent. Joe will confirm the changes with you before they take effect.'); }
+      try { await call({ action: 'details', fields }); showSettings('Sent. Home Ground will confirm each change with you before it takes effect.'); }
       catch (e) { b.disabled = false; b.textContent = 'Send to Home Ground'; err.textContent = e.offline ? 'No signal. Nothing was sent.' : e.message; }
     };
   }
