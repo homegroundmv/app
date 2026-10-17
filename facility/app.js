@@ -577,17 +577,17 @@
   }
 
   /* ---------- daily log ---------- */
-  const LOGS = [['Cooler temp (°F)', 'Reading in °F. Target 33–37, never above 41.'], ['Freezer temp (°F)', 'Reading in °F. 0 or colder, never above 10.'], ['Facility temp (°F)', 'Processing trailer, reading in °F.'],
+  const LOGS = [['Cooler temp (°F)', 'Reading in °F. Target 33–37, never above 41.'], ['Freezer temp (°F)', 'Reading in °F. 0 or colder, never above 10.'], ['Facility temp (°F)', 'MHU (processing trailer), reading in °F. Never above 42.'],
     ['Thermometer check', 'Ice-point reading in °F (should be 32). Mondays.'], ['Pre-op check', 'Done / problems found'], ['End-of-day clean', 'Done / problems found'],
     ['Weekly clean', 'Done / problems found'], ['Sanitizer test', 'Test-strip reading (ppm)'], ['Waste pickup', 'Hauler and bins taken'],
     ['Tight tank pumped', 'Company'], ['Complaint', 'Lot number, if known. Details in the note']];
   function showDaily() {
     frame('daily', 'Daily log',
-      '<div class="card"><label for="lt">What are you logging?</label><select id="lt">' + LOGS.map(l => '<option>' + esc(l[0]) + '</option>').join('') + '</select>' +
+      '<div class="card"><label for="lt">What are you logging?</label><select id="lt">' + LOGS.map(l => '<option value="' + esc(l[0]) + '">' + esc(l[0].replace('Facility temp', 'MHU temp')) + '</option>').join('') + '</select>' +
       '<div id="unitbox" hidden><label for="lu">Which one?</label><select id="lu"></select></div>' +
       '<label for="lv">Reading or result <span class="hint" id="lh"></span></label><input id="lv" type="text">' +
       '<label for="ln">Note</label><textarea id="ln"></textarea><div id="err" class="err"></div><button class="submit" id="save">Save to the log</button></div>' +
-      '<p class="status">Log the freezer, hanging cooler, Facility #1 and Facility #2 at opening, midday and close. Freezer over 10°F, cooler over 41°F, or a facility over its limit alerts Joe straight away.</p>');
+      '<p class="status">Log the freezer, hanging cooler, MHU #1 and MHU #2 at opening, midday and close. Freezer over 10°F, cooler over 41°F, or an MHU over 42°F alerts Joe straight away.</p>');
     const sel = document.getElementById('lt'), hint = () => {
       document.getElementById('lh').textContent = (LOGS.find(l => l[0] === sel.value) || [])[1] || '';
       const units = ({ 'Cooler temp (°F)': S().coolers, 'Freezer temp (°F)': S().freezers, 'Facility temp (°F)': S().trailers }[sel.value]) || [];
