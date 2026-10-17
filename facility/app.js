@@ -40,6 +40,7 @@
   save();
   const S = () => st.home.settings || { coolerCap: 30, coolerAlert: 80, startBy: 72, maxHold: 120, maxAtOnce: 6, slots: [], pieceRate: 125, minWage: 15, pkgSize: 2, fatDonated: 10, fatPrivate: 10, privatePrice: 250, porkAddOn: 20, porkInStock: true, pantries: [], helpHours: 4 };
   const isMgr = () => !!(st.staff && st.staff.manager);
+  const isViewer = () => !!(st.staff && st.staff.viewer);
 
   /* ---------- backend ---------- */
   async function call(body) {
@@ -189,6 +190,14 @@
       tile(m.deer || 0, 'Deer processed') + tile(m.donated || 0, 'Donated deer') +
       tile(fmt(m.packagedLb || 0), 'lb packaged') + tile(fmt(m.groundVenisonLb || 0), 'lb ground venison') + '</div>' +
       '<p class="status center">Your season so far · ' + esc(s.pkgSize) + ' lb packages, ' + esc(s.fatDonated) + '% pork fat</p>';
+    if (isViewer()) {
+      frame('home', '', '<div class="note ok">View-only sign-in: you can look at everything below, but nothing can be changed from this sign-in.</div>' +
+        big('status', 'Facility status', 'Cooler, oldest deer, temperatures, who\'s here') +
+        big('board', 'Cooler', inC + ' of ' + s.coolerCap + ' in the cooler' + (inC >= s.coolerCap ? ' · FULL' : '')) +
+        big('martin', 'Donation report', 'Download the donated-deer list', 'alt'), true);
+      $app.querySelectorAll('[data-go]').forEach(b => b.onclick = () => GO[b.dataset.go]());
+      return;
+    }
     frame('home', '',
       (note ? '<div class="note ok">' + note + '</div>' : '') +
       '<div id="alerts">' + alertsHtml() + '</div><div id="push"></div>' + clockCard + tiles +
@@ -266,7 +275,7 @@
       const h = hoursHung(d), dot = dotFor(d.Intake);
       const cls = d.Status === 'Hanging' ? (h >= s.maxHold ? ' red' : h >= s.startBy ? ' amber' : '') : '';
       const mineOrMgr = d['Processor number'] === st.staff.number || isMgr();
-      const act = d.Status === 'Hanging' ? '<button class="btn" data-a="start">Start processing</button>'
+      const act = isViewer() ? '' : d.Status === 'Hanging' ? '<button class="btn" data-a="start">Start processing</button>'
         : d.Status === 'Processing' ? (mineOrMgr ? '<button class="btn" data-a="finish">Finished</button>' : '')
         : d.Status === 'Ready' ? '<button class="btn alt" data-a="release">Release</button>' : '';
       return '<div class="card' + cls + (d.Type === 'Donated' ? ' donated' : '') + '" data-band="' + esc(d.Band) + '">' +
@@ -281,7 +290,7 @@
         (d['Pounds packaged'] ? ' · ' + esc(d['Pounds packaged']) + ' lb packaged' : '') + '</div></div>' +
         '<div class="hrs">' + (d.Status === 'Released' ? '' : Math.floor(h) + ' h') + '</div></div>' +
         (d.Status === 'Released' ? '<div class="status">Released ' + esc(d.Released) + ' to ' + esc(d['Released to']) + '</div>' : '') +
-        '<div class="actions">' + act + (d.Status !== 'Released' ? '<button class="btn ghost" data-a="print">Print band</button>' : '') + '</div><div class="form"></div></div>';
+        '<div class="actions">' + act + (d.Status !== 'Released' && !isViewer() ? '<button class="btn ghost" data-a="print">Print band</button>' : '') + '</div><div class="form"></div></div>';
     };
     const section = (title, list, empty) => '<h2>' + title + ' (' + list.length + ')</h2>' + (list.length ? list.map(card).join('') : '<p class="status">' + empty + '</p>');
     frame('board', 'Cooler',
@@ -651,7 +660,7 @@
         '<div class="status">In ' + esc(when(x.oldest.intake)) + (x.oldest.deer ? ' · ' + esc(x.oldest.deer) : '') + '</div></div><div class="hrs">' + x.oldest.hours + ' h</div></div>' : '<div class="status">Nothing hanging.</div>') + '</div>' +
       '<div class="card"><b>Last logged temperatures</b> <span class="status">freezer 0°F or colder, never above 10 · hanging cooler 33–37°F, never above 41</span>' +
       (x.temps.list || []).map(t => temp(t, t.limit)).join('') +
-      '<button class="plain" data-go2="daily">Log a reading</button></div>' +
+      (isViewer() ? '' : '<button class="plain" data-go2="daily">Log a reading</button>') + '</div>' +
       '<div class="card"><b>People</b><div class="tiles">' + tile(p.clockedIn.length, 'Clocked in now') + tile(p.onShift ? p.onShift.booked.length + ' of ' + p.max : '—', p.onShift ? 'Booked: ' + p.onShift.slot : 'No shift now') + '</div>' +
       (p.clockedIn.length ? '<div class="status">Clocked in: ' + esc(p.clockedIn.map(w => w.name + ' (since ' + when(w.since).split(' ').slice(-2).join(' ') + ')').join(', ')) + '</div>' : '') +
       (p.onShift && p.onShift.booked.length ? '<div class="status">On the ' + esc(p.onShift.slot.toLowerCase()) + ' shift: ' + esc(p.onShift.booked.join(', ')) + ' · ends ' + t12(p.onShift.ends) + '</div>' : '') +
