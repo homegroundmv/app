@@ -334,7 +334,11 @@
         (s.pantries || []).map(p => '<option>' + esc(p) + '</option>').join('') + '<option value="other">Other…</option></select>' +
         '<input id="f3" type="text" placeholder="Who?" hidden style="margin-top:8px">' +
         '<label>Pounds out</label><input id="f2" type="number" inputmode="decimal" min="0" value="' + esc(d['Pounds packaged'] || '') + '">' +
-        (d['Hunter price ($)'] ? '<div class="note warn">Hunter pickup: collect <b>$' + esc(d['Hunter price ($)']) + '</b>' + (d['Pork fat added'] === 'Yes' ? ' (includes the pork fat add-on)' : '') + '.</div>' : ''),
+        (d.Type === 'Private' ? '<div class="note warn">Hunter pickup: collect <b>$' + esc(d['Hunter price ($)'] || s.privatePrice || 250) + '</b>' + (d['Pork fat added'] === 'Yes' ? ' (includes the pork fat add-on)' : '') + '.</div>' +
+          '<div class="grid2"><div><label for="pm">Paid by</label><select id="pm"><option value="">Choose…</option>' + (s.payMethods || ['Cash', 'Card (Square)', 'Check']).map(m => '<option>' + esc(m) + '</option>').join('') + '</select></div>' +
+          '<div><label for="pa">Amount collected ($)</label><input id="pa" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(d['Hunter price ($)'] || '') + '"></div></div>' +
+          '<label for="pn">Receipt, check number or note <span class="hint">optional</span></label><input id="pn" type="text" maxlength="100">' +
+          '<p class="status">Cash goes in an envelope for the safe at close-out. Never in a pocket or the truck.</p>' : ''),
     };
     box.innerHTML = forms[kind]() + '<div class="err" id="ferr"></div><button class="btn" id="fok" style="margin-top:12px">Save</button> <button class="btn ghost" id="fx">Cancel</button>';
     if (kind === 'release') document.getElementById('f1').onchange = e => { document.getElementById('f3').hidden = e.target.value !== 'other'; };
@@ -369,7 +373,15 @@
       if (kind === 'release') {
         const to = v('f1') === 'other' ? v('f3').trim() : v('f1');
         if (!to) return err('Say who it went to.');
-        queue('release', { band: d.Band, to, pounds: v('f2') }, 'Release ' + d.Band);
+        const pay = {};
+        if (d.Type === 'Private') {
+          pay.method = v('pm'); pay.paid = v('pa'); pay.payNote = v('pn');
+          if (!pay.method) return err('Choose how the hunter paid.');
+          if (pay.paid === '' || !(Number(pay.paid) >= 0)) return err('Enter the amount collected.');
+          const due = Number(d['Hunter price ($)'] || 0);
+          if (due && Number(pay.paid) !== due && !pay.payNote) return err('That isn\'t the $' + due + ' due. Say why in the note.');
+        }
+        queue('release', Object.assign({ band: d.Band, to, pounds: v('f2') }, pay), 'Release ' + d.Band);
       }
       showBoard();
     };
@@ -605,7 +617,9 @@
   const LOGS = [['Cooler temp (°F)', 'Reading in °F. Target 33–37, never above 41.'], ['Freezer temp (°F)', 'Reading in °F. 0 or colder, never above 10.'], ['Facility temp (°F)', 'MHU (processing trailer), reading in °F. Never above 42.'],
     ['Thermometer check', 'Ice-point reading in °F (should be 32). Mondays.'], ['Pre-op check', 'Done / problems found'], ['End-of-day clean', 'Done / problems found'],
     ['Weekly clean', 'Done / problems found'], ['Sanitizer test', 'Test-strip reading (ppm)'], ['Waste pickup', 'Hauler and bins taken'],
-    ['Tight tank pumped', 'Company'], ['Complaint', 'Lot number, if known. Details in the note']];
+    ['Tight tank pumped', 'Company'], ['Complaint', 'Lot number, if known. Details in the note'],
+    ['Cash deposit', 'Dollars in the envelope dropped in the safe. Note: number of payments and both sets of initials'],
+    ['Bank deposit', 'Managers only. Dollars taken from the safe to the bank. Note: deposit slip number']];
   function showDaily() {
     frame('daily', 'Daily log',
       '<div class="card"><label for="lt">What are you logging?</label><select id="lt">' + LOGS.map(l => '<option value="' + esc(l[0]) + '">' + esc(l[0].replace('Facility temp', 'MHU temp')) + '</option>').join('') + '</select>' +
@@ -622,11 +636,13 @@
     sel.onchange = hint; hint();
     document.getElementById('save').onclick = () => {
       const type = sel.value, value = document.getElementById('lv').value.trim(), note = document.getElementById('ln').value.trim();
+      if (/deposit/.test(type) && !(Number(value) > 0)) { document.getElementById('err').textContent = 'Enter the amount in dollars.'; return; }
+      if (type === 'Bank deposit' && !isMgr()) { document.getElementById('err').textContent = 'Only a manager takes cash from the safe to the bank.'; return; }
       if (/temp|Thermometer/.test(type) && !isFinite(Number(value))) { document.getElementById('err').textContent = 'Enter the reading as a number.'; return; }
       if (!value && !note) { document.getElementById('err').textContent = 'Enter the reading or a note.'; return; }
       const hot = (type === 'Cooler temp (°F)' && Number(value) > 41) || (type === 'Freezer temp (°F)' && Number(value) > 10) || (type === 'Facility temp (°F)' && Number(value) > (S().trailerLimit || 42));
       queue('log', { type, value, note, unit: document.getElementById('unitbox').hidden ? '' : document.getElementById('lu').value }, type);
-      showHome(hot ? 'Saved. That reading is over the limit: Joe has been alerted. Check the door and the unit now.' : 'Saved to the log.');
+      showHome(type === 'Cash deposit' ? 'Cash deposit of $' + Number(value).toFixed(2) + ' logged. Make sure the envelope is through the slot.' : hot ? 'Saved. That reading is over the limit: Joe has been alerted. Check the door and the unit now.' : 'Saved to the log.');
     };
   }
 
@@ -674,9 +690,24 @@
       (p.nextShift ? '<div class="status">Next: ' + esc(p.nextShift.slot) + ' at ' + t12(p.nextShift.starts) + ', ' + p.nextShift.people + ' of ' + p.max + ' booked</div>' : '') + '</div>' +
       '<div class="card"><b>Today</b><div class="tiles">' + tile(x.today.in, 'Deer in') + tile(x.today.processed, 'Processed') + tile(fmt(x.today.lb), 'lb packaged') + tile(x.today.released, 'Released') + '</div>' +
       (x.today.turnedAway ? '<div class="status">' + x.today.turnedAway + ' turned away today.</div>' : '') + '</div>' +
+      (x.cash ? cashHtml(x.cash) : '') +
       '<div class="card"><b>Cleaning and upkeep</b> <span class="status">last logged</span>' +
       up('End-of-day clean', x.upkeep.endOfDayClean) + up('Pre-op check', x.upkeep.preOp) + up('Sanitizer test', x.upkeep.sanitizer) +
       up('Thermometer check', x.upkeep.thermometer) + up('Waste pickup', x.upkeep.waste) + up('Tight tank pumped', x.upkeep.tightTank) + '</div>';
+  }
+
+  function cashHtml(m) {
+    const $ = n => '$' + Number(n || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    const gap = m.notInSafe;
+    return '<div class="card' + (gap > 0 ? ' amber' : gap < 0 ? ' red' : '') + '"><b>Cash and payments</b> <span class="status">private deer</span>' +
+      '<div class="tiles">' + tile($(m.today.cash), 'Cash taken today') + tile($(m.today.deposited), 'Cash into safe today') +
+      tile($(m.inSafe), 'In the safe now') + tile($(m.today.card), 'Card today') + '</div>' +
+      (gap > 0 ? '<div class="note warn"><b>' + $(gap) + ' in cash taken but not logged into the safe.</b> Count it, envelope it, drop it, and log a cash deposit.</div>'
+        : gap < 0 ? '<div class="note bad"><b>Deposits are ' + $(-gap) + ' more than the cash recorded at pickup.</b> Check the releases and envelopes, and tell Joe.</div>'
+        : '<div class="status">All cash taken is logged into the safe.</div>') +
+      '<div class="status">Last bank run: ' + (m.lastBank ? esc(when(m.lastBank.at)) + ', ' + $(m.lastBank.amount) + (m.lastBank.by ? ' · ' + esc(m.lastBank.by) : '') : 'none yet') + '</div>' +
+      '<div class="status">Season: cash ' + $(m.season.cash) + ' · card ' + $(m.season.card) + (m.season.check ? ' · check ' + $(m.season.check) : '') + ' · banked ' + $(m.season.banked) + '</div>' +
+      (isViewer() ? '' : '<button class="plain" data-go2="daily">Log a cash deposit</button>') + '</div>';
   }
 
   /* ---------- Martin's report ---------- */
