@@ -179,7 +179,9 @@
       (me.properties && me.properties.length
         ? me.properties.map(p => '<div>' + esc(p.code) + (p.town ? ' · ' + esc(p.town) : '') + '</div>').join('')
         : '<span class="status">None assigned yet. Home Ground will email you when you have one.</span>') +
-      '</div><p class="center"><button class="plain" id="out">Sign out</button></p>';
+      '</div><h2>Your bookings</h2><div class="card" id="bookings"><span class="status">Loading…</span></div>' +
+      '<h2>Your points</h2><div class="card" id="points"><span class="status">Loading…</span></div>' +
+      '<p class="center"><button class="plain" id="out">Sign out</button></p>';
     const screens = { book: showBook, hunt: showHunt, harvest: showHarvest, before: showBefore, after: showAfter, stand: showStand, help: showHelp };
     $app.querySelectorAll('[data-go]').forEach(b => b.onclick = () => screens[b.dataset.go]());
     document.getElementById('out').onclick = async () => {
@@ -188,7 +190,78 @@
       for (const i of await outbox('all')) await outbox('delete', i.clientId);
       me = null; save(null); showLogin();
     };
-    refreshStatus(); flush(); renderAlerts(); checkAlerts();
+    refreshStatus(); flush(); renderAlerts(); checkAlerts(); renderPoints(); loadPoints(); renderBookings(); loadBookings();
+  }
+
+  /* ---------- your bookings, with Cancel ---------- */
+  const BOOKINGS_KEY = 'hg-bookings';
+  let bookingsCache = null;
+  const dayName = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }); };
+  const slotName = s => ({ AM: 'Morning', PM: 'Afternoon' }[s] || 'All day');
+  async function loadBookings() {
+    if (!me || !navigator.onLine) return renderBookings();
+    try {
+      const out = await call({ action: 'bookings', hunter: me.hunter, pin: me.pin });
+      bookingsCache = out.bookings || [];
+      try { localStorage.setItem(BOOKINGS_KEY, JSON.stringify({ hunter: me.hunter, list: bookingsCache })); } catch (e) { /* ignore */ }
+      renderBookings(true);
+    } catch (e) { renderBookings(); }
+  }
+  function renderBookings(fresh) {
+    const box = document.getElementById('bookings');
+    if (!box) return;
+    if (!bookingsCache) { try { const x = JSON.parse(localStorage.getItem(BOOKINGS_KEY) || 'null'); if (x && me && x.hunter === me.hunter) bookingsCache = x.list; } catch (e) { /* ignore */ } }
+    if (!bookingsCache) { box.innerHTML = '<span class="status">Your bookings will show here when you have signal.</span>'; return; }
+    if (!bookingsCache.length) { box.innerHTML = '<span class="status">No upcoming bookings.' + (fresh ? '' : ' (Last checked when you had signal.)') + '</span>'; return; }
+    box.innerHTML = bookingsCache.map((b, i) => '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0' + (i ? ';border-top:1px solid var(--line)' : '') + '">' +
+      '<span><b>' + esc(dayName(b.date)) + '</b> · ' + esc(slotName(b.slot)) + '<br><span class="status">' + esc(b.property) + (b.stand ? ' · Stand ' + esc(b.stand) : '') + '</span></span>' +
+      (b.canCancel ? '<button class="plain" data-cancel="' + i + '" style="color:var(--bad)">Cancel</button>' : '<span class="status">Started</span>') + '</div>').join('') +
+      '<p class="status" style="margin:8px 0 0">Can\'t make it? Cancel before your hunt starts (midnight for a morning or all-day booking, noon for an afternoon) so the time opens up for another hunter. To change a booking, cancel it and book again.</p>';
+    box.querySelectorAll('[data-cancel]').forEach(btn => btn.onclick = async () => {
+      const b = bookingsCache[Number(btn.dataset.cancel)];
+      if (!confirm('Cancel your booking on ' + b.property + ', ' + dayName(b.date) + ' (' + slotName(b.slot).toLowerCase() + ')?')) return;
+      btn.disabled = true; btn.textContent = 'Cancelling…';
+      try {
+        await call({ action: 'cancel', hunter: me.hunter, pin: me.pin, property: b.property, date: b.date, slot: b.slot });
+        bookingsCache = bookingsCache.filter(x => x !== b);
+        try { localStorage.setItem(BOOKINGS_KEY, JSON.stringify({ hunter: me.hunter, list: bookingsCache })); } catch (e) { /* ignore */ }
+        renderBookings(true);
+        const note = document.createElement('div'); note.className = 'note ok';
+        note.textContent = 'Cancelled: ' + b.property + ', ' + dayName(b.date) + ' (' + slotName(b.slot).toLowerCase() + '). Home Ground has been told.';
+        box.parentNode.insertBefore(note, box);
+      } catch (e) {
+        btn.disabled = false; btn.textContent = 'Cancel';
+        const note = document.createElement('div'); note.className = 'note bad';
+        note.textContent = e.offline ? 'No signal. Cancelling needs signal: try again before your hunt starts.' : 'Not cancelled: ' + e.message;
+        box.parentNode.insertBefore(note, box);
+      }
+    });
+  }
+
+  /* ---------- points (worked out by the Registry every 15 minutes) ---------- */
+  const POINTS_KEY = 'hg-points';
+  function cachedPoints() { try { const x = JSON.parse(localStorage.getItem(POINTS_KEY) || 'null'); return x && me && x.hunter === me.hunter ? x.points : null; } catch (e) { return null; } }
+  async function loadPoints() {
+    if (!me || !navigator.onLine) return;
+    try {
+      const out = await call({ action: 'points', hunter: me.hunter, pin: me.pin });
+      try { localStorage.setItem(POINTS_KEY, JSON.stringify({ hunter: me.hunter, points: out.points })); } catch (e) { /* ignore */ }
+      renderPoints(out.points, true);
+    } catch (e) { renderPoints(cachedPoints(), false); }
+  }
+  function renderPoints(p, fresh) {
+    const box = document.getElementById('points');
+    if (!box) return;
+    if (p === undefined) p = cachedPoints();
+    if (!p) { box.innerHTML = '<span class="status">' + (fresh ? 'No points yet. They start with your first report.' : 'Your points will show here when you have signal.') + '</span>'; return; }
+    const sign = n => (n > 0 ? '+' : '') + n;
+    box.innerHTML = '<div style="font-size:34px;font-weight:700">' + esc(p.total) + ' <span class="status" style="font-size:15px;font-weight:400">points</span></div>' +
+      '<div class="status">This season ' + esc(p.thisSeason) + ' · Last season ' + esc(p.lastSeason) + ' · Loyalty bonus ' + esc(p.loyalty) + '</div>' +
+      (p.recent && p.recent.length ? '<details style="margin-top:10px"><summary>Recent points</summary>' +
+        p.recent.map(e => '<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-top:1px solid var(--line)"><span>' +
+          esc(e.rule) + '<br><span class="status">' + esc(e.date) + (e.property ? ' · ' + esc(e.property) : '') + '</span></span><b style="white-space:nowrap' +
+          (e.points < 0 ? ';color:var(--bad)' : '') + '">' + esc(sign(e.points)) + '</b></div>').join('') + '</details>' : '') +
+      '<p class="status" style="margin:10px 0 0">Updated ' + esc(p.updated || '') + '. Points only decide access to land. Questions? Email ' + esc(CFG.OFFICE_EMAIL) + '.</p>';
   }
 
   function propertySelect() {
@@ -214,7 +287,7 @@
       '<label for="time">Time of hunt</label><select id="time"><option value="">Choose…</option>' +
       '<option>AM</option><option>PM</option><option>All day</option></select>' +
       '<label for="stand">Stand ID <span class="hint">Optional. The stand or spot you plan to use.</span></label><input id="stand" type="text">' +
-      '<label class="choice"><input id="agree" type="checkbox"> I understand I\'m not booked until Home Ground emails to confirm. To change or cancel, I\'ll email ' + esc(CFG.OFFICE_EMAIL) + '.</label>' +
+      '<label class="choice"><input id="agree" type="checkbox"> I understand I\'m not booked until Home Ground emails to confirm. To cancel, I\'ll use Your bookings on the app\'s home screen before my hunt starts.</label>' +
       '<div id="err" class="err"></div><button class="submit" id="send">Send booking</button>' +
       '<p class="center"><button class="plain" id="back">Back</button></p>';
     document.getElementById('back').onclick = () => showHome();
