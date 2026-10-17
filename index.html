@@ -59,12 +59,18 @@
   .center { text-align: center; }
   .login-logo { width: 220px; max-width: 70%; margin: 24px auto 8px; display: block; }
   .thumbs img { width: 84px; height: 84px; object-fit: cover; border-radius: 8px; margin: 6px 6px 0 0; border: 1px solid var(--line); }
+  #msgs { max-height: 55vh; overflow-y: auto; }
+  .bubble { max-width: 85%; padding: 10px 12px; border-radius: 14px; margin: 8px 0; white-space: pre-wrap; word-wrap: break-word; }
+  .bubble.mine { background: var(--green); color: #fff; margin-left: auto; border-bottom-right-radius: 4px; }
+  .bubble.theirs { background: #F3EFE6; border-bottom-left-radius: 4px; }
+  .bubble .meta { font-size: 12px; opacity: .8; margin-top: 4px; }
   [hidden] { display: none !important; }
 </style>
 </head>
 <body>
 <main id="app"><p class="center status">Loading…</p></main>
 <script src="config.js"></script>
+<script src="push.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
