@@ -175,8 +175,8 @@
         ? '<button class="big" style="background:#8A2E1F" data-go="after">Finished tracking on ' + esc(me.track.property) + '<small>Tap when you\'re done, found or not.</small></button>'
         : '<button class="big alt" data-go="before">Tracking After Dark<small>Before you go in after dark. Needs signal: Home Ground is alerted at once.</small></button>') +
       '<button class="big alt" data-go="stand">Stand &amp; Camera Log<small>Every placement, move or removal.</small></button>' +
-      '<button class="big" style="background:#8A5A00" data-go="help">Need a hand?<small>Ask other Island hunters to help track or drag a deer.</small></button>' +
-      '<button class="big alt" data-go="messages" id="msg-btn">Messages<small>Message the landowner of a property you\'re assigned to.</small></button>' +
+      '<button class="big" style="background:#8A5A00" data-go="help">Need a hand?<small>Ask other Island hunters to help track or drag a deer, through the app.</small></button>' +
+      '<button class="big alt" data-go="messages" id="msg-btn">Messages<small>Your landowners and help chats.</small></button>' +
       '<h2>Your properties</h2><div class="card">' +
       (me.properties && me.properties.length
         ? me.properties.map(p => '<div>' + esc(p.code) + (p.town ? ' · ' + esc(p.town) : '') + '</div>').join('')
@@ -212,8 +212,9 @@
   async function loadUnread() {
     if (!me || !navigator.onLine) return;
     try {
-      const out = await call({ action: 'threads', hunter: me.hunter, pin: me.pin });
-      const n = (out.threads || []).reduce((t, x) => t + x.unread, 0);
+      const [out, hc] = await Promise.all([call({ action: 'threads', hunter: me.hunter, pin: me.pin }),
+        call({ action: 'helpchats', hunter: me.hunter, pin: me.pin }).catch(() => ({ chats: [] }))]);
+      const n = (out.threads || []).reduce((t, x) => t + x.unread, 0) + (hc.chats || []).reduce((t, x) => t + x.unread, 0);
       const b = document.getElementById('msg-btn');
       if (b && n) b.firstChild.textContent = 'Messages (' + n + ' new)';
     } catch (e) { /* quiet */ }
@@ -222,9 +223,17 @@
     stopThread();
     $app.innerHTML = header() + '<h1>Messages</h1>' +
       '<p class="status">Messages go through Home Ground and are kept on record. Landowners stay anonymous unless they choose to share their first name.</p>' +
-      '<div id="threads" class="card"><span class="status">Loading…</span></div><p class="center"><button class="plain" id="back">Back</button></p>';
+      '<div id="helpchats"></div><div id="threads" class="card"><span class="status">Loading…</span></div><p class="center"><button class="plain" id="back">Back</button></p>';
     document.getElementById('back').onclick = () => showHome();
     const box = document.getElementById('threads');
+    call({ action: 'helpchats', hunter: me.hunter, pin: me.pin }).then(out => {
+      const hc = document.getElementById('helpchats');
+      if (!hc || !out.chats.length) return;
+      hc.innerHTML = '<h2>Help chats</h2><div class="card">' + out.chats.map((c, i) => '<button class="plain" data-hc="' + esc(c.requestId) + '" data-hh="' + esc(c.helper) + '" style="display:block;width:100%;text-align:left;text-decoration:none;color:inherit;padding:10px 0' + (i ? ';border-top:1px solid var(--line)' : '') + '">' +
+        '<b>' + esc(c.name) + '</b> <span class="status">' + (c.asker ? 'offered to help you' : 'you offered to help') + '</span>' + (c.unread ? ' <span class="pill wait">' + c.unread + ' new</span>' : '') +
+        '<br><span class="status">' + esc(c.last) + '</span></button>').join('') + '</div><h2>Landowners</h2>';
+      hc.querySelectorAll('[data-hc]').forEach(b => b.onclick = () => showHelpChat(b.dataset.hc, b.dataset.hh));
+    }).catch(() => {});
     try {
       const out = await call({ action: 'threads', hunter: me.hunter, pin: me.pin });
       const list = out.threads || [];
@@ -235,6 +244,45 @@
       box.querySelectorAll('[data-t]').forEach(b => b.onclick = () => showThread(b.dataset.t));
     } catch (e) { box.innerHTML = '<span class="status">' + esc(e.offline ? 'Messages need signal.' : e.message) + '</span>'; }
   }
+  async function showHelpChat(requestId, helper) {
+    stopThread();
+    $app.innerHTML = header() + '<h1 id="th-title">Help chat</h1><p class="status" id="th-about"></p><div id="msgs" class="card"><span class="status">Loading…</span></div>' +
+      '<div id="compose"></div><p class="center"><button class="plain" id="back">Back</button></p>';
+    document.getElementById('back').onclick = () => { stopThread(); showHome(); };
+    let composed = false;
+    const draw = async () => {
+      try {
+        const out = await call({ action: 'helpthread', hunter: me.hunter, pin: me.pin, requestId, helper });
+        const box = document.getElementById('msgs');
+        if (!box) return stopThread();
+        document.getElementById('th-title').textContent = out.title;
+        document.getElementById('th-about').textContent = out.about + (out.open ? '' : ' (request closed)');
+        box.innerHTML = out.messages.map(m => m.system ? '<p class="status center">' + esc(m.text) + '</p>'
+          : '<div class="bubble ' + (m.mine ? 'mine' : 'theirs') + '">' + esc(m.text) + '<div class="meta">' + esc(m.from) + ' · ' + esc(when(m.at)) + '</div></div>').join('');
+        box.scrollTop = box.scrollHeight;
+        if (!composed) {
+          composed = true;
+          const c = document.getElementById('compose');
+          c.innerHTML = out.canSend
+            ? '<textarea id="msg" maxlength="1000" placeholder="Where to meet, what you need, when you\'ll be there"></textarea><div id="err" class="err"></div><button class="submit" id="send">Send</button>' +
+              '<p class="status">Share your phone number here only if you want to.</p>'
+            : '<div class="note warn">This help chat has closed.</div>';
+          const send = document.getElementById('send');
+          if (send) send.onclick = async () => {
+            const text = document.getElementById('msg').value.trim();
+            if (!text) return;
+            send.disabled = true; send.textContent = 'Sending…';
+            try { await call({ action: 'helpsend', hunter: me.hunter, pin: me.pin, requestId, helper, text, clientId: uid() }); document.getElementById('msg').value = ''; document.getElementById('err').textContent = ''; await draw(); }
+            catch (e) { document.getElementById('err').textContent = e.offline ? 'No signal. Your message wasn\'t sent.' : e.message; }
+            send.disabled = false; send.textContent = 'Send';
+          };
+        }
+      } catch (e) { const box = document.getElementById('msgs'); if (box) box.innerHTML = '<span class="status">' + esc(e.offline ? 'The help chat needs signal.' : e.message) + '</span>'; }
+    };
+    await draw();
+    threadTimer = setInterval(() => { if (!document.hidden && navigator.onLine) draw(); }, 10000);
+  }
+
   async function showThread(code) {
     stopThread();
     $app.innerHTML = header() + '<h1 id="th-title">' + esc(code) + '</h1><div id="msgs" class="card"><span class="status">Loading…</span></div>' +
@@ -461,11 +509,10 @@
   /* ---------- help requests and alerts ---------- */
   function showHelp() {
     $app.innerHTML = header() + '<h1>Need a hand?</h1>' +
-      '<div class="note warn">This emails every active Island hunter at once and shows an alert in their app. Only your property code and town are shared; helpers call you to meet up.</div>' +
+      '<div class="note warn">This sends a notification to every active Island hunter and shows in their app. Only your property code and town are shared. Anyone free taps "I can help", and the two of you message each other in the app to sort out where to meet.</div>' +
       propertySelect() +
       '<label>What do you need?</label>' +
       ['Tracking', 'Dragging', 'Tracking and dragging'].map((x, i) => '<label class="choice"><input type="radio" name="needs" value="' + x + '"' + (i === 1 ? ' checked' : '') + '> ' + x + '</label>').join('') +
-      '<label for="hphone">Your phone</label><input id="hphone" type="tel" value="' + esc(me.phone || '') + '">' +
       '<label for="hnote">Anything helpers should know <span class="hint">Optional. No addresses.</span></label><textarea id="hnote" maxlength="300" placeholder="e.g. Big doe, about 200 yards in, meet at the road"></textarea>' +
       '<div id="err" class="err"></div><button class="submit" id="send">Send for help</button>' +
       '<p class="center"><button class="plain" id="back">Back</button></p>';
@@ -475,12 +522,11 @@
       const prop = f('prop') ? f('prop').value : '';
       const needs = (document.querySelector('input[name=needs]:checked') || {}).value;
       if (!prop) { f('err').textContent = 'Choose the property.'; return; }
-      if (!f('hphone').value.trim()) { f('err').textContent = 'Add your phone so helpers can reach you.'; return; }
       btn.disabled = true; btn.textContent = 'Sending…';
       try {
         const out = await call({ action: 'help', hunter: me.hunter, pin: me.pin, clientId: uid(),
-          fields: { property: prop, needs, phone: f('hphone').value.trim(), note: f('hnote').value.trim() } });
-        showHome('Help request sent to ' + (out.sentTo || 0) + ' hunter' + (out.sentTo === 1 ? '' : 's') + '. Keep your phone on. Mark it found when someone\'s on the way.');
+          fields: { property: prop, needs, note: f('hnote').value.trim() } });
+        showHome('Help request sent to ' + (out.sentTo || 0) + ' hunter' + (out.sentTo === 1 ? '' : 's') + '. You\'ll be notified when someone offers to help. Close it once help is on the way.');
       } catch (e) {
         btn.disabled = false; btn.textContent = 'Send for help';
         f('err').textContent = e.offline ? 'No signal, so it couldn\'t send. Call or text a hunter you know, or the office at ' + CFG.OFFICE_PHONE + '.' : e.message;
@@ -501,7 +547,7 @@
         const pushed = window.HGPush && HGPush.state() === 'granted';   // the push already showed it
         if (!pushed && window.Notification && Notification.permission === 'granted' && navigator.serviceWorker) {
           const reg = await navigator.serviceWorker.getRegistration();
-          fresh.forEach(a => reg && reg.showNotification('Hunter needs help: ' + a.needs.toLowerCase(), { body: a.name + ' near ' + (a.town || a.property) + '. Call ' + a.phone + '.', icon: 'icon-192.png', tag: a.id }));
+          fresh.forEach(a => reg && reg.showNotification('Hunter needs help: ' + a.needs.toLowerCase(), { body: a.name + ' near ' + (a.town || a.property) + '. Open the app to say you can help.', icon: 'icon-192.png', tag: a.id }));
         }
         try { localStorage.setItem('hg-seen-alerts', JSON.stringify(seen.concat(fresh.map(a => a.id)).slice(-50))); } catch (e) { /* ignore */ }
       }
@@ -514,9 +560,20 @@
     const ask = (!window.HGPush || HGPush.state() === 'off') && window.Notification && Notification.permission === 'default'
       ? '<p class="status"><button class="plain" id="notif">Turn on alerts on this phone</button></p>' : '';
     box.innerHTML = alertsCache.map(a => a.mine
-      ? '<div class="note warn"><b>Your help request is out</b> (' + esc(a.needs.toLowerCase()) + ', ' + esc(a.property) + '). <button class="plain" data-done="' + esc(a.id) + '">Help found, close it</button></div>'
+      ? '<div class="note warn"><b>Your help request is out</b> (' + esc(a.needs.toLowerCase()) + ', ' + esc(a.property) + ').<br>' +
+        (a.helpers && a.helpers.length ? a.helpers.map(h => '<button class="plain" data-chat="' + esc(a.id) + '" data-helper="' + esc(h.id) + '">Message ' + esc(h.name) + ' (offered to help)</button>').join('<br>')
+          : '<span class="status">No one has offered yet. You\'ll be notified when someone does.</span>') +
+        '<br><button class="plain" data-done="' + esc(a.id) + '">Help found, close it</button></div>'
       : '<div class="note bad"><b>' + esc(a.name) + ' needs help ' + esc(a.needs.toLowerCase()) + '</b> near ' + esc(a.town || a.property) +
-        (a.note ? '<br>' + esc(a.note) : '') + '<br><a href="tel:' + esc(a.phone) + '">Call ' + esc(a.phone) + '</a> · <a href="sms:' + esc(a.phone) + '">Text</a></div>').join('') + ask;
+        (a.note ? '<br>' + esc(a.note) : '') + '<br>' +
+        (a.offered ? '<button class="plain" data-chat="' + esc(a.id) + '" data-helper="' + esc(me.hunter) + '">Open your chat with ' + esc(a.name) + '</button>'
+          : '<button class="plain" data-offer="' + esc(a.id) + '">I can help</button>') + '</div>').join('') + ask;
+    box.querySelectorAll('[data-offer]').forEach(b => b.onclick = async () => {
+      b.disabled = true; b.textContent = 'Letting them know…';
+      try { await call({ action: 'helpoffer', hunter: me.hunter, pin: me.pin, requestId: b.dataset.offer }); showHelpChat(b.dataset.offer, me.hunter); }
+      catch (e) { b.disabled = false; b.textContent = e.offline ? 'No signal. Try again.' : e.message; }
+    });
+    box.querySelectorAll('[data-chat]').forEach(b => b.onclick = () => showHelpChat(b.dataset.chat, b.dataset.helper));
     box.querySelectorAll('[data-done]').forEach(b => b.onclick = async () => {
       b.disabled = true;
       try { await call({ action: 'helpdone', hunter: me.hunter, pin: me.pin, requestId: b.dataset.done }); alertsCache = alertsCache.filter(a => a.id !== b.dataset.done); renderAlerts(); }
