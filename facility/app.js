@@ -386,7 +386,7 @@
       '<div class="card">' +
       '<label for="band">Field band number <span class="hint">On the hock. No band? Use a new one from the box.</span></label><input id="band" type="text" autocapitalize="characters">' +
       '<label>Donated or private?</label>' +
-      '<label class="choice"><input type="radio" name="type" value="Donated"> <span><b>Donated</b> (Share the Harvest). TFMV mails the hunter a check: $' + esc(s.payDoe || 150) + ' a doe or button buck, $' + esc(s.payBuck || 100) + ' an antlered buck.</span></label>' +
+      '<label class="choice"><input type="radio" name="type" value="Donated"> <span><b>Donated</b> (Share the Harvest). TFMV mails the hunter a check: $' + esc(s.payDoe || 150) + ' a doe, $' + esc(s.payBuck || 100) + ' a buck (antlered or button).</span></label>' +
       '<label class="choice"><input type="radio" name="type" value="Private"> <span><b>Private</b>: processed for the hunter, $' + esc(s.privatePrice || 250) + '.</span></label>' +
       (s.porkInStock === false ? '<p class="status" id="porkbox" hidden>Pork fat add-on: not available right now. The grind will be all venison.</p>'
         : '<label class="choice" id="porkbox" hidden><input id="pork" type="checkbox"> <span>Add pork fat to the ground (' + esc(s.fatPrivate || 10) + '%), <b>+$' + esc(s.porkAddOn || 20) + '</b>. Local-farm pork fat, as available. Without it, the grind is all venison.</span></label>') +
