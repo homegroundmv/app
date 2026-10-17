@@ -194,7 +194,8 @@
       frame('home', '', '<div class="note ok">View-only sign-in: you can look at everything below, but nothing can be changed from this sign-in.</div>' +
         big('status', 'Facility status', 'Cooler, oldest deer, temperatures, who\'s here') +
         big('board', 'Cooler', inC + ' of ' + s.coolerCap + ' in the cooler' + (inC >= s.coolerCap ? ' · FULL' : '')) +
-        big('martin', 'Donation report', 'Download the donated-deer list', 'alt'), true);
+        big('martin', 'Donation report', 'Download the donated-deer list', 'alt') +
+        big('payments', 'Hunter payments', 'Donation checks owed and sent, with mailing addresses', 'alt'), true);
       $app.querySelectorAll('[data-go]').forEach(b => b.onclick = () => GO[b.dataset.go]());
       return;
     }
@@ -210,7 +211,8 @@
       big('numbers', 'My numbers', 'Deer, pounds, hours and pay this week') +
       big('daily', 'Daily log', 'Temperatures, cleaning, waste, complaints', 'alt') +
       (isMgr() ? big('team', 'Team numbers', 'Every processor, this week and the season', 'alt') : '') +
-      big('martin', 'Donation report', 'Download for Martin', 'alt'), true);
+      big('martin', 'Donation report', 'Download for Martin', 'alt') +
+      (isMgr() ? big('payments', 'Hunter payments', 'Donation checks owed and sent, with mailing addresses', 'alt') : ''), true);
     $app.querySelectorAll('[data-go]').forEach(b => b.onclick = () => GO[b.dataset.go]());
     document.getElementById('clock').onclick = async e => {
       const b = e.target; b.disabled = true;
@@ -384,7 +386,7 @@
       '<div class="card">' +
       '<label for="band">Field band number <span class="hint">On the hock. No band? Use a new one from the box.</span></label><input id="band" type="text" autocapitalize="characters">' +
       '<label>Donated or private?</label>' +
-      '<label class="choice"><input type="radio" name="type" value="Donated"> <span><b>Donated</b> (Share the Harvest). TFMV pays the hunter $' + esc(s.payDoe || 150) + ' a doe, $' + esc(s.payBuck || 100) + ' a buck.</span></label>' +
+      '<label class="choice"><input type="radio" name="type" value="Donated"> <span><b>Donated</b> (Share the Harvest). TFMV mails the hunter a check: $' + esc(s.payDoe || 150) + ' a doe or button buck, $' + esc(s.payBuck || 100) + ' an antlered buck.</span></label>' +
       '<label class="choice"><input type="radio" name="type" value="Private"> <span><b>Private</b>: processed for the hunter, $' + esc(s.privatePrice || 250) + '.</span></label>' +
       (s.porkInStock === false ? '<p class="status" id="porkbox" hidden>Pork fat add-on: not available right now. The grind will be all venison.</p>'
         : '<label class="choice" id="porkbox" hidden><input id="pork" type="checkbox"> <span>Add pork fat to the ground (' + esc(s.fatPrivate || 10) + '%), <b>+$' + esc(s.porkAddOn || 20) + '</b>. Local-farm pork fat, as available. Without it, the grind is all venison.</span></label>') +
@@ -395,10 +397,13 @@
       '<div><label for="cf">MassWildlife confirmation number</label><input id="cf" type="text"></div>' +
       '<div><label for="sd">Date of the shot</label><input id="sd" type="date" value="' + isoDate(now) + '" max="' + isoDate(now) + '"></div>' +
       '<div><label for="stm">Time of the shot</label><input id="stm" type="time"></div></div>' +
+      '<div id="addrbox" hidden><label for="ad1">Hunter mailing address <span class="hint">TFMV mails the donation check here</span></label><input id="ad1" type="text" autocomplete="street-address" placeholder="Street or PO box">' +
+      '<div class="grid2"><div><label for="adt">Town</label><input id="adt" type="text"></div><div><label for="ads">State</label><input id="ads" type="text" value="MA" maxlength="2" autocapitalize="characters"></div>' +
+      '<div><label for="adz">ZIP</label><input id="adz" type="text" inputmode="numeric" maxlength="10"></div></div></div>' +
       '<div id="age" class="status"></div>' +
       '<label class="choice"><input id="fd" type="checkbox"> Field dressed within 4 hours of the shot (or the air stayed below 37°F)</label>' +
       '<label class="choice"><input id="ddp" type="checkbox"> Taken under a deer depredation permit (DDP)</label>' +
-      '<label class="choice"><input id="sk" type="checkbox"> Skinned at the station before hanging</label>' +
+      '<label class="choice"><input id="sk" type="checkbox"> Skinned and head removed by Home Ground before hanging</label>' +
       '<label for="nt">Notes</label><textarea id="nt"></textarea>' +
       '<div class="err" id="err"></div><button class="submit" id="save">Check in and print band</button>' +
       '<button class="btn ghost" id="away" style="width:100%">Turn this deer away instead</button><div id="awaybox"></div></div>');
@@ -412,7 +417,7 @@
       return h;
     };
     ['sd', 'stm'].forEach(id => { document.getElementById(id).onchange = ageNote; });
-    document.querySelectorAll('input[name=type]').forEach(r => r.onchange = () => { document.getElementById('porkbox').hidden = r.value !== 'Private' || !r.checked; });
+    document.querySelectorAll('input[name=type]').forEach(r => r.onchange = () => { document.getElementById('porkbox').hidden = r.value !== 'Private' || !r.checked; document.getElementById('addrbox').hidden = r.value !== 'Donated' || !r.checked; });
     const err = m => { document.getElementById('err').textContent = m; };
     document.getElementById('save').onclick = () => {
       const type = (document.querySelector('input[name=type]:checked') || {}).value;
@@ -422,15 +427,17 @@
       if (!type) return err('Choose donated or private.');
       if (!v('deer')) return err('Choose doe, button buck or antlered buck.');
       if (!v('nm') && !v('hn')) return err('Enter the hunter\'s name or number.');
+      if (type === 'Donated' && (!v('ad1') || !v('adt') || !v('adz'))) return err('Enter the hunter\'s mailing address (street, town and ZIP). TFMV mails the donation check there.');
       if (!v('cf')) return err('Enter the MassWildlife confirmation number. No confirmation number, no intake.');
       const t = shotAt();
       if (!t) return err('Enter the date and time of the shot.');
       const h = ageNote();
       if (type === 'Donated' && h > 24) return err('Over 24 hours since the shot. It can\'t be accepted as a donation: turn it away, or check it in as private if Joe agrees.');
       if (type === 'Donated' && !document.getElementById('fd').checked) return err('Donated deer must be field dressed within 4 hours of the shot.');
-      if (!document.getElementById('sk').checked) return err('Deer are skinned at the station before they hang. Tick the box once it\'s done.');
+      if (!document.getElementById('sk').checked) return err('Home Ground skins and removes the head before any deer hangs. Tick the box once it\'s done.');
       if (type === 'Private' && coolerCount() >= S().coolerCap) return err('The cooler is full. Hold private deer until there\'s room.');
       const f = { band: b, type, deer: v('deer'), hunterNumber: v('hn'), hunterName: v('nm'), hunterPhone: v('ph'), confirmation: v('cf'),
+        address: type === 'Donated' ? v('ad1') + ', ' + v('adt') + ', ' + (v('ads') || 'MA').toUpperCase() + ' ' + v('adz') : '',
         shotAt: stamp(t), dressed4h: document.getElementById('fd').checked, ddp: document.getElementById('ddp').checked, skinned: true, notes: v('nt'),
         porkFat: type === 'Private' && !!document.getElementById('pork') && document.getElementById('pork').checked };
       queue('intake', f, 'Check-in ' + b);
@@ -691,7 +698,49 @@
     };
   }
 
-  const GO = { status: showStatus, board: showBoard, intake: showIntake, shifts: () => showShifts(), messages: showMessages, help: showHelp,
+  function showPayments() {
+    frame('payments', 'Hunter payments', '<div id="pay"><p class="status">Loading…</p></div>');
+    const box = document.getElementById('pay');
+    const money = n => '$' + fmt(n || 0);
+    const draw = out => {
+      const owed = out.payments.filter(p => p.status !== 'Paid'), paid = out.payments.filter(p => p.status === 'Paid');
+      const canMark = isMgr();
+      const row = (p, chk) => '<div class="trow">' + (chk ? '<label class="choice" style="margin:0"><input type="checkbox" data-band="' + esc(p.band) + '"> ' : '<div>') +
+        '<span><b>' + esc(p.hunter || '(no name)') + '</b> · ' + money(p.amount) + ' · ' + esc(p.deer) + '<br><span class="status">' +
+        esc(p.address || 'NO ADDRESS ON FILE') + (p.phone ? ' · ' + esc(p.phone) : '') + '<br>Band ' + esc(p.band) + ', in ' + esc(p.dateIn) +
+        (p.status === 'Paid' ? ' · check sent ' + esc(p.sent) + (p.note ? ' (' + esc(p.note) + ')' : '') : '') + '</span></span>' + (chk ? '</label>' : '</div>') + '</div>';
+      box.innerHTML = '<div class="tiles">' + '<div class="tile"><div class="n">' + money(out.owed) + '</div><div class="l">' + out.owedCount + (out.owedCount === 1 ? ' check' : ' checks') + ' owed</div></div>' +
+        '<div class="tile"><div class="n">' + money(out.paid) + '</div><div class="l">' + out.paidCount + (out.paidCount === 1 ? ' check' : ' checks') + ' sent</div></div></div>' +
+        '<div class="card"><p class="status">TFMV pays each donating hunter by check. Download the list for TFMV, then mark the deer paid once the checks go out.</p>' +
+        '<button class="submit" id="pdl">Download owed checks for TFMV</button><div id="pout"></div></div>' +
+        '<div class="card"><h3>Owed</h3>' + (owed.length ? owed.map(p => row(p, canMark)).join('') : '<p class="status">Nothing owed.</p>') +
+        (canMark && owed.length ? '<label for="pnote">Check number or note <span class="hint">optional</span></label><input id="pnote" type="text" maxlength="100">' +
+          '<div class="err" id="perr"></div><button class="btn" id="pmark">Mark ticked deer as paid</button>' : '') + '</div>' +
+        (paid.length ? '<div class="card"><h3>Sent</h3>' + paid.map(p => row(p, false)).join('') + '</div>' : '');
+      document.getElementById('pdl').onclick = () => {
+        const q = x => '"' + String(x == null ? '' : x).replace(/"/g, '""') + '"';
+        const head = ['Hunter', 'Hunter number', 'Mailing address', 'Phone', 'Amount ($)', 'Deer', 'Band', 'MassWildlife confirmation', 'Date in'];
+        const csv = [head].concat(owed.map(p => [p.hunter, p.hunterNumber, p.address, p.phone, p.amount, p.deer, p.band, p.confirmation, p.dateIn]))
+          .map(r => r.map(q).join(',')).join('\r\n');
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' }));
+        a.download = 'TFMV hunter checks ' + stamp().split(' ')[0].replace(/\//g, '-') + '.csv';
+        document.body.appendChild(a); a.click(); a.remove();
+        document.getElementById('pout').innerHTML = '<div class="note ok">' + owed.length + (owed.length === 1 ? ' check, ' : ' checks, ') + money(out.owed) + ', downloaded.</div>';
+      };
+      const mk = document.getElementById('pmark');
+      if (mk) mk.onclick = async () => {
+        const bands = Array.from(box.querySelectorAll('input[data-band]:checked')).map(x => x.dataset.band);
+        if (!bands.length) { document.getElementById('perr').textContent = 'Tick the deer whose checks went out.'; return; }
+        mk.disabled = true;
+        try { const r = await call({ action: 'markpaid', bands, note: document.getElementById('pnote').value.trim() }); draw(r); toast(r.marked + ' marked paid.', true); }
+        catch (e) { mk.disabled = false; document.getElementById('perr').textContent = e.offline ? 'Needs signal. Try again when connected.' : e.message; }
+      };
+    };
+    call({ action: 'payments' }).then(draw).catch(e => { box.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal. Try again when connected.' : e.message) + '</div>'; });
+  }
+
+  const GO = { payments: showPayments, status: showStatus, board: showBoard, intake: showIntake, shifts: () => showShifts(), messages: showMessages, help: showHelp,
     numbers: showNumbers, daily: showDaily, team: showTeam, martin: showMartin };
 
   /* ---------- start ---------- */
