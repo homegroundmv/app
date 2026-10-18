@@ -425,7 +425,7 @@
       const t = shotAt(), el = document.getElementById('age');
       if (!t) { el.textContent = ''; return 0; }
       const h = (Date.now() - t) / 36e5;
-      el.innerHTML = h > 24 ? '<div class="note bad">' + Math.floor(h) + ' hours since the shot. Over 24 hours: Share the Harvest won\'t take it as a donation.</div>' : Math.max(0, Math.floor(h)) + ' hours since the shot.';
+      el.innerHTML = h > 24 ? '<div class="note bad">' + Math.floor(h) + ' hours since the shot. Over 24 hours: we can\'t accept it, donated or private. Turn it away.</div>' : Math.max(0, Math.floor(h)) + ' hours since the shot.';
       return h;
     };
     ['sd', 'stm'].forEach(id => { document.getElementById(id).onchange = ageNote; });
@@ -444,7 +444,7 @@
       const t = shotAt();
       if (!t) return err('Enter the date and time of the shot.');
       const h = ageNote();
-      if (type === 'Donated' && h > 24) return err('Over 24 hours since the shot. It can\'t be accepted as a donation: turn it away, or check it in as private if Joe agrees.');
+      if (h > 24) return err('Over 24 hours since the shot. We can\'t accept it, donated or private: tap Turn this deer away instead.');
       if (type === 'Donated' && !document.getElementById('fd').checked) return err('Donated deer must be field dressed within 4 hours of the shot.');
       if (!document.getElementById('sk').checked) return err('Home Ground skins and removes the head before any deer hangs. Tick the box once it\'s done.');
       if (type === 'Private' && coolerCount() >= S().coolerCap) return err('The cooler is full. Hold private deer until there\'s room.');
