@@ -486,7 +486,7 @@
     const c = calFor(prop);
     if (!box) return;
     if (!c) { box.innerHTML = '<p class="status">Loading the calendar for ' + esc(prop) + '…</p>'; return; }
-    const style = { open: 'background:#E7F1E8;color:#24402A', mine: 'background:#32553A;color:#fff', full: 'background:#FCE8E6;color:#A12A1F', blocked: 'background:#EEE;color:#777;text-decoration:line-through' };
+    const style = { open: 'background:#EEF0E0;color:#363C17', mine: 'background:#4B5320;color:#fff', full: 'background:#FCE8E6;color:#A12A1F', blocked: 'background:#EEE;color:#777;text-decoration:line-through' };
     const start = new Date(earliestBookable() + 'T12:00:00');
     let rows = '';
     for (let i = 0; i < 14; i++) {
