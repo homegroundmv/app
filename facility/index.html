@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#32553A">
+<meta name="theme-color" content="#4B5320">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="HG Facility">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -13,9 +13,9 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <style>
   :root {
-    --green: #32553A; --green-dark: #24402A; --brown: #7F6249; --ink: #2E271E;
+    --green: #4B5320; --green-dark: #363C17; --brown: #B45F0C; --ink: #3A301D;
     --paper: #FAF7F0; --card: #FFFFFF; --line: #DDD5C6; --muted: #6B6255;
-    --warn-bg: #FFF4DC; --warn: #8A5A00; --bad-bg: #FCE8E6; --bad: #A12A1F; --ok-bg: #E7F1E8;
+    --warn-bg: #FFF4DC; --warn: #8A5A00; --bad-bg: #FCE8E6; --bad: #A12A1F; --ok-bg: #EEF0E0;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; background: var(--paper); color: var(--ink);
@@ -85,7 +85,7 @@
   .card.alert.amber { border-left: 8px solid #D99A00; background: var(--warn-bg); }
   .card.alert.red { border-left: 8px solid var(--bad); background: var(--bad-bg); }
   .slot { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px; border-radius: 12px; margin: 8px 0; border: 1px solid var(--line); background: #fff; }
-  .slot.open { background: var(--ok-bg); } .slot.mine { background: var(--green); color: #fff; } .slot.mine .status { color: #E7F1E8; }
+  .slot.open { background: var(--ok-bg); } .slot.mine { background: var(--green); color: #fff; } .slot.mine .status { color: #EEF0E0; }
   .slot.full { background: var(--bad-bg); } .slot.past { opacity: .5; }
   .slot .btn { padding: 10px 14px; font-size: 15px; }
   .calc { background: var(--ok-bg); border-radius: 10px; padding: 10px 12px; margin: 12px 0 4px; font-size: 15px; }
