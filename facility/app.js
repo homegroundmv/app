@@ -1,7 +1,7 @@
 /* Home Ground Facility app (v2): processors' phones and the intake laptop.
  * Sign in with your staff number (P-001) and PIN.
- * Screens: Home (help alerts, clock in/out, your numbers), Cooler board, Check in a deer, Shift
- * schedule, Messages (team chat and direct), Need help, My numbers, Team numbers (managers),
+ * Screens: Home (help alerts, clock in/out, your numbers), Cooler board, Check in a deer, Book your time,
+ * Messages (team chat and direct), Need help, My numbers, Team numbers (managers),
  * Daily log, Donation report.
  * Deer actions and log entries are saved on the device first and sent when there's signal.
  * The deer's field band number is its ID all the way through.
@@ -184,7 +184,7 @@
     const next = (h.myShifts || [])[0];
     const clockCard = '<div class="card"><div class="deer"><div>' +
       (h.clockedIn ? '<b>Clocked in</b><div class="status">Since ' + esc(when(h.clockedIn)) + '</div>' : '<b>Not clocked in</b><div class="status">Clock in when you start work, including cleaning and training time.</div>') +
-      (next ? '<div class="status">Next shift: ' + esc(dayName(next.date)) + ', ' + esc(next.slot) + ' ' + t12(next.starts) + '–' + t12(next.ends) + '</div>' : '') +
+      (next ? '<div class="status">Next booking: ' + esc(dayName(next.date)) + ', ' + t12(next.starts) + '–' + t12(next.ends) + '</div>' : '') +
       '</div><button class="btn' + (h.clockedIn ? ' alt' : '') + '" id="clock">' + (h.clockedIn ? 'Clock out' : 'Clock in') + '</button></div><div id="clock-err" class="err"></div></div>';
     const tiles = '<div class="tiles">' +
       tile(m.deer || 0, 'Deer processed') + tile(m.donated || 0, 'Donated deer') +
@@ -205,7 +205,7 @@
       big('status', 'Facility status', 'Cooler, oldest deer, temperatures, who\'s here') +
       big('board', 'Cooler', inC + ' of ' + s.coolerCap + ' in the cooler' + (inC >= s.coolerCap ? ' · FULL' : '')) +
       big('intake', 'Check in a deer', 'Band, tag, skinning, print the intake band') +
-      big('shifts', 'Shift schedule', 'Book or cancel your shifts · up to ' + s.maxAtOnce + ' at a time') +
+      big('shifts', 'Book your time', 'Pick your own start and end · up to ' + s.maxAtOnce + ' at once') +
       big('messages', 'Messages' + (h.unread ? ' (' + h.unread + ' new)' : ''), 'Team chat and direct messages') +
       big('help', 'Need help', 'Sends a notification to everyone on the team', 'red') +
       big('numbers', 'My numbers', 'Deer, pounds, hours and pay this week') +
@@ -291,6 +291,7 @@
         (d['Carcass weight (lb)'] ? ' · ' + esc(d['Carcass weight (lb)']) + ' lb carcass' : '') +
         (d['Pounds packaged'] ? ' · ' + esc(d['Pounds packaged']) + ' lb packaged' : '') + '</div></div>' +
         '<div class="hrs">' + (d.Status === 'Released' ? '' : Math.floor(h) + ' h') + '</div></div>' +
+        (d.Cuts && d.Status !== 'Released' ? '<div class="note ok"><b>Cuts:</b> ' + esc(d.Cuts) + '</div>' : '') +
         (d.Status === 'Released' ? '<div class="status">Released ' + esc(d.Released) + ' to ' + esc(d['Released to']) + '</div>' : '') +
         '<div class="actions">' + act + (d.Status !== 'Released' && !isViewer() ? '<button class="btn ghost" data-a="print">Print band</button>' : '') + '</div><div class="form"></div></div>';
     };
@@ -392,6 +393,13 @@
     'Not field dressed within 4 hours (air above 37°F)', 'Spoiled: smell, green or slimy meat, flies or maggots',
     'Heavy gut contamination that can\'t be trimmed', 'Signs of illness: lesions, abscesses, very thin or sick-looking',
     'Road-killed, or already cut up or quartered', 'Other (say why in the notes)'];
+  const CUTS = [['Backstraps', ['Whole', 'Steaks', 'Butterflied', 'Ground']], ['Tenderloins', ['Whole', 'Ground']],
+    ['Hindquarters', ['Roasts', 'Steaks', 'Half roasts, half ground', 'Ground']], ['Shoulders', ['Roasts', 'Ground']],
+    ['Steaks', ['3/4"', '1"', '1 1/4"']], ['Roasts', ['about 2 lb', 'about 3 lb']]];
+  const cutsHtml = () => '<div id="cutbox" hidden><label>Cuts <span class="hint">from the hunter\'s signed cut sheet; neck, shanks and trim are always ground</span></label><div class="grid2">' +
+    CUTS.map((c, i) => '<div><label for="cut' + i + '">' + esc(c[0]) + (i > 3 ? ' size' : '') + '</label><select id="cut' + i + '"><option value="">' + (i > 3 ? 'Not needed' : 'Ground') + '</option>' +
+      c[1].filter(o => o !== 'Ground').map(o => '<option>' + esc(o) + '</option>').join('') + '</select></div>').join('') + '</div></div>';
+  const readCuts = () => CUTS.map((c, i) => { const v = document.getElementById('cut' + i).value; return i > 3 ? (v ? c[0] + ' ' + v : '') : c[0] + ': ' + (v || 'Ground'); }).filter(Boolean).join('; ');
   function showIntake() {
     const s = S(), now = new Date();
     frame('intake', 'Check in a deer',
@@ -412,6 +420,7 @@
       '<div id="addrbox" hidden><label for="ad1">Hunter mailing address <span class="hint">TFMV mails the donation check here</span></label><input id="ad1" type="text" autocomplete="street-address" placeholder="Street or PO box">' +
       '<div class="grid2"><div><label for="adt">Town</label><input id="adt" type="text"></div><div><label for="ads">State</label><input id="ads" type="text" value="MA" maxlength="2" autocapitalize="characters"></div>' +
       '<div><label for="adz">ZIP</label><input id="adz" type="text" inputmode="numeric" maxlength="10"></div></div></div>' +
+      cutsHtml() +
       '<div id="age" class="status"></div>' +
       '<label class="choice"><input id="fd" type="checkbox"> Field dressed within 4 hours of the shot (or the air stayed below 37°F)</label>' +
       '<label class="choice"><input id="ddp" type="checkbox"> Taken under a deer depredation permit (DDP)</label>' +
@@ -429,7 +438,7 @@
       return h;
     };
     ['sd', 'stm'].forEach(id => { document.getElementById(id).onchange = ageNote; });
-    document.querySelectorAll('input[name=type]').forEach(r => r.onchange = () => { document.getElementById('porkbox').hidden = r.value !== 'Private' || !r.checked; document.getElementById('addrbox').hidden = r.value !== 'Donated' || !r.checked; });
+    document.querySelectorAll('input[name=type]').forEach(r => r.onchange = () => { document.getElementById('porkbox').hidden = r.value !== 'Private' || !r.checked; document.getElementById('addrbox').hidden = r.value !== 'Donated' || !r.checked; document.getElementById('cutbox').hidden = r.value !== 'Private' || !r.checked; });
     const err = m => { document.getElementById('err').textContent = m; };
     document.getElementById('save').onclick = () => {
       const type = (document.querySelector('input[name=type]:checked') || {}).value;
@@ -449,6 +458,7 @@
       if (!document.getElementById('sk').checked) return err('Home Ground skins and removes the head before any deer hangs. Tick the box once it\'s done.');
       if (type === 'Private' && coolerCount() >= S().coolerCap) return err('The cooler is full. Hold private deer until there\'s room.');
       const f = { band: b, type, deer: v('deer'), hunterNumber: v('hn'), hunterName: v('nm'), hunterPhone: v('ph'), confirmation: v('cf'),
+        cuts: type === 'Private' ? readCuts() : '',
         address: type === 'Donated' ? v('ad1') + ', ' + v('adt') + ', ' + (v('ads') || 'MA').toUpperCase() + ' ' + v('adz') : '',
         shotAt: stamp(t), dressed4h: document.getElementById('fd').checked, ddp: document.getElementById('ddp').checked, skinned: true, notes: v('nt'),
         porkFat: type === 'Private' && !!document.getElementById('pork') && document.getElementById('pork').checked };
@@ -482,32 +492,148 @@
     setTimeout(() => window.print(), 50);
   }
 
-  /* ---------- shift schedule ---------- */
-  async function showShifts(data) {
-    frame('shifts', 'Shift schedule', '<div id="sched"><p class="status">Loading…</p></div>');
+  /* ---------- booking your time (start and end, first come first served) ---------- */
+  const toMin = hm => { const [h, m] = String(hm).split(':').map(Number); return h * 60 + (m || 0); };
+  const fromMin = n => Math.floor(n / 60) + ':' + pad(n % 60);
+  let bookDay = null, bookPick = null;
+  function bookCss() {
+    if (document.getElementById('book-css')) return;
+    const st_ = document.createElement('style'); st_.id = 'book-css';
+    st_.textContent = '.chips{display:flex;gap:6px;overflow-x:auto;padding:4px 0 8px;margin:0 -2px}' +
+      '.chips button{flex:0 0 auto;border:1px solid var(--line);background:#fff;border-radius:10px;padding:8px 10px;font-size:14px;cursor:pointer;color:var(--ink);text-align:center;line-height:1.2}' +
+      '.chips button.on{background:var(--green);color:#fff;border-color:var(--green)}.chips button small{display:block;font-size:11px;opacity:.8}' +
+      '.tl{position:relative;height:34px;border-radius:8px;overflow:hidden;display:flex;border:1px solid var(--line);margin-top:6px}.tl i{flex:1;display:block}' +
+      '.tl .win{position:absolute;top:0;bottom:0;border:3px solid var(--ink);border-radius:6px;pointer-events:none}' +
+      '.tlx{position:relative;height:16px;font-size:11px;color:var(--muted)}.tlx span{position:absolute;transform:translateX(-50%)}' +
+      '.key{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:6px}.key b{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-2px;margin-right:4px}' +
+      '.who{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--line)}' +
+      '.who .btn{padding:8px 12px;font-size:14px}.pickrow{display:flex;gap:10px}.pickrow label{flex:1}' +
+      '.sugg .btn{display:block;width:100%;margin:8px 0;text-align:left}#bk-go:disabled{opacity:.35;cursor:default}';
+    document.head.appendChild(st_);
+  }
+  const shade = (n, max, past) => past ? '#E4DED2' : n >= max ? '#C0392B' : n === 0 ? '#EEF0E0' : n >= max - 1 ? '#E0A526' : ['#D3D8B0', '#B3BB80', '#8C9652', '#69722F'][Math.min(3, Math.floor((n - 1) * 4 / Math.max(1, max - 2)))];
+
+  async function showShifts(data, msg) {
+    bookCss();
+    frame('shifts', 'Book your time', '<div id="sched"><p class="status">Loading…</p></div>');
     const box = document.getElementById('sched');
     try { if (!data) data = await call({ action: 'shifts' }); }
-    catch (e) { box.innerHTML = '<div class="note bad">' + esc(e.offline ? 'The schedule needs signal.' : e.message) + '</div>'; return; }
+    catch (e) { box.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Booking needs signal.' : e.message) + '</div>'; return; }
+    if (st.home && data.myShifts) { st.home.myShifts = data.myShifts; save(); }   // keep Home's "Next booking" current
+    const o0 = toMin(data.open.start), o1 = toMin(data.open.end), step = data.step, max = data.max, n = Math.round((o1 - o0) / step);
+    const now = new Date(), nowMin = now.getHours() * 60 + now.getMinutes(), todayIso = data.days[0].date;
+    if (!data.days.some(d => d.date === bookDay)) bookDay = todayIso;
+    const day = data.days.find(d => d.date === bookDay), isToday = bookDay === todayIso;
+    const pastIdx = i => isToday && o0 + (i + 1) * step <= nowMin;
+    const myDay = day.people.filter(p => p.mine);
+    const firstStart = isToday ? Math.max(o0, Math.ceil((nowMin + 1) / step) * step) : o0;
+    // default pick: keep the last one if it still makes sense, otherwise the first 4 hours that fit
+    if (!bookPick || bookPick.date !== bookDay || toMin(bookPick.start) < firstStart) {
+      const len = Math.min(4 * 60, o1 - firstStart);
+      bookPick = { date: bookDay, start: fromMin(firstStart), end: fromMin(Math.max(firstStart + step, firstStart + len)) };
+    }
     const mine = data.myShifts || [];
-    box.innerHTML = '<div class="card"><b>Your shifts</b>' + (mine.length ? mine.map(x => '<div class="status">' + esc(dayName(x.date)) + ' · ' + esc(x.slot) + ' ' + t12(x.starts) + '–' + t12(x.ends) + '</div>').join('') : '<div class="status">None booked.</div>') +
-      '<div class="status" style="margin-top:6px">Up to ' + data.max + ' processors at a time. Tap Book to take a shift; cancel any time before it starts. Clock in when you arrive.</div></div>' +
-      data.days.map(day => '<h2>' + esc(dayName(day.date)) + '</h2>' + day.slots.map(sl => {
-        const n = sl.people.length, me = sl.people.find(p => p.mine), full = n >= data.max;
-        const cls = sl.past ? 'past' : me ? 'mine' : full ? 'full' : n ? 'some' : 'open';
-        const btn = sl.past ? '' : me ? '<button class="btn ghost" data-cancel="' + esc(me.id) + '">Cancel</button>'
-          : full ? '<span class="pill wait">Full</span>' : '<button class="btn" data-book="' + esc(day.date + '|' + sl.slot) + '">Book</button>';
-        return '<div class="slot ' + cls + '"><div><b>' + esc(sl.slot) + '</b> ' + t12(sl.starts) + '–' + t12(sl.ends) +
-          '<div class="status">' + n + ' of ' + data.max + (n ? ': ' + esc(sl.people.map(p => p.mine ? 'You' : p.name).join(', ')) : '') + '</div></div><div>' + btn +
-          (isMgr() && !sl.past && !full ? ' <button class="plain" data-cover="' + esc(day.date + '|' + sl.slot) + '">Ask for cover</button>' : '') + '</div></div>';
-      }).join('')).join('');
+    const startOpts = [], endOpts = [];
+    for (let t = firstStart; t < o1; t += step) startOpts.push(t);
+    for (let t = firstStart + step; t <= o1; t += step) endOpts.push(t);
+    const opt = (list, sel) => list.map(t => '<option value="' + fromMin(t) + '"' + (fromMin(t) === sel ? ' selected' : '') + '>' + t12(fromMin(t)) + '</option>').join('');
+    const hours = []; for (let t = Math.ceil(o0 / 60) * 60; t <= o1; t += 120) hours.push(t);
+
+    box.innerHTML =
+      (msg ? '<div class="note ' + (msg.bad ? 'bad' : 'ok') + '">' + esc(msg.text) + '</div>' : '') +
+      '<div class="card"><b>Your bookings</b>' + (mine.length ? mine.map(x => '<div class="who"><div>' + esc(dayName(x.date)) + ' · ' + t12(x.starts) + '–' + t12(x.ends) + '</div>' +
+        '<button class="btn ghost" data-cancel="' + esc(x.id) + '">Cancel</button></div>').join('') : '<div class="status">None booked.</div>') +
+      '<div class="status" style="margin-top:6px">Pick your own start and end time. First come, first served: no more than ' + max + ' processors booked at the same moment. Cancel any time before you start. Clock in when you arrive.</div></div>' +
+      '<div class="chips">' + data.days.map(d => {
+        const peak = Math.max(0, ...d.counts);
+        return '<button data-day="' + d.date + '" class="' + (d.date === bookDay ? 'on' : '') + '">' + esc(dayName(d.date).split(',')[0]) + '<small>' + esc(dayName(d.date).split(', ')[1] || '') + '</small>' +
+          '<small>' + (peak >= max ? 'full at times' : d.people.length ? d.people.length + ' booked' : 'open') + '</small></button>';
+      }).join('') + '</div>' +
+      '<div class="card"><b>' + esc(dayName(bookDay)) + '</b> <span class="status">' + t12(data.open.start) + ' to ' + t12(data.open.end) + '</span>' +
+      '<div class="tl" id="tl">' + day.counts.map((c, i) => '<i style="background:' + shade(c, max, pastIdx(i)) + '" title="' + t12(fromMin(o0 + i * step)) + ': ' + c + ' of ' + max + '"></i>').join('') + '<div class="win" id="win"></div></div>' +
+      '<div class="tlx">' + hours.map(t => '<span style="left:' + ((t - o0) / (o1 - o0) * 100) + '%">' + t12(fromMin(t)).replace(':00', '').replace(' ', '') + '</span>').join('') + '</div>' +
+      '<div class="key"><span><b style="background:#EEF0E0"></b>open</span><span><b style="background:#8C9652"></b>some booked</span><span><b style="background:#E0A526"></b>1 place left</span><span><b style="background:#C0392B"></b>full</span></div>' +
+      (day.people.length ? day.people.map(p => '<div class="who"><div>' + (p.mine ? '<b>You</b>' : esc(p.name)) + ' · ' + t12(p.starts) + '–' + t12(p.ends) + '</div>' +
+        ((p.mine || isMgr()) && !(isToday && toMin(p.starts) <= nowMin) ? '<button class="btn ghost" data-cancel="' + esc(p.id) + '">Cancel</button>' : '') + '</div>').join('')
+        : '<div class="status" style="margin-top:8px">Nobody booked yet.</div>') + '</div>' +
+      (startOpts.length ? '<div class="card"><b>Book a time on ' + esc(dayName(bookDay)) + '</b>' +
+        '<div class="pickrow"><label>Start<select id="bk-s">' + opt(startOpts, bookPick.start) + '</select></label><label>End<select id="bk-e">' + opt(endOpts, bookPick.end) + '</select></label></div>' +
+        '<div id="bk-msg"></div><button class="btn wide" id="bk-go" style="width:100%;margin-top:10px">Book</button>' +
+        (isMgr() ? '<button class="plain" id="bk-cover">Ask for cover for this time</button>' : '') + '<div id="bk-sugg" class="sugg"></div></div>'
+        : '<div class="card"><div class="status">Booking for today has closed. Pick another day above.</div></div>');
+
     const go = async (b, body, done) => {
-      b.disabled = true;
-      try { const out = await call(body); if (done) done(out); else showShifts(out); }
-      catch (e) { b.disabled = false; toast(e.offline ? 'Needs signal.' : e.message); }
+      if (b) b.disabled = true;
+      try { const out = await call(body); if (done) done(out); }
+      catch (e) { if (b) b.disabled = false; toast(e.offline ? 'Needs signal.' : e.message); }
     };
-    box.querySelectorAll('[data-book]').forEach(b => b.onclick = () => { const [date, slot] = b.dataset.book.split('|'); go(b, { action: 'book', date, slot }); });
-    box.querySelectorAll('[data-cancel]').forEach(b => b.onclick = () => { if (confirmCancel()) go(b, { action: 'cancel', id: b.dataset.cancel }); });
-    box.querySelectorAll('[data-cover]').forEach(b => b.onclick = () => { const [date, slot] = b.dataset.cover.split('|'); go(b, { action: 'cover', date, slot }, out => { b.textContent = 'Sent to ' + out.sent + ' phone' + (out.sent === 1 ? '' : 's'); }); });
+    const book = (b, pick) => go(b, { action: 'book', date: pick.date, start: pick.start, end: pick.end }, out => {
+      if (out.conflict) {   // someone got there first: show the server's view and its alternatives
+        bookDay = pick.date; bookPick = pick;
+        showShifts(out, { bad: true, text: out.conflict.message + ' Pick one of the open times below.' });
+        setTimeout(() => sugg(out.conflict.suggestions), 0);
+        return;
+      }
+      bookPick = null;
+      showShifts(out, { text: 'Booked: ' + dayName(out.booked.date) + ', ' + t12(out.booked.start) + '–' + t12(out.booked.end) + '.' });
+    });
+    box.querySelectorAll('[data-day]').forEach(b => b.onclick = () => { bookDay = b.dataset.day; showShifts(data); });
+    box.querySelectorAll('[data-cancel]').forEach(b => b.onclick = () => { if (confirmCancel()) go(b, { action: 'cancel', id: b.dataset.cancel }, out => showShifts(out, { text: 'Cancelled.' })); });
+    const sugg = list => {
+      const el = document.getElementById('bk-sugg'); if (!el) return;
+      el.innerHTML = list && list.length ? '<div class="status" style="margin-top:8px">Open times the same length:</div>' + list.map((x, i) =>
+        '<button class="btn ghost" data-sg="' + i + '">Book ' + esc(x.date === bookDay ? 'this day' : dayName(x.date)) + ', ' + t12(x.start) + '–' + t12(x.end) + '</button>').join('')
+        : list ? '<div class="status" style="margin-top:8px">No open time that long nearby. Try a shorter booking or another day.</div>' : '';
+      el.querySelectorAll('[data-sg]').forEach(b => b.onclick = () => book(b, list[+b.dataset.sg]));
+    };
+    if (!startOpts.length) return;
+    const sEl = document.getElementById('bk-s'), eEl = document.getElementById('bk-e'), mEl = document.getElementById('bk-msg'), gEl = document.getElementById('bk-go'), win = document.getElementById('win');
+    // client-side check, same rules as the server (the server has the final say)
+    const countsFor = d => { const dd = data.days.find(x => x.date === d); return dd ? dd.counts : null; };
+    const fitsAt = (d, a, b) => {
+      const c = countsFor(d); if (!c || a < o0 || b > o1) return false;
+      if (d === todayIso && a <= nowMin) return false;
+      const dd = data.days.find(x => x.date === d);
+      if (dd.people.some(p => p.mine && a < toMin(p.ends) && b > toMin(p.starts))) return false;
+      for (let t = a; t < b; t += step) if (c[Math.floor((t - o0) / step)] >= max) return false;
+      return true;
+    };
+    const suggest = (a, b) => {
+      const out = []; let before = null, after = null;
+      for (let k = step; k <= o1 - o0 && !(before && after); k += step) {
+        if (!before && fitsAt(bookDay, a - k, b - k)) before = { date: bookDay, start: fromMin(a - k), end: fromMin(b - k) };
+        if (!after && fitsAt(bookDay, a + k, b + k)) after = { date: bookDay, start: fromMin(a + k), end: fromMin(b + k) };
+      }
+      if (before) out.push(before); if (after) out.push(after);
+      const i0 = data.days.findIndex(x => x.date === bookDay);
+      for (let i = i0 + 1; i < data.days.length && out.length < 3; i++) if (fitsAt(data.days[i].date, a, b)) out.push({ date: data.days[i].date, start: fromMin(a), end: fromMin(b) });
+      return out;
+    };
+    const check = () => {
+      let a = toMin(sEl.value), b = toMin(eEl.value);
+      if (b <= a) { b = Math.min(o1, a + Math.max(60, toMin(bookPick.end) - toMin(bookPick.start))); eEl.value = fromMin(b); }
+      bookPick = { date: bookDay, start: fromMin(a), end: fromMin(b) };
+      win.style.left = ((a - o0) / (o1 - o0) * 100) + '%'; win.style.width = ((b - a) / (o1 - o0) * 100) + '%';
+      const len = (b - a) / 60, own = myDay.find(p => a < toMin(p.ends) && b > toMin(p.starts));
+      let full = []; for (let t = a; t < b; t += step) if (day.counts[Math.floor((t - o0) / step)] >= max) full.push(t);
+      let peak = 0; for (let t = a; t < b; t += step) peak = Math.max(peak, day.counts[Math.floor((t - o0) / step)]);
+      const lenTxt = (len === Math.floor(len) ? len : len.toFixed(2).replace(/0$/, '')) + ' hour' + (len === 1 ? '' : 's');
+      let bad = '';
+      if (len < data.minHrs) bad = 'The shortest booking is ' + data.minHrs + ' hour' + (data.minHrs === 1 ? '' : 's') + '.';
+      else if (len > data.maxHrs) bad = 'The longest booking is ' + data.maxHrs + ' hours.';
+      else if (own) bad = 'You already have ' + t12(own.starts) + '–' + t12(own.ends) + ' this day.';
+      if (bad) { mEl.innerHTML = '<div class="note bad">' + esc(bad) + '</div>'; gEl.disabled = true; sugg(null); return; }
+      if (full.length) {
+        mEl.innerHTML = '<div class="note bad">Full from ' + t12(fromMin(full[0])) + ' to ' + t12(fromMin(full[full.length - 1] + step)) + ': already ' + max + ' processors booked. That time is blocked.</div>';
+        gEl.disabled = true; sugg(suggest(a, b)); return;
+      }
+      mEl.innerHTML = '<div class="note ok">' + lenTxt + ' · open. Busiest point: ' + peak + ' of ' + max + ' booked' + (peak === max - 1 ? ' (you\'d take the last place)' : '') + '.</div>';
+      gEl.disabled = false; sugg(null);
+    };
+    sEl.onchange = eEl.onchange = check; check();
+    gEl.onclick = () => book(gEl, bookPick);
+    const cov = document.getElementById('bk-cover');
+    if (cov) cov.onclick = () => go(cov, { action: 'cover', date: bookPick.date, start: bookPick.start, end: bookPick.end }, out => { cov.textContent = 'Sent to ' + out.sent + ' phone' + (out.sent === 1 ? '' : 's'); });
   }
   const confirmCancel = () => true;   // no browser dialogs: cancelling is one tap and can be re-booked
 
@@ -684,10 +810,10 @@
       '<div class="card"><b>Last logged temperatures</b> <span class="status">freezer 0°F or colder, never above 10 · hanging cooler 33–37°F, never above 41</span>' +
       (x.temps.list || []).map(t => temp(t, t.limit)).join('') +
       (isViewer() ? '' : '<button class="plain" data-go2="daily">Log a reading</button>') + '</div>' +
-      '<div class="card"><b>People</b><div class="tiles">' + tile(p.clockedIn.length, 'Clocked in now') + tile(p.onShift ? p.onShift.booked.length + ' of ' + p.max : '—', p.onShift ? 'Booked: ' + p.onShift.slot : 'No shift now') + '</div>' +
+      '<div class="card"><b>People</b><div class="tiles">' + tile(p.clockedIn.length, 'Clocked in now') + tile(p.onShift ? p.onShift.booked.length + ' of ' + p.max : '—', p.onShift ? 'Booked right now' : 'Nobody booked now') + '</div>' +
       (p.clockedIn.length ? '<div class="status">Clocked in: ' + esc(p.clockedIn.map(w => w.name + ' (since ' + when(w.since).split(' ').slice(-2).join(' ') + ')').join(', ')) + '</div>' : '') +
-      (p.onShift && p.onShift.booked.length ? '<div class="status">On the ' + esc(p.onShift.slot.toLowerCase()) + ' shift: ' + esc(p.onShift.booked.join(', ')) + ' · ends ' + t12(p.onShift.ends) + '</div>' : '') +
-      (p.nextShift ? '<div class="status">Next: ' + esc(p.nextShift.slot) + ' at ' + t12(p.nextShift.starts) + ', ' + p.nextShift.people + ' of ' + p.max + ' booked</div>' : '') + '</div>' +
+      (p.onShift && p.onShift.booked.length ? '<div class="status">Booked now: ' + esc(p.onShift.booked.join(', ')) + '</div>' : '') +
+      (p.nextShift ? '<div class="status">Next in: ' + esc(p.nextShift.slot) + (p.nextShift.people > 1 ? ' and ' + (p.nextShift.people - 1) + ' more' : '') + ' at ' + t12(p.nextShift.starts) + '</div>' : '') + '</div>' +
       '<div class="card"><b>Today</b><div class="tiles">' + tile(x.today.in, 'Deer in') + tile(x.today.processed, 'Processed') + tile(fmt(x.today.lb), 'lb packaged') + tile(x.today.released, 'Released') + '</div>' +
       (x.today.turnedAway ? '<div class="status">' + x.today.turnedAway + ' turned away today.</div>' : '') + '</div>' +
       (x.cash ? cashHtml(x.cash) : '') +
