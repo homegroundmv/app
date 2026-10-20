@@ -335,6 +335,11 @@
       renderBookings(true);
     } catch (e) { renderBookings(); }
   }
+  /** "5 pm Tue 10/20" style text for when free cancelling ends. */
+  function freeText(b) {
+    const d = new Date(b.freeUntil);
+    return (b.slot === 'PM' ? '9 am' : '5 pm') + ' ' + d.toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' });
+  }
   function renderBookings(fresh) {
     const box = document.getElementById('bookings');
     if (!box) return;
@@ -343,11 +348,14 @@
     if (!bookingsCache.length) { box.innerHTML = '<span class="status">No upcoming bookings.' + (fresh ? '' : ' (Last checked when you had signal.)') + '</span>'; return; }
     box.innerHTML = bookingsCache.map((b, i) => '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0' + (i ? ';border-top:1px solid var(--line)' : '') + '">' +
       '<span><b>' + esc(dayName(b.date)) + '</b> · ' + esc(slotName(b.slot)) + '<br><span class="status">' + esc(b.property) + (b.stand ? ' · Stand ' + esc(b.stand) : '') + '</span></span>' +
-      (b.canCancel ? '<button class="plain" data-cancel="' + i + '" style="color:var(--bad)">Cancel</button>' : '<span class="status">Started</span>') + '</div>').join('') +
-      '<p class="status" style="margin:8px 0 0">Can\'t make it? Cancel before your hunt starts (midnight for a morning or all-day booking, noon for an afternoon) so the time opens up for another hunter. To change a booking, cancel it and book again.</p>';
+      (b.canCancel ? '<button class="plain" data-cancel="' + i + '" style="color:var(--bad)">Cancel</button>' : '<span class="status">Started</span>') + '</div>' +
+      (b.canCancel && b.freeUntil ? '<div class="status" style="margin:-4px 0 6px">' + (Date.now() < b.freeUntil ? 'Free to cancel until ' + freeText(b) : 'Cancelling now costs 1 point') + '</div>' : '')).join('') +
+      '<p class="status" style="margin:8px 0 0">Can\'t make it? Cancel for free by 5 pm the day before a morning or all-day hunt, or by 9 am for an afternoon hunt, so the landowner knows and the time opens up for another hunter. Cancelling later (until the hunt starts) costs 1 point; a booking you don\'t cancel or report costs 3. You\'ll get a reminder 2 hours before free cancelling ends. To change a booking, cancel it and book again.</p>';
     box.querySelectorAll('[data-cancel]').forEach(btn => btn.onclick = async () => {
       const b = bookingsCache[Number(btn.dataset.cancel)];
-      if (!confirm('Cancel your booking on ' + b.property + ', ' + dayName(b.date) + ' (' + slotName(b.slot).toLowerCase() + ')?')) return;
+      const late = b.freeUntil && Date.now() >= b.freeUntil;
+      if (!confirm('Cancel your booking on ' + b.property + ', ' + dayName(b.date) + ' (' + slotName(b.slot).toLowerCase() + ')?' +
+        (late ? '\n\nFree cancelling ended ' + freeText(b) + ', so this costs 1 point. (Not cancelling and not going costs 3.)' : ''))) return;
       btn.disabled = true; btn.textContent = 'Cancelling…';
       try {
         await call({ action: 'cancel', hunter: me.hunter, pin: me.pin, property: b.property, date: b.date, slot: b.slot });
@@ -355,7 +363,8 @@
         try { localStorage.setItem(BOOKINGS_KEY, JSON.stringify({ hunter: me.hunter, list: bookingsCache })); } catch (e) { /* ignore */ }
         renderBookings(true);
         const note = document.createElement('div'); note.className = 'note ok';
-        note.textContent = 'Cancelled: ' + b.property + ', ' + dayName(b.date) + ' (' + slotName(b.slot).toLowerCase() + '). Home Ground has been told.';
+        note.textContent = 'Cancelled: ' + b.property + ', ' + dayName(b.date) + ' (' + slotName(b.slot).toLowerCase() + '). Home Ground has been told.' +
+          (late ? ' Late cancellation: 1 point.' : '');
         box.parentNode.insertBefore(note, box);
       } catch (e) {
         btn.disabled = false; btn.textContent = 'Cancel';
@@ -415,7 +424,7 @@
       '<label for="time">Time of hunt</label><select id="time"><option value="">Choose…</option>' +
       '<option>AM</option><option>PM</option><option>All day</option></select>' +
       '<label for="stand">Stand ID <span class="hint">Optional. The stand or spot you plan to use.</span></label><input id="stand" type="text">' +
-      '<label class="choice"><input id="agree" type="checkbox"> I understand I\'m not booked until Home Ground emails to confirm. To cancel, I\'ll use Your bookings on the app\'s home screen before my hunt starts.</label>' +
+      '<label class="choice"><input id="agree" type="checkbox"> I understand I\'m not booked until Home Ground emails to confirm. To cancel, I\'ll use Your bookings on the app\'s home screen: free by 5 pm the day before (9 am for an afternoon hunt); later than that costs 1 point.</label>' +
       '<div id="err" class="err"></div><button class="submit" id="send">Send booking</button>' +
       '<p class="center"><button class="plain" id="back">Back</button></p>';
     document.getElementById('back').onclick = () => showHome();
