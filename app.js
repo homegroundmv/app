@@ -417,14 +417,14 @@
   function showBook() {
     const min = earliestBookable();
     $app.innerHTML = header() + '<h1>Book a Hunt</h1>' +
-      '<div class="note warn">Book by 5 pm the day before. You\'re not booked until Home Ground emails to confirm. No confirmation, no hunt.</div>' +
+      '<div class="note warn">Book by 5 pm the day before. Bookings are confirmed automatically: you\'ll get a notification (or an email) within a minute or two of it going through. No confirmation, no hunt.</div>' +
       propertySelect() +
       '<div id="cal"></div>' +
       '<label for="day">Date of hunt</label><input id="day" type="date" min="' + min + '" value="' + min + '">' +
       '<label for="time">Time of hunt</label><select id="time"><option value="">Choose…</option>' +
       '<option>AM</option><option>PM</option><option>All day</option></select>' +
       '<label for="stand">Stand ID <span class="hint">Optional. The stand or spot you plan to use.</span></label><input id="stand" type="text">' +
-      '<label class="choice"><input id="agree" type="checkbox"> I understand I\'m not booked until Home Ground emails to confirm. To cancel, I\'ll use Your bookings on the app\'s home screen: free by 5 pm the day before (9 am for an afternoon hunt); later than that costs 1 point.</label>' +
+      '<label class="choice"><input id="agree" type="checkbox"> I understand I\'m not booked until I get Home Ground\'s confirmation. To cancel, I\'ll use Your bookings on the app\'s home screen: free by 5 pm the day before (9 am for an afternoon hunt); later than that costs 1 point.</label>' +
       '<div id="err" class="err"></div><button class="submit" id="send">Send booking</button>' +
       '<p class="center"><button class="plain" id="back">Back</button></p>';
     document.getElementById('back').onclick = () => showHome();
@@ -449,7 +449,7 @@
         fields: { property: prop, date: usDate(f('day').value), time: f('time').value, stand: f('stand').value.trim() }
       });
       showHome('Booking saved for ' + esc(prop) + ' on ' + esc(usDate(f('day').value)) +
-        '. Watch your email for Home Ground\'s confirmation.' + (navigator.onLine ? '' : ' It will send as soon as you have signal.'));
+        '. You\'ll get a confirmation notification once it goes through, and it will show under Your bookings.' + (navigator.onLine ? '' : ' It will send as soon as you have signal.'));
     };
   }
 
