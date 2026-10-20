@@ -123,7 +123,7 @@
       const f = x.fields, b = band(f.band);
       if (!b) return;
       const d = by(b);
-      if (x.action === 'intake' && !d) list.push({ Band: b, Intake: x.at, 'Hunter number': f.hunterNumber, 'Hunter name': f.hunterName, 'MassWildlife confirmation': f.confirmation, Deer: f.deer, Type: f.type, 'Pork fat added': f.porkFat ? 'Yes' : (f.type === 'Donated' ? 'Yes' : 'No'), Status: 'Hanging', pending: true });
+      if (x.action === 'intake' && !d) list.push({ Band: b, Intake: x.at, 'Hunter number': f.hunterNumber, 'Hunter name': f.hunterName || ((f.firstName || '') + ' ' + (f.lastName || '')).trim(), 'MassWildlife confirmation': f.confirmation, Deer: f.deer, Type: f.type, 'Pork fat added': f.porkFat ? 'Yes' : (f.type === 'Donated' ? 'Yes' : 'No'), Status: 'Hanging', pending: true });
       if (!d) return;
       d.pending = true;
       if (x.action === 'start') { d.Status = 'Processing'; d['Processing started'] = x.at; d['Processor number'] = f.processor || st.staff.number; d.Butcher = f.processorName || st.staff.name; d['Carcass weight (lb)'] = f.weight; }
@@ -194,7 +194,7 @@
       frame('home', '', '<div class="note ok">View-only sign-in: you can look at everything below, but nothing can be changed from this sign-in.</div>' +
         big('status', 'Facility status', 'Cooler, oldest deer, temperatures, who\'s here') +
         big('board', 'Cooler', inC + ' of ' + s.coolerCap + ' in the cooler' + (inC >= s.coolerCap ? ' · FULL' : '')) +
-        big('martin', 'Donation report', 'Download the donated-deer list', 'alt') +
+        big('martin', 'Donation report', 'Donated deer for Martin\'s sheet', 'alt') +
         big('payments', 'Hunter payments', 'Donation checks owed and sent, with mailing addresses', 'alt'), true);
       $app.querySelectorAll('[data-go]').forEach(b => b.onclick = () => GO[b.dataset.go]());
       return;
@@ -211,7 +211,7 @@
       big('numbers', 'My numbers', 'Deer, pounds, hours and pay this week') +
       big('daily', 'Daily log', 'Temperatures, cleaning, waste, complaints', 'alt') +
       (isMgr() ? big('team', 'Team numbers', 'Every processor, this week and the season', 'alt') : '') +
-      big('martin', 'Donation report', 'Download for Martin', 'alt') +
+      big('martin', 'Donation report', 'Send new rows to Martin\'s sheet', 'alt') +
       (isMgr() ? big('payments', 'Hunter payments', 'Donation checks owed and sent, with mailing addresses', 'alt') : ''), true);
     $app.querySelectorAll('[data-go]').forEach(b => b.onclick = () => GO[b.dataset.go]());
     document.getElementById('clock').onclick = async e => {
@@ -292,6 +292,7 @@
         (d['Pounds packaged'] ? ' · ' + esc(d['Pounds packaged']) + ' lb packaged' : '') + '</div></div>' +
         '<div class="hrs">' + (d.Status === 'Released' ? '' : Math.floor(h) + ' h') + '</div></div>' +
         (d.Cuts && d.Status !== 'Released' ? '<div class="note ok"><b>Cuts:</b> ' + esc(d.Cuts) + '</div>' : '') +
+        (d['First pack #'] ? '<div class="note ok"><b>Package numbers ' + esc(d['First pack #']) + '–' + esc(d['Last pack #']) + '</b> (for MassWildlife)</div>' : '') +
         (d.Status === 'Released' ? '<div class="status">Released ' + esc(d.Released) + ' to ' + esc(d['Released to']) + '</div>' : '') +
         '<div class="actions">' + act + (d.Status !== 'Released' && !isViewer() ? '<button class="btn ghost" data-a="print">Print band</button>' : '') + '</div><div class="form"></div></div>';
     };
@@ -412,7 +413,9 @@
         : '<label class="choice" id="porkbox" hidden><input id="pork" type="checkbox"> <span>Add pork fat to the ground (' + esc(s.fatPrivate || 10) + '%), <b>+$' + esc(s.porkAddOn || 20) + '</b>. Local-farm pork fat, as available. Without it, the grind is all venison.</span></label>') +
       '<label for="deer">Deer</label><select id="deer"><option value="">Choose…</option><option>Doe</option><option>Button buck</option><option>Antlered buck</option></select>' +
       '<div class="grid2"><div><label for="hn">Hunter number <span class="hint">if enrolled</span></label><input id="hn" type="text" autocapitalize="characters" placeholder="H-001"></div>' +
-      '<div><label for="nm">Hunter name</label><input id="nm" type="text"></div>' +
+      '<div><label for="fn">Hunter first name</label><input id="fn" type="text" autocomplete="off"></div>' +
+      '<div><label for="ln">Hunter last name</label><input id="ln" type="text" autocomplete="off"></div>' +
+      '<div><label for="lic">Hunting license number <span class="hint">6 digits, on their license</span></label><input id="lic" type="text" inputmode="numeric" maxlength="6" pattern="[0-9]*"></div>' +
       '<div><label for="ph">Hunter phone</label><input id="ph" type="tel"></div>' +
       '<div><label for="cf">MassWildlife confirmation number</label><input id="cf" type="text"></div>' +
       '<div><label for="sd">Date of the shot</label><input id="sd" type="date" value="' + isoDate(now) + '" max="' + isoDate(now) + '"></div>' +
@@ -447,7 +450,10 @@
       if (deerList().some(d => band(d.Band) === b && d.Status !== 'Released')) return err('Band ' + b + ' is already in the cooler.');
       if (!type) return err('Choose donated or private.');
       if (!v('deer')) return err('Choose doe, button buck or antlered buck.');
-      if (!v('nm') && !v('hn')) return err('Enter the hunter\'s name or number.');
+      if (!v('fn') || !v('ln')) return err('Enter the hunter\'s first and last name.');
+      const lic = v('lic').replace(/\D/g, '');
+      if (lic && lic.length !== 6) return err('The hunting license number is 6 digits.');
+      if (type === 'Donated' && !lic) return err('Enter the hunter\'s 6-digit hunting license number. MassWildlife needs it for donated deer.');
       if (type === 'Donated' && (!v('ad1') || !v('adt') || !v('adz'))) return err('Enter the hunter\'s mailing address (street, town and ZIP). TFMV mails the donation check there.');
       if (!v('cf')) return err('Enter the MassWildlife confirmation number. No confirmation number, no intake.');
       const t = shotAt();
@@ -457,7 +463,7 @@
       if (type === 'Donated' && !document.getElementById('fd').checked) return err('Donated deer must be field dressed within 4 hours of the shot.');
       if (!document.getElementById('sk').checked) return err('Home Ground skins and removes the head before any deer hangs. Tick the box once it\'s done.');
       if (type === 'Private' && coolerCount() >= S().coolerCap) return err('The cooler is full. Hold private deer until there\'s room.');
-      const f = { band: b, type, deer: v('deer'), hunterNumber: v('hn'), hunterName: v('nm'), hunterPhone: v('ph'), confirmation: v('cf'),
+      const f = { band: b, type, deer: v('deer'), hunterNumber: v('hn'), firstName: v('fn'), lastName: v('ln'), license: lic, hunterPhone: v('ph'), confirmation: v('cf'),
         cuts: type === 'Private' ? readCuts() : '',
         address: type === 'Donated' ? v('ad1') + ', ' + v('adt') + ', ' + (v('ads') || 'MA').toUpperCase() + ' ' + v('adz') : '',
         shotAt: stamp(t), dressed4h: document.getElementById('fd').checked, ddp: document.getElementById('ddp').checked, skinned: true, notes: v('nt'),
@@ -474,7 +480,7 @@
       document.getElementById('awayok').onclick = () => {
         const why = (document.querySelector('input[name=why]:checked') || {}).value;
         if (!why) return err('Choose the reason.');
-        queue('reject', { hunterName: v('nm'), hunterPhone: v('ph'), confirmation: v('cf'), deer: v('deer'),
+        queue('reject', { firstName: v('fn'), lastName: v('ln'), hunterPhone: v('ph'), confirmation: v('cf'), deer: v('deer'),
           type: (document.querySelector('input[name=type]:checked') || {}).value || '', reason: why + (v('nt') ? ': ' + v('nt') : '') }, 'Turned away');
         showHome('Logged as turned away.');
       };
@@ -836,22 +842,55 @@
       (isViewer() ? '' : '<button class="plain" data-go2="daily">Log a cash deposit</button>') + '</div>';
   }
 
-  /* ---------- Martin's report ---------- */
-  function showMartin() {
-    frame('martin', 'Donation report', '<div class="card"><p class="status">Every donated deer, in the layout for Martin\'s spreadsheet. Downloads as a file that opens in Excel.</p><button class="submit" id="dl">Download for Martin</button><div id="mout"></div></div>');
+  /* ---------- Martin's report: rows for his live MassWildlife sheet ---------- */
+  async function showMartin(data, note) {
+    frame('martin', 'Donation report', '<div id="mbox"><p class="status">Loading…</p></div>');
+    const box = document.getElementById('mbox');
+    try { if (!data) data = await call({ action: 'martin' }); }
+    catch (e) { box.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal. Try again when connected.' : e.message) + '</div>'; return; }
+    const n = data.rows.length, tsv = data.rows.map(r => r.join('\t')).join('\n');
+    box.innerHTML = (note ? '<div class="note ok">' + esc(note) + '</div>' : '') +
+      '<div class="card"><b>' + (n ? n + ' donated deer to send' : 'Nothing new to send') + '</b>' +
+      '<p class="status">Martin\'s sheet (2026HomeGround_DataEntry) is live: rows pasted in reach him right away. Invoice Date is today, ' + esc(data.today) + '. ' +
+      data.sentCount + ' already sent' + (data.waiting ? ' · ' + data.waiting + ' donated deer still hanging or being processed' : '') + '.</p>' +
+      (n ? '<div style="overflow-x:auto"><table class="mtab"><tr>' + data.header.map(h => '<th>' + esc(h) + '</th>').join('') + '</tr>' +
+        data.rows.map(r => '<tr>' + r.map(c => '<td>' + esc(c) + '</td>').join('') + '</tr>').join('') + '</table></div>' +
+        (isViewer() ? '' :
+        '<ol class="status" style="padding-left:20px"><li>Tap <b>Copy rows</b>.</li><li>Open Martin\'s sheet, click the Customer ID cell of the first empty row, and paste.</li><li>Come back and tap <b>Mark as sent</b> so they aren\'t sent twice.</li></ol>' +
+        '<button class="submit" id="mcopy">Copy ' + n + ' row' + (n === 1 ? '' : 's') + '</button>' +
+        (isMgr() ? '<button class="btn ghost" id="msent" style="width:100%;margin-top:8px">I\'ve pasted them: mark as sent</button>' : '<p class="status">A manager marks them as sent.</p>')) : '') +
+      '<div id="mout"></div></div>' +
+      '<div class="card"><b>Everything</b><p class="status">All donated deer in Martin\'s layout, as a file that opens in Excel.</p><button class="btn ghost" id="dl">Download all</button></div>';
+    if (!document.getElementById('mtab-css')) { const st_ = document.createElement('style'); st_.id = 'mtab-css';
+      st_.textContent = '.mtab{border-collapse:collapse;font-size:13px;margin:8px 0;white-space:nowrap}.mtab th,.mtab td{border:1px solid var(--line);padding:4px 6px;text-align:left}.mtab th{background:var(--ok-bg)}';
+      document.head.appendChild(st_); }
+    const out = document.getElementById('mout');
+    const cp = document.getElementById('mcopy');
+    if (cp) cp.onclick = async () => {
+      try { await navigator.clipboard.writeText(tsv); out.innerHTML = '<div class="note ok">Copied. Paste into Martin\'s sheet at the Customer ID column of the first empty row.</div>'; }
+      catch (e) {
+        out.innerHTML = '<p class="status">Copy didn\'t work on this device. Select the text below and copy it:</p><textarea id="mtsv" rows="4" style="width:100%">' + esc(tsv) + '</textarea>';
+        const t = document.getElementById('mtsv'); t.focus(); t.select();
+      }
+    };
+    const ms = document.getElementById('msent');
+    if (ms) ms.onclick = async () => {
+      ms.disabled = true;
+      try { const r = await call({ action: 'martinsent', bands: data.bands }); showMartin(r, r.marked + ' marked as sent to Martin.'); }
+      catch (e) { ms.disabled = false; toast(e.offline ? 'Needs signal.' : e.message); }
+    };
     document.getElementById('dl').onclick = async () => {
-      const box = document.getElementById('mout');
-      box.innerHTML = '<p class="status">Getting the latest…</p>';
+      out.innerHTML = '<p class="status">Getting the latest…</p>';
       try {
-        const out = await call({ action: 'donations' });
+        const all = await call({ action: 'donations' });
         const q = x => '"' + String(x == null ? '' : x).replace(/"/g, '""') + '"';
-        const csv = [out.header].concat(out.rows).map(r => r.map(q).join(',')).join('\r\n');
+        const csv = [all.header].concat(all.rows).map(r => r.map(q).join(',')).join('\r\n');
         const a = document.createElement('a');
         a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' }));
         a.download = 'Home Ground donations ' + stamp().split(' ')[0].replace(/\//g, '-') + '.csv';
         document.body.appendChild(a); a.click(); a.remove();
-        box.innerHTML = '<div class="note ok">' + out.rows.length + ' donated deer downloaded.</div>';
-      } catch (e) { box.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal. Try again when connected.' : e.message) + '</div>'; }
+        out.innerHTML = '<div class="note ok">' + all.rows.length + ' donated deer downloaded.</div>';
+      } catch (e) { out.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal. Try again when connected.' : e.message) + '</div>'; }
     };
   }
 
@@ -898,7 +937,7 @@
   }
 
   const GO = { payments: showPayments, status: showStatus, board: showBoard, intake: showIntake, shifts: () => showShifts(), messages: showMessages, help: showHelp,
-    numbers: showNumbers, daily: showDaily, team: showTeam, martin: showMartin };
+    numbers: showNumbers, daily: showDaily, team: showTeam, martin: () => showMartin() };
 
   /* ---------- start ---------- */
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
