@@ -94,10 +94,11 @@
   function redraw() {
     if (current === 'home') showHome();
     if (current === 'board' && !document.querySelector('.form input, .form select')) showBoard();
+    if (current === 'donate' && !document.querySelector('.form input, .form select, #lic2:focus')) showDonate();
   }
   window.addEventListener('online', flush);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) flush(); });
-  setInterval(() => { if (!document.hidden && (current === 'home' || current === 'board')) { flush(); if (!flushing) refresh(true); } }, 45000);
+  setInterval(() => { if (!document.hidden && (current === 'home' || current === 'board' || current === 'donate')) { flush(); if (!flushing) refresh(true); } }, 45000);
 
   function status() {
     const el = document.getElementById('sync');
@@ -192,8 +193,10 @@
       '<p class="status center">Your season so far · ' + esc(s.pkgSize) + ' lb packages, ' + esc(s.fatDonated) + '% pork fat</p>';
     if (isViewer()) {
       frame('home', '', '<div class="note ok">View-only sign-in: you can look at everything below, but nothing can be changed from this sign-in.</div>' +
-        big('status', 'Facility status', 'Cooler, oldest deer, temperatures, who\'s here') +
-        big('board', 'Cooler', inC + ' of ' + s.coolerCap + ' in the cooler' + (inC >= s.coolerCap ? ' · FULL' : '')) +
+        group('Check on things') +
+        big('status', 'Facility status', 'Cooler, oldest deer, temperatures, who\'s here', 'view') +
+        big('board', 'Cooler', inC + ' of ' + s.coolerCap + ' in the cooler' + (inC >= s.coolerCap ? ' · FULL' : ''), 'view') +
+        group('Office') +
         big('martin', 'Donation report', 'Donated deer for Martin\'s sheet', 'alt') +
         big('payments', 'Hunter payments', 'Donation checks owed and sent, with mailing addresses', 'alt'), true);
       $app.querySelectorAll('[data-go]').forEach(b => b.onclick = () => GO[b.dataset.go]());
@@ -202,16 +205,20 @@
     frame('home', '',
       (note ? '<div class="note ok">' + note + '</div>' : '') +
       '<div id="alerts">' + alertsHtml() + '</div><div id="push"></div>' + clockCard + tiles +
-      big('status', 'Facility status', 'Cooler, oldest deer, temperatures, who\'s here') +
-      big('board', 'Cooler', inC + ' of ' + s.coolerCap + ' in the cooler' + (inC >= s.coolerCap ? ' · FULL' : '')) +
+      group('Work') +
       big('intake', 'Check in a deer', 'Band, tag, skinning, print the intake band') +
+      big('donate', 'Process a donated deer', 'Everything for Martin\'s sheet, package numbers filled in for you') +
       big('shifts', 'Book your time', 'Pick your own start and end · up to ' + s.maxAtOnce + ' at once') +
+      big('daily', 'Daily log', 'Temperatures, cleaning, waste, complaints') +
       big('messages', 'Messages' + (h.unread ? ' (' + h.unread + ' new)' : ''), 'Team chat and direct messages') +
       big('help', 'Need help', 'Sends a notification to everyone on the team', 'red') +
-      big('numbers', 'My numbers', 'Deer, pounds, hours and pay this week') +
-      big('daily', 'Daily log', 'Temperatures, cleaning, waste, complaints', 'alt') +
-      (isMgr() ? big('team', 'Team numbers', 'Every processor, this week and the season', 'alt') : '') +
-      big('martin', 'Donation report', 'Send new rows to Martin\'s sheet', 'alt') +
+      group('Check on things') +
+      big('status', 'Facility status', 'Cooler, oldest deer, temperatures, who\'s here', 'view') +
+      big('board', 'Cooler', inC + ' of ' + s.coolerCap + ' in the cooler' + (inC >= s.coolerCap ? ' · FULL' : ''), 'view') +
+      big('numbers', 'My numbers', 'Deer, pounds, hours and pay this week', 'view') +
+      (isMgr() ? big('team', 'Team numbers', 'Every processor, this week and the season', 'view') : '') +
+      group('Office') +
+      big('martin', 'Donation report', 'Copy new rows to paste into Martin\'s sheet', 'alt') +
       (isMgr() ? big('payments', 'Hunter payments', 'Donation checks owed and sent, with mailing addresses', 'alt') : ''), true);
     $app.querySelectorAll('[data-go]').forEach(b => b.onclick = () => GO[b.dataset.go]());
     document.getElementById('clock').onclick = async e => {
@@ -223,6 +230,11 @@
     renderPush();
   }
   const tile = (n, label) => '<div class="tile"><div class="n">' + esc(n) + '</div><div class="l">' + esc(label) + '</div></div>';
+  const group = t => '<div class="grp">' + esc(t) + '</div>';
+  (() => { const c = document.createElement('style');
+    c.textContent = '.grp{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:20px 2px 4px}' +
+      '.big.view{background:var(--card);color:var(--green-dark);border:2px solid var(--green)}.big.view small{opacity:.8}';
+    document.head.appendChild(c); })();
   const big = (go, title, sub, cls) => '<button class="big' + (cls ? ' ' + cls : '') + '" data-go="' + go + '">' + esc(title) + '<small>' + esc(sub) + '</small></button>';
 
   function alertsHtml() {
@@ -312,9 +324,9 @@
     $app.querySelectorAll('[data-band]').forEach(c => c.querySelectorAll('[data-a]').forEach(b => b.onclick = () => act(b.dataset.a, all.find(d => d.Band === c.dataset.band), c.querySelector('.form'))));
   }
 
-  function act(kind, d, box) {
+  function act(kind, d, box, after) {
     if (kind === 'print') return printBand(d);
-    if (kind === 'grind') return grind(d, box);
+    if (kind === 'grind') return grind(d, box, after);
     const s = S();
     const fatPct = d.Type === 'Donated' ? s.fatDonated : (d['Pork fat added'] === 'Yes' ? s.fatPrivate : 0), fatOn = fatPct > 0, fat = fatPct / 100;
     const v = id => (document.getElementById(id) || {}).value || '';
@@ -390,7 +402,7 @@
         }
         queue('release', Object.assign({ band: d.Band, to, pounds: v('f2') }, pay), 'Release ' + d.Band);
       }
-      showBoard();
+      (after || showBoard)();
     };
   }
 
@@ -648,12 +660,13 @@
   }
   const confirmCancel = () => true;
   /** Donated deer: reserve the next MassWildlife package number before grinding. */
-  async function grind(d, box) {
+  async function grind(d, box, after) {
     box.innerHTML = '<p class="status">Getting package numbers…</p>';
     try {
       const out = await call({ action: 'grind', band: d.Band });
       (st.home.deer || []).forEach(x => { if (band(x.Band) === band(out.band) && x.Status !== 'Released') x['First pack #'] = out.first; });
-      save(); showBoard();
+      st.home.packs = { next: st.home.packs && st.home.packs.next, grinder: { band: band(out.band), first: out.first } };
+      save(); (after || showBoard)();
       toast('Label packages from ' + out.first + ', in order.', true);
     } catch (e) { box.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Package numbers need signal. Try again when connected.' : e.message) + '</div>'; }
   }   // no browser dialogs: cancelling is one tap and can be re-booked
@@ -857,6 +870,70 @@
       (isViewer() ? '' : '<button class="plain" data-go2="daily">Log a cash deposit</button>') + '</div>';
   }
 
+  /* ---------- Process a donated deer: Martin's columns, one deer at a time ---------- */
+  let donateBand = null;
+  function showDonate() {
+    const all = deerList(), p = st.home.packs || {};
+    const list = all.filter(d => d.Type === 'Donated' && (d.Status === 'Hanging' || d.Status === 'Processing'))
+      .sort((a, b) => (a.Status === 'Processing' ? 0 : 1) - (b.Status === 'Processing' ? 0 : 1) || hoursHung(b) - hoursHung(a));
+    const done = all.filter(d => d.Type === 'Donated' && d.Status === 'Ready').length;
+    if (!list.some(d => d.Band === donateBand)) donateBand = list.length ? list[0].Band : null;
+    const d = list.find(x => x.Band === donateBand);
+    const pk = n => ('000' + n).slice(-4);
+    const nextNote = p.grinder ? '<b>' + esc(p.grinder.band) + '</b> is on the grinder, labelled from <b>' + esc(p.grinder.first) + '</b>. The next deer\'s numbers follow on once it\'s finished.'
+      : 'Next package number: <b style="font-size:20px">' + esc(p.next || '0001') + '</b> (follows on from the last donated deer, automatically)';
+    let body = '<div class="card"><p class="status">Everything Martin\'s Share the Harvest sheet needs, for one donated deer at a time. ' +
+      'Check-in fills the hunter details; the app fills the dates and package numbers.</p><div class="note ok">' + nextNote + '</div>' +
+      (done ? '<p class="status">' + done + ' finished donated deer waiting to go to Martin: <button class="plain" data-go2="martin">Donation report</button></p>' : '') + '</div>';
+    if (!list.length) body += '<div class="card"><p class="status">No donated deer in the cooler right now. Check one in first.</p><button class="btn" data-go2="intake">Check in a deer</button></div>';
+    else {
+      body += '<div class="chips">' + list.map(x => '<button data-pick="' + esc(x.Band) + '" class="' + (x.Band === donateBand ? 'on' : '') + '">' + esc(x.Band) +
+        '<small>' + esc(x.Status === 'Processing' ? (x['First pack #'] ? 'grinding' : 'processing') : 'hanging') + '</small></button>').join('') + '</div>';
+      const [fn, ...rest] = String(d['Hunter name'] || '').trim().split(/\s+/);
+      const first = d['Hunter first name'] || (rest.length ? String(d['Hunter name']).trim().split(/\s+/).slice(0, -1).join(' ') : fn) || '';
+      const last = d['Hunter last name'] || (rest.length ? rest[rest.length - 1] : '');
+      const fp = d['First pack #'];
+      const row = (k, val, note) => '<tr><th>' + esc(k) + '</th><td>' + (val ? '<b>' + esc(val) + '</b>' : '') + (note ? ' <span class="status">' + note + '</span>' : '') + '</td></tr>';
+      body += '<div class="card"><b>' + esc(d.Band) + '</b> <span class="tag don">DONATED</span> <span class="status">' + esc(d.Deer || '') + '</span>' +
+        '<table class="mrow">' +
+        row('Customer ID', d['Hunter license #'], d['Hunter license #'] ? '' : '<span id="licbox"><input id="lic2" type="text" inputmode="numeric" maxlength="6" placeholder="6-digit license"><button class="btn ghost" id="licsave" style="padding:8px 12px">Save</button></span>') +
+        row('First Name', first) + row('Last Name', last) +
+        row('Date Received', String(d.Intake || '').split(' ')[0]) +
+        row('Confirmation/Seal #', d['MassWildlife confirmation']) +
+        row('Date Packaged', '', 'filled in when you tap Finished') +
+        row('First Pack #', fp, fp ? '' : 'next free number when you start grinding' + (p.grinder ? '' : ' (' + esc(p.next || '0001') + ')')) +
+        row('Last Pack #', '', fp ? 'worked out from the package count' : '') +
+        row('Donation Type', 'whole') +
+        row('Invoice Date', '', 'the day it goes to Martin') + '</table>';
+      const step = (n, t) => '<div class="grp" style="margin-top:14px">Step ' + n + ' · ' + t + '</div>';
+      if (isViewer()) body += '';
+      else if (d.Status === 'Hanging') body += step(1, 'Start processing') + '<button class="btn" data-a="start">Start processing</button>';
+      else if (!fp) body += step(2, 'Before grinding') + '<p class="status">Get this deer\'s package numbers before the first package comes off the grinder.</p><button class="btn alt" data-a="grind">Get package numbers</button>';
+      else body += step(3, 'Grind, label and finish') + '<div class="note warn" style="font-size:17px">Label the 2 lb packages in order from <b>' + esc(fp) + '</b>: ' + esc(fp) + ', ' + esc(pk(parseInt(fp, 10) + 1)) + ', …</div>' +
+        '<p class="status">When the last package is labelled, tap Finished, then clean and sanitize the grinder before the next deer.</p><button class="btn" data-a="finish">Finished</button>';
+      body += '<div class="form"></div></div>';
+    }
+    frame('donate', 'Process a donated deer', body);
+    if (!document.getElementById('mrow-css')) { const c = document.createElement('style'); c.id = 'mrow-css';
+      c.textContent = '.mrow{width:100%;table-layout:fixed;border-collapse:collapse;margin:10px 0;font-size:15px}.mrow th{text-align:left;font-weight:600;font-size:14px;color:var(--muted);padding:7px 8px 7px 0;width:45%;vertical-align:top;white-space:normal}.mrow td{padding:7px 0;border-bottom:1px solid var(--line);text-align:left;white-space:normal;overflow-wrap:anywhere}.mrow td input{width:100%;box-sizing:border-box;margin:0 0 6px}.mrow td .status{display:block}.mrow th{border-bottom:1px solid var(--line)}' +
+        '.chips{display:flex;gap:6px;overflow-x:auto;padding:4px 0 8px}.chips button{flex:0 0 auto;border:1px solid var(--line);background:#fff;border-radius:10px;padding:8px 12px;font-size:15px;cursor:pointer;color:var(--ink);line-height:1.2}.chips button.on{background:var(--green);color:#fff;border-color:var(--green)}.chips button small{display:block;font-size:11px;opacity:.8}';
+      document.head.appendChild(c); }
+    $app.querySelectorAll('[data-go2]').forEach(b => b.onclick = () => GO[b.dataset.go2]());
+    $app.querySelectorAll('[data-pick]').forEach(b => b.onclick = () => { donateBand = b.dataset.pick; showDonate(); });
+    if (!d) return;
+    const box = $app.querySelector('.form');
+    $app.querySelectorAll('[data-a]').forEach(b => b.onclick = () => act(b.dataset.a, d, box, showDonate));
+    const ls = document.getElementById('licsave');
+    if (ls) ls.onclick = async () => {
+      const lic = (document.getElementById('lic2').value || '').replace(/\D/g, '');
+      if (lic.length !== 6) return toast('The hunting license number is 6 digits.');
+      ls.disabled = true;
+      try { await call({ action: 'setlicense', band: d.Band, license: lic });
+        (st.home.deer || []).forEach(x => { if (band(x.Band) === band(d.Band) && x.Status !== 'Released') x['Hunter license #'] = lic; }); save(); showDonate(); }
+      catch (e) { ls.disabled = false; toast(e.offline ? 'Needs signal.' : e.message); }
+    };
+  }
+
   /* ---------- Martin's report: rows for his live MassWildlife sheet ---------- */
   async function showMartin(data, note) {
     frame('martin', 'Donation report', '<div id="mbox"><p class="status">Loading…</p></div>');
@@ -952,7 +1029,7 @@
   }
 
   const GO = { payments: showPayments, status: showStatus, board: showBoard, intake: showIntake, shifts: () => showShifts(), messages: showMessages, help: showHelp,
-    numbers: showNumbers, daily: showDaily, team: showTeam, martin: () => showMartin() };
+    numbers: showNumbers, daily: showDaily, team: showTeam, martin: () => showMartin(), donate: showDonate };
 
   /* ---------- start ---------- */
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
