@@ -300,7 +300,7 @@
         (d.Type !== 'Donated' && d['Pork fat added'] === 'Yes' ? '<span class="tag">+ PORK FAT</span>' : '') +
         (d.pending ? '<span class="pill wait">not sent yet</span>' : '') +
         '<div class="status">' + (dot ? '<span class="dot" style="background:' + dot[2] + '"></span>' + dot[1] + ' dot · ' : '') +
-        'in ' + esc(d.Intake) + ' · ' + esc(d.Deer || '') + ' · ' + esc(d['Hunter number'] || d['Hunter name'] || '') +
+        'in ' + esc(d.Intake) + ' · ' + esc(d.Deer || '') + (d['Antler points'] ? ' (' + esc(d['Antler points']) + ' pts)' : '') + ' · ' + esc(d['Hunter number'] || d['Hunter name'] || '') +
         (d.Butcher ? ' · ' + esc(d.Butcher) + (d['Processor number'] ? ' (' + esc(d['Processor number']) + ')' : '') : '') +
         (d['Carcass weight (lb)'] ? ' · ' + esc(d['Carcass weight (lb)']) + ' lb carcass' : '') +
         (d['Pounds packaged'] ? ' · ' + esc(d['Pounds packaged']) + ' lb packaged' : '') + '</div></div>' +
@@ -424,14 +424,20 @@
     const s = S(), now = new Date();
     frame('intake', 'Check in a deer',
       '<div class="card">' +
-      '<label for="band">Field band number <span class="hint">On the hock. No band? Use a new one from the box.</span></label><input id="band" type="text" autocapitalize="characters">' +
+      '<label>Is this an Island Access Program (IAP) deer?</label>' +
+      '<label class="choice"><input type="radio" name="iap" value="Yes"> <span><b>Yes</b>: it has an IAP field band from the harvest</span></label>' +
+      '<label class="choice"><input type="radio" name="iap" value="No"> <span><b>No</b>: the app gives it a Home Ground ID from the date of the shot</span></label>' +
+      '<div id="bandbox" hidden><label for="band">IAP field band number <span class="hint">On the hock</span></label><input id="band" type="text" autocapitalize="characters"></div>' +
+      '<div id="genbox" class="note ok" hidden>Home Ground ID: <b id="genid">enter the date of the shot below</b><br><span class="status">Printed on the intake band; it stays with the deer from intake to release.</span></div>' +
       '<label>Donated or private?</label>' +
       '<label class="choice"><input type="radio" name="type" value="Donated"> <span><b>Donated</b> (Share the Harvest). TFMV mails the hunter a check: $' + esc(s.payDoe || 150) + ' a doe, $' + esc(s.payBuck || 100) + ' a buck (antlered or button).</span></label>' +
       '<label class="choice"><input type="radio" name="type" value="Private"> <span><b>Private</b>: processed for the hunter, $' + esc(s.privatePrice || 250) + '.</span></label>' +
       (s.porkInStock === false ? '<p class="status" id="porkbox" hidden>Pork fat add-on: not available right now. The grind will be all venison.</p>'
         : '<label class="choice" id="porkbox" hidden><input id="pork" type="checkbox"> <span>Add pork fat to the ground (' + esc(s.fatPrivate || 10) + '%), <b>+$' + esc(s.porkAddOn || 20) + '</b>. Local-farm pork fat, as available. Without it, the grind is all venison.</span></label>') +
       '<label for="deer">Deer</label><select id="deer"><option value="">Choose…</option><option>Doe</option><option>Button buck</option><option>Antlered buck</option></select>' +
-      '<div class="grid2"><div><label for="hn">Hunter number <span class="hint">if enrolled</span></label><input id="hn" type="text" autocapitalize="characters" placeholder="H-001"></div>' +
+      '<div id="ptsbox" hidden><label for="pts">Points <span class="hint">count every point 1 inch and longer</span></label><input id="pts" type="number" inputmode="numeric" min="1" max="40" step="1" style="max-width:140px"></div>' +
+      '<div class="grid2"><div><label for="hn">Hunter number <span class="hint">if enrolled: fills in their details</span></label><input id="hn" type="text" autocapitalize="characters" placeholder="H-001"></div>' +
+      '<div id="hunterbox" style="grid-column:1/-1"></div>' +
       '<div><label for="fn">Hunter first name</label><input id="fn" type="text" autocomplete="off"></div>' +
       '<div><label for="ln">Hunter last name</label><input id="ln" type="text" autocomplete="off"></div>' +
       '<div><label for="lic">Hunting license number <span class="hint">6 digits, on their license</span></label><input id="lic" type="text" inputmode="numeric" maxlength="6" pattern="[0-9]*"></div>' +
@@ -459,16 +465,76 @@
       el.innerHTML = h > 24 ? '<div class="note bad">' + Math.floor(h) + ' hours since the shot. Over 24 hours: we can\'t accept it, donated or private. Turn it away.</div>' : Math.max(0, Math.floor(h)) + ' hours since the shot.';
       return h;
     };
-    ['sd', 'stm'].forEach(id => { document.getElementById(id).onchange = ageNote; });
+    // Non-IAP deer: ID = date of the shot (MMDDYYYY) + a two-digit count for that day, e.g. 0908202601
+    const genId = () => {
+      const sd = v('sd'); if (!sd) return '';
+      const [y, m, d] = sd.split('-'), pre = m + d + y;
+      const used = deerList().map(x => band(x.Band)).concat(st.outbox.map(x => band((x.fields || {}).band)))
+        .filter(x => x.length === 10 && x.indexOf(pre) === 0).map(x => parseInt(x.slice(8), 10) || 0);
+      return pre + ('0' + (Math.max(0, ...used) + 1)).slice(-2);
+    };
+    // Enrolled hunter: look the number up in the Office Registry, show it, the hunter confirms, then fill the form.
+    let hunterInfo = null, hunterConfirmed = false;
+    const hbox = document.getElementById('hunterbox');
+    // Accepts "1 Main St, Edgartown, MA 02539" (ours) and Squarespace's "1 Main St, Apt 2, Edgartown, MA, 02539, United States" style.
+    const splitAddr = a => {
+      let p = String(a || '').split(/\s*[,\n]\s*/).filter(Boolean);
+      if (p.length && /^(united states|usa|us)$/i.test(p[p.length - 1])) p.pop();
+      const last = p.pop() || '';
+      let zip = (last.match(/\b(\d{5}(?:-\d{4})?)$/) || [])[1] || '', state = (last.match(/\b([A-Za-z]{2})\b(?=\s*\d{5}|$)/) || [])[1] || '';
+      if (!state && /^[A-Za-z]{2}$/.test(p[p.length - 1] || '')) state = p.pop();
+      if (!zip || !p.length) return null;
+      const town = p.pop() || '';
+      return p.length ? { st: p.join(', '), town, state: (state || 'MA').toUpperCase(), zip } : null;
+    };
+    document.getElementById('hn').onchange = async () => {
+      hunterInfo = null; hunterConfirmed = false;
+      const raw = v('hn'); if (!raw) { hbox.innerHTML = ''; return; }
+      hbox.innerHTML = '<p class="status">Looking up ' + esc(raw) + '…</p>';
+      try {
+        const h = await call({ action: 'hunter', hunterNumber: raw });
+        if (!h.found) { hbox.innerHTML = '<div class="note warn">No enrolled hunter ' + esc(h.number) + '. Check the number, or leave it blank and type the details.</div>'; return; }
+        hunterInfo = h;
+        const addr = h.address ? h.address + (h.addressFrom === 'application' ? ' (from their application)' : '') : 'not on file yet', lic = h.license || 'not on file yet';
+        hbox.innerHTML = '<div class="card" style="margin:8px 0;border:2px solid var(--green)"><b>Hunter: please check this is you</b>' +
+          (/active/i.test(h.status) ? '' : '<div class="note warn">Status in the Registry: ' + esc(h.status) + '</div>') +
+          '<table class="mrow"><tr><th>Hunter</th><td><b>' + esc(h.number) + '</b></td></tr><tr><th>Name</th><td><b>' + esc(h.first + ' ' + h.last) + '</b></td></tr>' +
+          '<tr><th>Mailing address</th><td>' + esc(addr) + '</td></tr><tr><th>Hunting license #</th><td>' + esc(lic) + '</td></tr></table>' +
+          ((!h.address || !h.license) ? '<p class="status">Anything not on file: enter it below and it\'s saved to your Home Ground record for next time.</p>' : '') +
+          '<button class="btn" id="hyes">Yes, that\'s me</button> <button class="btn ghost" id="hno">No, edit</button></div>';
+        document.getElementById('hyes').onclick = () => {
+          hunterConfirmed = true;
+          const set = (id, val) => { const el = document.getElementById(id); if (el && val && !el.value) el.value = val; };
+          set('fn', h.first); set('ln', h.last); set('lic', h.license);
+          const a = splitAddr(h.address); if (a) { set('ad1', a.st); set('adt', a.town); const sEl = document.getElementById('ads'); if (sEl) sEl.value = a.state; set('adz', a.zip); }
+          hbox.innerHTML = '<div class="note ok">Confirmed by ' + esc(h.first) + '. Details filled in below; change anything that\'s out of date and it\'s updated on their record.</div>';
+        };
+        document.getElementById('hno').onclick = () => { hunterConfirmed = false; hbox.innerHTML = '<div class="note warn">Not confirmed: type the hunter\'s details below. Nothing is saved to their record.</div>'; };
+      } catch (e) { hbox.innerHTML = '<div class="note warn">' + esc(e.offline ? 'Lookup needs signal: type the details below.' : e.message) + '</div>'; }
+    };
+    document.getElementById('deer').onchange = () => { document.getElementById('ptsbox').hidden = v('deer') !== 'Antlered buck'; };
+    if (!document.getElementById('mrow-css')) { const c = document.createElement('style'); c.id = 'mrow-css';
+      c.textContent = '.mrow{width:100%;table-layout:fixed;border-collapse:collapse;margin:10px 0;font-size:15px}.mrow th{text-align:left;font-weight:600;font-size:14px;color:var(--muted);padding:7px 8px 7px 0;width:45%;vertical-align:top;white-space:normal}.mrow td{padding:7px 0;border-bottom:1px solid var(--line);text-align:left;white-space:normal;overflow-wrap:anywhere}.mrow th{border-bottom:1px solid var(--line)}';
+      document.head.appendChild(c); }
+    const iapNow = () => (document.querySelector('input[name=iap]:checked') || {}).value;
+    const showId = () => { const g = document.getElementById('genid'); if (iapNow() === 'No') g.textContent = genId() || 'enter the date of the shot below'; };
+    document.querySelectorAll('input[name=iap]').forEach(r => r.onchange = () => {
+      document.getElementById('bandbox').hidden = iapNow() !== 'Yes'; document.getElementById('genbox').hidden = iapNow() !== 'No'; showId(); });
+    ['sd', 'stm'].forEach(id => { document.getElementById(id).onchange = () => { ageNote(); showId(); }; });
     document.querySelectorAll('input[name=type]').forEach(r => r.onchange = () => { document.getElementById('porkbox').hidden = r.value !== 'Private' || !r.checked; document.getElementById('addrbox').hidden = r.value !== 'Donated' || !r.checked; document.getElementById('cutbox').hidden = r.value !== 'Private' || !r.checked; });
     const err = m => { document.getElementById('err').textContent = m; };
     document.getElementById('save').onclick = () => {
       const type = (document.querySelector('input[name=type]:checked') || {}).value;
-      const b = band(v('band'));
-      if (!b) return err('Enter the band number.');
+      const iap = iapNow();
+      if (!iap) return err('Say whether it\'s an Island Access Program (IAP) deer.');
+      if (iap === 'No' && !v('sd')) return err('Enter the date of the shot: the Home Ground ID comes from it.');
+      const b = iap === 'Yes' ? band(v('band')) : genId();
+      if (!b) return err('Enter the IAP field band number from the hock.');
       if (deerList().some(d => band(d.Band) === b && d.Status !== 'Released')) return err('Band ' + b + ' is already in the cooler.');
       if (!type) return err('Choose donated or private.');
       if (!v('deer')) return err('Choose doe, button buck or antlered buck.');
+      const pts = parseInt(v('pts'), 10);
+      if (v('deer') === 'Antlered buck' && !(pts >= 1 && pts <= 40)) return err('Count the points 1 inch and longer and enter the number.');
       if (!v('fn') || !v('ln')) return err('Enter the hunter\'s first and last name.');
       const lic = v('lic').replace(/\D/g, '');
       if (lic && lic.length !== 6) return err('The hunting license number is 6 digits.');
@@ -482,7 +548,7 @@
       if (type === 'Donated' && !document.getElementById('fd').checked) return err('Donated deer must be field dressed within 4 hours of the shot.');
       if (!document.getElementById('sk').checked) return err('Home Ground skins and removes the head before any deer hangs. Tick the box once it\'s done.');
       if (type === 'Private' && coolerCount() >= S().coolerCap) return err('The cooler is full. Hold private deer until there\'s room.');
-      const f = { band: b, type, deer: v('deer'), hunterNumber: v('hn'), firstName: v('fn'), lastName: v('ln'), license: lic, hunterPhone: v('ph'), confirmation: v('cf'),
+      const f = { band: b, iap: iap === 'Yes', hunterConfirmed: hunterConfirmed && !!hunterInfo, type, deer: v('deer'), points: v('deer') === 'Antlered buck' ? pts : '', hunterNumber: v('hn'), firstName: v('fn'), lastName: v('ln'), license: lic, hunterPhone: v('ph'), confirmation: v('cf'),
         cuts: type === 'Private' ? readCuts() : '',
         address: type === 'Donated' ? v('ad1') + ', ' + v('adt') + ', ' + (v('ads') || 'MA').toUpperCase() + ' ' + v('adz') : '',
         shotAt: stamp(t), dressed4h: document.getElementById('fd').checked, ddp: document.getElementById('ddp').checked, skinned: true, notes: v('nt'),
