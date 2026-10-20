@@ -58,7 +58,7 @@
 
   /* ---------- outbox: deer actions and log entries wait here until sent ---------- */
   function queue(action, fields, label) {
-    st.outbox.push({ clientId: uid(), action, fields, at: stamp(), label, created: Date.now() });
+    st.outbox.push({ clientId: uid(), action, fields, at: stamp(), label, created: Date.now(), by: st.number });
     save(); flush();
   }
   let flushing = false;
@@ -68,6 +68,7 @@
     try {
       for (const it of st.outbox.slice()) {
         if (it.error) continue;
+        if (it.by && it.by !== st.number) continue;   // someone else's entry (or demo vs real): it waits for them to sign in here again
         try {
           await call({ action: it.action, fields: it.fields, at: it.at, clientId: it.clientId });
           st.outbox = st.outbox.filter(x => x.clientId !== it.clientId);
@@ -76,7 +77,7 @@
         }
         save();
       }
-      if (!st.outbox.some(x => !x.error)) await refresh(true);
+      if (!st.outbox.some(x => !x.error && (!x.by || x.by === st.number))) await refresh(true);
     } finally { flushing = false; status(); }
   }
   async function refresh(quiet) {
@@ -146,6 +147,7 @@
       '<div class="sub">Home Ground Facility · <button class="plain" id="out" style="padding:0">Sign out</button></div></div></header>' +
       (noBack ? '' : '<button class="plain" id="home-btn">← Home</button>') +
       (title ? '<h1>' + title + '</h1>' : '') +
+      (st.staff && st.staff.demo ? '<div class="note warn"><b>Demo sign-in.</b> Practice data: nothing here goes into the real Facility Log.</div>' : '') +
       '<div id="sync" class="status"></div><div id="msg"></div>' + body;
     document.getElementById('out').onclick = () => signOut();
     const hb = document.getElementById('home-btn');
