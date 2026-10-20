@@ -278,7 +278,7 @@
       const cls = d.Status === 'Hanging' ? (h >= s.maxHold ? ' red' : h >= s.startBy ? ' amber' : '') : '';
       const mineOrMgr = d['Processor number'] === st.staff.number || isMgr();
       const act = isViewer() ? '' : d.Status === 'Hanging' ? '<button class="btn" data-a="start">Start processing</button>'
-        : d.Status === 'Processing' ? (mineOrMgr ? '<button class="btn" data-a="finish">Finished</button>' : '')
+        : d.Status === 'Processing' ? (mineOrMgr ? (d.Type === 'Donated' && !d['First pack #'] ? '<button class="btn alt" data-a="grind">Get package numbers</button> ' : '') + '<button class="btn" data-a="finish">Finished</button>' : '')
         : d.Status === 'Ready' ? '<button class="btn alt" data-a="release">Release</button>' : '';
       return '<div class="card' + cls + (d.Type === 'Donated' ? ' donated' : '') + '" data-band="' + esc(d.Band) + '">' +
         '<div class="deer"><div><span class="band">' + esc(d.Band) + '</span> ' +
@@ -292,7 +292,8 @@
         (d['Pounds packaged'] ? ' · ' + esc(d['Pounds packaged']) + ' lb packaged' : '') + '</div></div>' +
         '<div class="hrs">' + (d.Status === 'Released' ? '' : Math.floor(h) + ' h') + '</div></div>' +
         (d.Cuts && d.Status !== 'Released' ? '<div class="note ok"><b>Cuts:</b> ' + esc(d.Cuts) + '</div>' : '') +
-        (d['First pack #'] ? '<div class="note ok"><b>Package numbers ' + esc(d['First pack #']) + '–' + esc(d['Last pack #']) + '</b> (for MassWildlife)</div>' : '') +
+        (d['First pack #'] && d['Last pack #'] ? '<div class="note ok"><b>Package numbers ' + esc(d['First pack #']) + '–' + esc(d['Last pack #']) + '</b> (MassWildlife)</div>'
+          : d['First pack #'] ? '<div class="note warn" style="font-size:17px">Label the 2 lb packages in order from <b>' + esc(d['First pack #']) + '</b>: ' + esc(d['First pack #']) + ', ' + esc(('000' + (parseInt(d['First pack #'], 10) + 1)).slice(-4)) + ', …</div>' : '') +
         (d.Status === 'Released' ? '<div class="status">Released ' + esc(d.Released) + ' to ' + esc(d['Released to']) + '</div>' : '') +
         '<div class="actions">' + act + (d.Status !== 'Released' && !isViewer() ? '<button class="btn ghost" data-a="print">Print band</button>' : '') + '</div><div class="form"></div></div>';
     };
@@ -313,6 +314,7 @@
 
   function act(kind, d, box) {
     if (kind === 'print') return printBand(d);
+    if (kind === 'grind') return grind(d, box);
     const s = S();
     const fatPct = d.Type === 'Donated' ? s.fatDonated : (d['Pork fat added'] === 'Yes' ? s.fatPrivate : 0), fatOn = fatPct > 0, fat = fatPct / 100;
     const v = id => (document.getElementById(id) || {}).value || '';
@@ -328,6 +330,7 @@
         '<div><label>Intact cuts total (lb)</label><input id="f3" type="number" inputmode="decimal" min="0" step="0.1" value="0"></div>' +
         '<div><label>Trim discarded (lb) <span class="hint">optional</span></label><input id="f4" type="number" inputmode="decimal" min="0" step="0.1"></div></div>' +
         '<div class="calc" id="calc"></div>' +
+        (d.Type === 'Donated' && !d['First pack #'] ? '<div class="note bad">Tap <b>Get package numbers</b> before grinding, so the labels run in order.</div>' : '') +
         '<div class="note ' + (fatOn ? 'warn">Grind with <b>' + esc(fatPct) + '% pork fat</b>.' : 'ok">All-venison grind: <b>no pork fat</b>.') + '</div>' +
         (fatOn && d.Type !== 'Donated' ? '<label class="choice"><input id="f7" type="checkbox"> Out of pork fat: grind all venison and take the $' + esc(s.porkAddOn || 20) + ' off the hunter\'s price</label>' : '') +
         '<label class="choice"><input id="f5" type="checkbox"> Allergen labels on every package (alpha-gal)' + (fatOn ? '; ground also says "Contains pork"' : '') + '</label>' +
@@ -350,10 +353,11 @@
       const ven = r1(groundLb * (1 - fr)), pork = r1(groundLb * fr), total = r1(groundLb + il), carcass = num(d['Carcass weight (lb)']);
       const el = document.getElementById('calc');
       if (el) el.innerHTML = 'Ground: <b>' + fmt(groundLb) + ' lb</b> (' + fmt(ven) + ' lb venison + ' + fmt(pork) + ' lb pork fat) · Intact: <b>' + fmt(il) + ' lb</b><br>' +
-        'Total packaged: <b>' + fmt(total) + ' lb</b>' + (carcass ? ' · Venison yield: <b>' + Math.round((ven + il) / carcass * 100) + '%</b> of ' + fmt(carcass) + ' lb carcass' : '');
+        'Total packaged: <b>' + fmt(total) + ' lb</b>' + (carcass ? ' · Venison yield: <b>' + Math.round((ven + il) / carcass * 100) + '%</b> of ' + fmt(carcass) + ' lb carcass' : '') +
+        (d['First pack #'] && pk + num(v('f2')) > 0 ? '<br>Package numbers: <b>' + esc(d['First pack #']) + '–' + ('000' + (parseInt(d['First pack #'], 10) + pk + Math.round(num(v('f2'))) - 1)).slice(-4) + '</b>' : '');
       return { pk, il, total };
     };
-    if (kind === 'finish') { ['f1', 'f3'].forEach(id => { document.getElementById(id).oninput = calc; }); const f7 = document.getElementById('f7'); if (f7) f7.onchange = calc; calc(); }
+    if (kind === 'finish') { ['f1', 'f2', 'f3'].forEach(id => { document.getElementById(id).oninput = calc; }); const f7 = document.getElementById('f7'); if (f7) f7.onchange = calc; calc(); }
     document.getElementById('fx').onclick = () => { box.innerHTML = ''; };
     document.getElementById('fok').onclick = () => {
       const err = m => { document.getElementById('ferr').textContent = m; };
@@ -367,6 +371,7 @@
       if (kind === 'finish') {
         const c = calc(), ip = Math.round(num(v('f2')));
         if (!(c.pk + ip > 0)) return err('Enter the packages.');
+        if (d.Type === 'Donated' && !d['First pack #']) return err('Get package numbers first (needs signal), so every label carries its MassWildlife number.');
         if (ip && !(c.il > 0)) return err('Weigh the intact cuts and enter the total.');
         if (!document.getElementById('f5').checked) return err('Allergen labels must go on every package before it leaves the table.');
         if (!document.getElementById('f6').checked) return err('Sanitize knives, hooks, luggers and the grinder before the next deer, then tick the box.');
@@ -641,7 +646,17 @@
     const cov = document.getElementById('bk-cover');
     if (cov) cov.onclick = () => go(cov, { action: 'cover', date: bookPick.date, start: bookPick.start, end: bookPick.end }, out => { cov.textContent = 'Sent to ' + out.sent + ' phone' + (out.sent === 1 ? '' : 's'); });
   }
-  const confirmCancel = () => true;   // no browser dialogs: cancelling is one tap and can be re-booked
+  const confirmCancel = () => true;
+  /** Donated deer: reserve the next MassWildlife package number before grinding. */
+  async function grind(d, box) {
+    box.innerHTML = '<p class="status">Getting package numbers…</p>';
+    try {
+      const out = await call({ action: 'grind', band: d.Band });
+      (st.home.deer || []).forEach(x => { if (band(x.Band) === band(out.band) && x.Status !== 'Released') x['First pack #'] = out.first; });
+      save(); showBoard();
+      toast('Label packages from ' + out.first + ', in order.', true);
+    } catch (e) { box.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Package numbers need signal. Try again when connected.' : e.message) + '</div>'; }
+  }   // no browser dialogs: cancelling is one tap and can be re-booked
 
   /* ---------- messages ---------- */
   async function showMessages() {
