@@ -335,6 +335,8 @@
     const forms = {
       start: () => '<div class="note warn" style="font-size:17px">Tag confirmation number: <b>' + esc(d['MassWildlife confirmation'] || 'none recorded') + '</b></div>' +
         '<label class="choice"><input id="f0" type="checkbox"> The confirmation number on the deer\'s tag matches</label>' +
+        '<label class="choice"><input id="f8" type="checkbox"> Skinned and head removed at the station behind MHU #1</label>' +
+        '<label class="choice"><input id="f9" type="checkbox"> Antimicrobial spray applied in MHU #1</label>' +
         (isMgr() ? '<label>Processor</label><select id="fp">' + (st.home.staff || []).map(x => '<option value="' + esc(x.number) + '"' + (x.number === st.staff.number ? ' selected' : '') + '>' + esc(x.name + ' (' + x.number + ')') + '</option>').join('') + '</select>'
           : '<p class="status">Processor: ' + esc(st.staff.name + ' (' + st.staff.number + ')') + '</p>') +
         '<label>Carcass weight (lb) <span class="hint">On the hanging scale: field dressed, skin and head off</span></label><input id="f1" type="number" inputmode="decimal" min="0" step="0.1">',
@@ -377,10 +379,12 @@
       const err = m => { document.getElementById('ferr').textContent = m; };
       if (kind === 'start') {
         if (!document.getElementById('f0').checked) return err('Check the confirmation number on the tag first. If it doesn\'t match, stop and tell Joe.');
+        if (!document.getElementById('f8').checked) return err('Skin it and remove the head at the station behind MHU #1, then tick the box.');
+        if (!document.getElementById('f9').checked) return err('Apply the antimicrobial spray in MHU #1, then tick the box.');
         if (!(num(v('f1')) > 0)) return err('Weigh the carcass and enter the weight.');
         const p = isMgr() ? v('fp') : st.staff.number;
         const pn = ((st.home.staff || []).find(x => x.number === p) || st.staff).name;
-        queue('start', { band: d.Band, processor: p, processorName: pn, weight: v('f1'), confirmationChecked: true }, 'Start ' + d.Band);
+        queue('start', { band: d.Band, processor: p, processorName: pn, weight: v('f1'), confirmationChecked: true, skinned: true, antimicrobial: true }, 'Start ' + d.Band);
       }
       if (kind === 'finish') {
         const c = calc(), ip = Math.round(num(v('f2')));
@@ -452,7 +456,7 @@
       '<div id="age" class="status"></div>' +
       '<label class="choice"><input id="fd" type="checkbox"> Field dressed within 4 hours of the shot (or the air stayed below 37°F)</label>' +
       '<label class="choice"><input id="ddp" type="checkbox"> Taken under a deer depredation permit (DDP)</label>' +
-      '<label class="choice"><input id="sk" type="checkbox"> Skinned and head removed by Home Ground before hanging</label>' +
+      '<p class="status">The deer hangs in the receiving cooler skin-on, head-on. It\'s skinned and the head removed at the station behind MHU #1 when processing starts.</p>' +
       '<label for="nt">Notes</label><textarea id="nt"></textarea>' +
       '<div class="err" id="err"></div><button class="submit" id="save">Check in and print band</button>' +
       '<button class="btn ghost" id="away" style="width:100%">Turn this deer away instead</button><div id="awaybox"></div></div>');
@@ -546,12 +550,11 @@
       const h = ageNote();
       if (h > 24) return err('Over 24 hours since the shot. We can\'t accept it, donated or private: tap Turn this deer away instead.');
       if (type === 'Donated' && !document.getElementById('fd').checked) return err('Donated deer must be field dressed within 4 hours of the shot.');
-      if (!document.getElementById('sk').checked) return err('Home Ground skins and removes the head before any deer hangs. Tick the box once it\'s done.');
       if (type === 'Private' && coolerCount() >= S().coolerCap) return err('The cooler is full. Hold private deer until there\'s room.');
       const f = { band: b, iap: iap === 'Yes', hunterConfirmed: hunterConfirmed && !!hunterInfo, type, deer: v('deer'), points: v('deer') === 'Antlered buck' ? pts : '', hunterNumber: v('hn'), firstName: v('fn'), lastName: v('ln'), license: lic, hunterPhone: v('ph'), confirmation: v('cf'),
         cuts: type === 'Private' ? readCuts() : '',
         address: type === 'Donated' ? v('ad1') + ', ' + v('adt') + ', ' + (v('ads') || 'MA').toUpperCase() + ' ' + v('adz') : '',
-        shotAt: stamp(t), dressed4h: document.getElementById('fd').checked, ddp: document.getElementById('ddp').checked, skinned: true, notes: v('nt'),
+        shotAt: stamp(t), dressed4h: document.getElementById('fd').checked, ddp: document.getElementById('ddp').checked, skinned: false, notes: v('nt'),
         porkFat: type === 'Private' && !!document.getElementById('pork') && document.getElementById('pork').checked };
       queue('intake', f, 'Check-in ' + b);
       printBand({ Band: b, Intake: stamp(), Type: type, Deer: f.deer, 'Hunter number': f.hunterNumber });

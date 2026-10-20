@@ -1,6 +1,6 @@
 // Home Ground Facility app — keeps the app working with no signal, and shows push notifications.
 // Bump VERSION whenever any app file changes so phones pick up the new copy.
-const VERSION = 'hg-facility-v20';
+const VERSION = 'hg-facility-v21';
 const ICON = 'icon-192.png';
 const SHELL = ['./', 'index.html', 'app.js', 'push.js', 'config.js', 'manifest.webmanifest',
   'logo.png', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
