@@ -376,13 +376,46 @@
       document.getElementById('finish').onclick = () => showLeaving();
     } else {
       const booked = todaysBookings();
-      box.innerHTML = booked.length
+      box.innerHTML = (booked.length
         ? booked.map(p => '<button class="big" data-on="' + esc(p) + '">On stand · ' + esc(p) + '<small>Tap when you\'re settled in. Records where you are.</small></button>').join('')
-        : '<p class="status" style="margin:0 0 6px">No booking showing for today. <button class="plain" id="on-any" style="padding:0">On stand anyway</button></p>';
+        : '') +
+        '<button class="big' + (booked.length ? ' alt' : '') + '" id="walkin">Start an unbooked hunt<small>Didn\'t book ahead? Start here before you go in. It goes on the calendar right away. Earns fewer points than a hunt booked ahead.</small></button>' +
+        (booked.length ? '' : '<p class="status center" style="margin:0 0 6px">Booked, but it isn\'t showing? <button class="plain" id="on-any" style="padding:0">Check in anyway</button></p>');
       box.querySelectorAll('[data-on]').forEach(b => b.onclick = () => showCheckin(b.dataset.on));
+      document.getElementById('walkin').onclick = () => showUnbooked();
       const any = document.getElementById('on-any');
       if (any) any.onclick = () => showCheckin('');
     }
+  }
+  // Start an unbooked hunt: books the property for today right now (the server refuses it during a landowner pause,
+  // when the property is full, or where the landowner asks for notice the day before), then checks in On stand.
+  function showUnbooked() {
+    const h = new Date().getHours();
+    $app.innerHTML = header() + '<h1>Start an unbooked hunt</h1>' +
+      '<p class="status">For a hunt you didn\'t book ahead. It goes on the calendar now, so the landowner and other hunters can see it, and then checks you in On stand. A hunt booked ahead earns more points.</p>' +
+      propertySelect() +
+      '<label>Which part of today?</label>' +
+      (h < 12 ? '<label class="choice"><input type="radio" name="part" value="AM"' + (h < 10 ? ' checked' : '') + '> Morning (until noon)</label>' : '') +
+      '<label class="choice"><input type="radio" name="part" value="PM"' + (h >= 10 && h < 12 ? '' : h >= 12 ? ' checked' : '') + '> Afternoon</label>' +
+      (h < 12 ? '<label class="choice"><input type="radio" name="part" value="All day"' + (h >= 10 ? ' checked' : '') + '> Rest of the day</label>' : '') +
+      '<div id="err" class="err"></div><button class="submit" id="send">Start hunt</button>' +
+      '<p class="center"><button class="plain" id="back">Back</button></p>';
+    document.getElementById('back').onclick = () => showHome();
+    document.getElementById('send').onclick = async () => {
+      const p = v('prop'), part = picked('part'), err = document.getElementById('err'), btn = document.getElementById('send');
+      if (!p) { err.textContent = 'Choose a property.'; return; }
+      if (!part) { err.textContent = 'Choose morning, afternoon or the rest of the day.'; return; }
+      if (!navigator.onLine) { err.textContent = 'Starting an unbooked hunt needs signal. No signal? Call ' + CFG.OFFICE_PHONE + ' before you go in.'; return; }
+      btn.disabled = true; btn.textContent = 'Checking ' + p + '…';
+      try {
+        await call({ action: 'walkin', hunter: me.hunter, pin: me.pin, property: p, slot: part, submittedOn: stamp(), clientId: uid() });
+        try { await loadBookings(); } catch (e) { /* the check-in still works */ }
+        showCheckin(p);
+      } catch (e) {
+        btn.disabled = false; btn.textContent = 'Start hunt';
+        err.textContent = e.message || 'Couldn\'t start the hunt. Try again, or call ' + CFG.OFFICE_PHONE + '.';
+      }
+    };
   }
   function showCheckin(prop) {
     $app.innerHTML = header() + '<h1>On stand</h1>' +
