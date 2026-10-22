@@ -241,7 +241,7 @@
       '<button class="big" data-go="hunt">Report Your Hunt<small>Every outing, within 48 hours, even if you saw nothing.</small></button>' +
       '<button class="big alt" data-go="harvest">Report Your Harvest<small>One report for each deer, the day you take it.</small></button>' +
       (me.track
-        ? '<button class="big" style="background:#8A2E1F" data-go="after">Finished tracking on ' + esc(me.track.property) + '<small>Tap when you\'re done, found or not.</small></button>'
+        ? '<button class="big" style="background:#8A2E1F" data-go="track">Tracking on ' + esc(me.track.property) + '<small>Open the tracking screen: route, warnings, I\'m finished.</small></button>'
         : '<button class="big alt" data-go="before">Tracking After Dark<small>Before you go in after dark. Needs signal: Home Ground is alerted at once.</small></button>') +
       '<button class="big alt" data-go="stand">Stand &amp; Camera Log<small>Every placement, move or removal.</small></button>' +
       '<button class="big" data-go="find">Find my stand<small>Compass and distance to your stands and cameras, or back to your truck.</small></button>' +
@@ -254,7 +254,7 @@
       '</div><h2>Your bookings</h2><div class="card" id="bookings"><span class="status">Loading…</span></div>' +
       '<h2>Your points</h2><div class="card" id="points"><span class="status">Loading…</span></div>' +
       '<p class="center"><button class="plain" id="out">Sign out</button></p>';
-    const screens = { book: showBook, hunt: () => (me.outing && me.outing.left ? showLeaving() : showHunt()), harvest: () => showHarvest(), before: showBefore, after: showAfter, stand: showStand, find: () => showFind(), help: showHelp, messages: showMessages };
+    const screens = { book: showBook, hunt: () => (me.outing && me.outing.left ? showLeaving() : showHunt()), harvest: () => showHarvest(), before: showBefore, after: showAfter, track: () => showTracking(), stand: showStand, find: () => showFind(), help: showHelp, messages: showMessages };
     $app.querySelectorAll('[data-go]').forEach(b => b.onclick = () => screens[b.dataset.go]());
     document.getElementById('out').onclick = async () => {
       const waiting = (await outbox('all')).length;
@@ -953,7 +953,7 @@
       'If this landowner asked for a text or call before anyone enters after dark, I\'ve done it.',
       'I\'ll stay on enrolled land unless I have the neighbor\'s permission or the Environmental Police\'s direction.'];
     $app.innerHTML = header() + '<h1>Before the Track</h1>' +
-      '<div class="note warn">This alerts Home Ground right away. If you have no signal, call ' + esc(CFG.OFFICE_PHONE) + ' before you go in.</div>' + propertySelect() +
+      '<div class="note warn">This alerts Home Ground right away. If you have no signal, call ' + esc(CFG.OFFICE_PHONE) + ' before you go in. Then keep the app open: it records your route and warns you if you leave enrolled land.</div>' + propertySelect() +
       '<label for="start">Time you\'re starting</label><input id="start" type="time" value="' + nowTime() + '">' +
       '<label for="phone">Phone number to reach you right now</label><input id="phone" type="tel" value="' + esc(me.phone || '') + '">' +
       '<label for="beh">Deer behavior after the shot <span class="hint">Direction, blood, how it ran.</span></label><textarea id="beh"></textarea>' +
@@ -981,8 +981,8 @@
       try {
         // Sent straight away, never queued: Home Ground must know before anyone goes in.
         await call(Object.assign({ action: 'submit', hunter: me.hunter, pin: me.pin }, payload));
-        me.track = { property: v('prop'), started: Date.now() }; save(me);
-        showHome('Home Ground has been alerted. Track safely, no weapon. Tap "Finished tracking" when you\'re done.');
+        me.track = { property: v('prop'), started: Date.now(), path: [] }; save(me);
+        showTracking('Home Ground has been alerted. Track safely, no weapon. Keep this screen open while you track.');
       } catch (err) {
         btn.disabled = false; btn.textContent = 'Try again';
         fail([err.fatal ? err.message : 'Couldn\'t send. Call ' + CFG.OFFICE_PHONE + ' before you go in.']);
@@ -997,7 +997,7 @@
       '<label>Outcome</label>' + radios('out', ['Recovered the deer', 'Didn\'t recover it, stopped tracking']) +
       '<label>Did the deer cross onto land outside the program?</label>' +
       radios('crossed', ['No', 'Yes, with the owner\'s permission', 'Yes, with the Environmental Police\'s direction', 'Yes, and I stopped at the line']) +
-      '<p class="status">The app records where you are when you send this.</p>' +
+      '<p class="status">Your route and where you are now go with this.</p>' +
       '<label for="notes">Notes <span class="hint">Optional</span></label><textarea id="notes"></textarea>' +
       '<div class="note warn">Recovered it? Also file Report Your Harvest.</div>' + foot('Send: I\'m finished');
     if (prop && document.getElementById('prop')) document.getElementById('prop').value = prop;
@@ -1009,13 +1009,140 @@
       if (!picked('crossed')) e.push('Say whether the deer crossed outside the program.');
       if (fail(e)) return;
       document.getElementById('send').disabled = true;
-      const where = await gps(true);
+      // While tracking, the route already has a fresh fix; otherwise ask for one.
+      const t = me.track, fresh = t && t.lastFix && Date.now() - (t.lastFixAt || 0) < 60000;
+      const where = fresh ? Object.assign({ at: stamp() }, t.lastFix) : await gps(true);
       const recovered = picked('out') === 'Recovered the deer';
-      await queue('After the Track', { form: 'after', submittedOn: stamp(), gps: where,
+      const path = (me.track && me.track.path) || [];
+      if (where && path.length < 2000) path.push([where.lat, where.lng, where.acc, Date.now()]);
+      const mins = me.track ? Math.round((Date.now() - me.track.started) / 60000) : 0;
+      await queue('After the Track', { form: 'after', submittedOn: stamp(), gps: where, path,
         fields: { property: v('prop'), finished: v('fin'), outcome: picked('out'), crossed: picked('crossed'),
+          route: path.length > 1 ? path.length + ' points over ' + mins + ' min' : 'Not recorded (app closed while tracking)',
           notes: v('notes').trim(), noLocationReason: where ? '' : 'Phone couldn\'t get a location' } });
+      stopTrackWatch(); document.body.classList.remove('night');
       me.track = null; save(me);
       if (recovered) showHarvest({ property: v('prop') }); else showHome('Tracking finished. Thank you.' + (navigator.onLine ? '' : ' It will send as soon as you have signal.'));
+    };
+  }
+
+  /* ---------- Tracking after dark: route recording and "outside enrolled land" warnings ----------
+   * From Before the Track until After the Track, while the app is open, the phone keeps a point about every
+   * 30 seconds (or every 50 ft walked). Each point is checked against your own properties' lines right
+   * here on the phone. If you're past them, the app asks Home Ground "is this spot on enrolled land?" and
+   * only gets yes or no back (it never learns whose land it is). Off enrolled land, or past your line with
+   * no signal to check, the phone beeps, vibrates and shows a notification. The route is sent with After the
+   * Track, so the office has the record the onX track used to give. */
+  let trackWatch = null, trackWake = null, lastAsk = 0, lastAlert = 0, trackState = { status: 'starting' };
+  const TRACK_EVERY_MS = 30000, TRACK_MOVE_FT = 50, ASK_EVERY_MS = 60000, ALERT_EVERY_MS = 120000;
+  function startTrackWatch() {
+    if (!me || !me.track || trackWatch != null || !navigator.geolocation) return;
+    me.track.path = me.track.path || [];
+    trackWatch = navigator.geolocation.watchPosition(onTrackFix, () => { trackState = { status: 'nogps' }; drawTracking(); },
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 });
+  }
+  function stopTrackWatch() {
+    if (trackWatch != null) navigator.geolocation.clearWatch(trackWatch);
+    trackWatch = null;
+    if (trackWake) trackWake.release().catch(() => {});
+    trackWake = null;
+  }
+  async function onTrackFix(p) {
+    if (!me || !me.track) return stopTrackWatch();
+    const g = { lat: +p.coords.latitude.toFixed(6), lng: +p.coords.longitude.toFixed(6), acc: Math.round(p.coords.accuracy) };
+    const path = me.track.path, last = path[path.length - 1], now = Date.now();
+    const moved = last ? distBearing({ lat: last[0], lng: last[1] }, g).ft : Infinity;
+    if (!last || now - last[3] >= TRACK_EVERY_MS || moved >= TRACK_MOVE_FT) {
+      if (path.length < 2000) path.push([g.lat, g.lng, g.acc, now]);
+      save(me);
+    }
+    me.track.lastFix = g; me.track.lastFixAt = now;
+    await checkTrackSpot(g);
+    drawTracking();
+  }
+  // Own properties first (on the phone); past those, ask the server (yes / no only), at most once a minute.
+  async function checkTrackSpot(g) {
+    const mine = (me.properties || []).filter(p => p.bounds);
+    const checks = mine.map(p => ({ code: p.code, w: whereOn(p.code, g) }));
+    const on = checks.find(c => c.w.status === 'inside' || c.w.status === 'edge');
+    if (on) { trackState = { status: 'on', code: on.code, accFt: on.w.accFt }; return; }
+    const nearest = checks.sort((a, b) => a.w.edgeFt - b.w.edgeFt)[0];
+    const past = nearest ? { code: nearest.code, ft: nearest.w.edgeFt } : null;
+    if (!navigator.onLine) { trackState = { status: 'past-offline', past }; return trackAlert(); }
+    if (Date.now() - lastAsk < ASK_EVERY_MS && trackState.status !== 'starting' && trackState.status !== 'on') {
+      if (trackState.status === 'off') trackAlert();
+      return;
+    }
+    lastAsk = Date.now();
+    try {
+      const out = await call({ action: 'where', hunter: me.hunter, pin: me.pin, property: me.track.property, gps: g });
+      if (out.enrolled === false) { trackState = { status: 'off', past }; trackAlert(); }
+      else if (out.enrolled === true) trackState = { status: 'program', past };
+      else trackState = { status: 'past-offline', past };
+    } catch (e) { trackState = { status: 'past-offline', past }; trackAlert(); }
+  }
+  function trackAlert() {
+    if (Date.now() - lastAlert < ALERT_EVERY_MS) return;
+    lastAlert = Date.now();
+    const body = trackState.status === 'off'
+      ? 'You\'ve left enrolled land. Stop unless you have the owner\'s permission or the Environmental Police\'s direction.'
+      : 'You\'re past your property line and the app can\'t check other enrolled land (no signal). Stop unless you know you have permission.';
+    try { navigator.vibrate && navigator.vibrate([400, 200, 400, 200, 400]); } catch (e) {}
+    try {
+      const A = window.AudioContext || window.webkitAudioContext;
+      if (A) { const a = new A(), o = a.createOscillator(), v = a.createGain(); o.frequency.value = 880; v.gain.value = 0.25;
+        o.connect(v); v.connect(a.destination); o.start(); o.stop(a.currentTime + 0.6); }
+    } catch (e) {}
+    try {
+      if ('Notification' in window && Notification.permission === 'granted' && navigator.serviceWorker) {
+        navigator.serviceWorker.ready.then(r => r.showNotification('Outside your permission area', { body, tag: 'hg-offland', renotify: true, icon: 'icon-192.png' }));
+      }
+    } catch (e) {}
+  }
+  function drawTracking() {
+    const box = document.getElementById('track-status');
+    if (!box || !me || !me.track) return;
+    const t = me.track, s = trackState, g = t.lastFix, acc = g ? ' (GPS ±' + Math.round(g.acc * FT) + ' ft)' : '';
+    const pastWords = s.past ? 'about ' + howFar(s.past.ft) + ' past ' + esc(s.past.code) + '\'s line' : 'outside your properties';
+    const view = {
+      starting: ['', 'Finding you…'],
+      nogps: ['bad', 'No GPS. Check that Location is on for this app.'],
+      on: ['ok', 'On ' + esc(s.code) + acc + '.'],
+      program: ['ok', 'Past your property line (' + pastWords + '), but still on enrolled land' + acc + '.'],
+      'past-offline': ['bad', '<b>Check where you are.</b> You\'re ' + pastWords + acc + ' and there\'s no signal to check other enrolled land. Stop unless you know you have permission.'],
+      off: ['bad', '<b>You\'ve left enrolled land</b> (' + pastWords + ')' + acc + '. Stop unless you have the owner\'s permission or the Environmental Police\'s direction.']
+    }[s.status] || ['', ''];
+    const mins = Math.max(0, Math.round((Date.now() - t.started) / 60000));
+    let walked = 0; for (let i = 1; i < (t.path || []).length; i++) walked += distBearing({ lat: t.path[i - 1][0], lng: t.path[i - 1][1] }, { lat: t.path[i][0], lng: t.path[i][1] }).ft;
+    box.innerHTML = '<div class="note ' + view[0] + '" style="font-size:18px">' + view[1] + '</div>' +
+      '<p class="status">Tracking ' + mins + ' min · ' + (t.path || []).length + ' points · about ' + howFar(walked) + ' walked</p>';
+  }
+  function showTracking(note) {
+    if (!me.track) return showHome();
+    startTrackWatch();
+    if (navigator.wakeLock && !trackWake) navigator.wakeLock.request('screen').then(w => { trackWake = w; }).catch(() => {});
+    if (me.night) document.body.classList.add('night');
+    $app.innerHTML = header() + (note ? '<div class="note ok">' + note + '</div>' : '') +
+      '<h1>Tracking on ' + esc(me.track.property) + '</h1>' +
+      '<p class="status">Keep this screen open. It records your route and warns you if you leave enrolled land. No weapon.</p>' +
+      '<div id="track-status"><div class="note">Finding you…</div></div>' +
+      ('Notification' in window && Notification.permission === 'default' ? '<button class="big alt" id="notif">Turn on warnings<small>So the phone can alert you even if the screen dims.</small></button>' : '') +
+      '<button class="big" style="background:#8A2E1F" id="done">I\'m finished<small>Found or not. Sends After the Track with your route.</small></button>' +
+      '<button class="big alt" id="truck">Back to my truck<small>Compass and distance, if you marked where you parked.</small></button>' +
+      '<p class="center"><button class="plain" id="night">' + (me.night ? 'Normal screen' : 'Red night screen') + '</button></p>' +
+      '<p class="center"><button class="plain" id="back">Home</button></p>';
+    drawTracking();
+    if (me.track.lastFix) checkTrackSpot(me.track.lastFix).then(drawTracking);
+    const tick = setInterval(() => { if (!document.getElementById('track-status')) return clearInterval(tick); drawTracking(); }, 30000);
+    const n = document.getElementById('notif');
+    if (n) n.onclick = async () => { try { await Notification.requestPermission(); } catch (e) {} n.remove(); };
+    document.getElementById('done').onclick = () => showAfter();
+    document.getElementById('truck').onclick = () => showFind('__truck');
+    document.getElementById('back').onclick = () => { document.body.classList.remove('night'); showHome(); };
+    document.getElementById('night').onclick = () => {
+      me.night = !me.night; save(me);
+      document.body.classList.toggle('night', me.night);
+      document.getElementById('night').textContent = me.night ? 'Normal screen' : 'Red night screen';
     };
   }
 
@@ -1278,5 +1405,6 @@
 
   /* ---------- start ---------- */
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if (me && me.track) startTrackWatch();
   if (me) { showHome(); quietRefresh().then(() => { if (me && document.getElementById('outbox-status')) showHome(); }); } else showLogin();
 })();
