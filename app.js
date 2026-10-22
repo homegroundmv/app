@@ -253,6 +253,39 @@
     return '<div class="note ' + (warn.length ? 'warn' : 'ok') + '">' + esc(bits.concat(warn).join(' ')) +
       (warn.length ? ' ' + esc('Use photos of this deer. The office checks photo dates and places against your report.') : '') + '</div>';
   }
+  // Legal shooting hours (MassWildlife): half an hour before sunrise to half an hour after sunset. Sunrise and
+  // sunset for Martha's Vineyard from the standard sunrise equation (within a minute or two).
+  function sunTimes(iso) {
+    const [y, mo, d] = iso.split('-').map(Number), rad = Math.PI / 180, lat = 41.39, lng = -70.62;
+    const J = Date.UTC(y, mo - 1, d, 12) / 864e5 + 2440587.5;
+    const n = Math.ceil(J - 2451545.0 + 0.0008), Js = n - lng / 360;
+    const M = (357.5291 + 0.98560028 * Js) % 360;
+    const C = 1.9148 * Math.sin(M * rad) + 0.02 * Math.sin(2 * M * rad) + 0.0003 * Math.sin(3 * M * rad);
+    const L = (M + C + 180 + 102.9372) % 360;
+    const Jt = 2451545.0 + Js + 0.0053 * Math.sin(M * rad) - 0.0069 * Math.sin(2 * L * rad);
+    const dec = Math.asin(Math.sin(L * rad) * Math.sin(23.4397 * rad));
+    const w = Math.acos((Math.sin(-0.833 * rad) - Math.sin(lat * rad) * Math.sin(dec)) / (Math.cos(lat * rad) * Math.cos(dec))) / rad;
+    const at = j => new Date((j - 2440587.5) * 864e5);
+    return { rise: at(Jt - w / 360), set: at(Jt + w / 360) };
+  }
+  const minsOf = t => { const m = String(t || '').match(/^(\d{1,2}):(\d{2})/); return m ? +m[1] * 60 + +m[2] : null; };
+  const clockOf = m => { const h = Math.floor(m / 60) % 24, mm = String(m % 60).padStart(2, '0'); return (h % 12 || 12) + ':' + mm + (h < 12 ? ' am' : ' pm'); };
+  function legalWindow(iso) {
+    const s = sunTimes(iso), local = d => d.getHours() * 60 + d.getMinutes();
+    return { from: local(s.rise) - 30, to: local(s.set) + 30 };   // shown to the hunter as is
+  }
+  function legalGrace(iso) {   // 5 minutes either side: the sun times here can be a couple of minutes off
+    const w = legalWindow(iso); return { from: w.from - 5, to: w.to + 5 };
+  }
+  // A time on today's date that hasn't happened yet (5 minutes' grace for a slow phone clock).
+  const notYet = (iso, t) => iso === isoDate(new Date()) && minsOf(t) !== null && minsOf(t) > new Date().getHours() * 60 + new Date().getMinutes() + 5;
+  function timeErrs(iso, tin, tout) {
+    const e = [];
+    if (notYet(iso, tin)) e.push('The time you got on stand hasn\'t happened yet. Check the time (and AM / PM).');
+    if (notYet(iso, tout)) e.push('The time you left hasn\'t happened yet. Check the time (and AM / PM).');
+    if (minsOf(tin) !== null && minsOf(tout) !== null && minsOf(tout) < minsOf(tin)) e.push('The time you left is before the time you got on stand.');
+    return e;
+  }
   // Shrinks a photo to at most 1600 px on its long side (keeps uploads small on a weak signal).
   function shrink(file) {
     return new Promise((resolve, reject) => {
@@ -492,6 +525,7 @@
       const outcome = picked('outcome'), e = [];
       if (!v('tin')) e.push('Enter when you got on stand.');
       if (!v('tout')) e.push('Enter when you left.');
+      timeErrs(o.date, v('tin'), v('tout')).forEach(x => e.push(x));
       if (!outcome) e.push('Choose an outcome.');
       if (!document.getElementById('agree').checked) e.push('Tick the accuracy box.');
       if (fail(e)) return;
@@ -959,6 +993,7 @@
       if (!f('day').value) err.push('Enter the date.');
       if (!f('tin').value) err.push('Enter your time in.');
       if (!f('tout').value) err.push('Enter your time out.');
+      timeErrs(f('day').value, f('tin').value, f('tout').value).forEach(x => err.push(x));
       if (!outcome) err.push('Choose an outcome.');
       if (!f('agree').checked) err.push('Tick the accuracy box.');
       if (err.length) { f('err').innerHTML = err.map(esc).join('<br>'); return; }
@@ -1025,6 +1060,7 @@
       '<p class="status">' + (pre.of > 1 ? 'Your hunt report says ' + pre.of + ' deer. Each one gets its own report, band, confirmation number and photos.' : 'One report for each deer, with its own band, confirmation number and photos.') + '</p>' + propertySelect() +
       '<div class="row"><div><label for="day">Date</label><input id="day" type="date" value="' + esc(pre.date || isoDate(new Date())) + '" max="' + isoDate(new Date()) + '"></div>' +
       '<div><label for="shot-time">Time of shot</label><input id="shot-time" type="time"></div></div>' +
+      '<div id="legal" hidden><div class="note warn" id="legal-text"></div><label for="timewhy">If the time is right, say what happened</label><textarea id="timewhy"></textarea></div>' +
       '<label>Hunting implement</label>' + radios('impl', ['Archery', 'Shotgun', 'Primitive firearm']) +
       '<label>The deer</label>' + radios('deer', ['Antlered buck', 'Adult antlerless (doe)', 'Subadult antlerless (button buck or doe fawn)']) +
       '<label for="which">Deer from this outing</label><select id="which"><option>1st</option><option>2nd</option><option>3rd</option><option>4th or more</option></select>' +
@@ -1044,12 +1080,24 @@
     if (pre.property && document.getElementById('prop')) document.getElementById('prop').value = pre.property;
     if (pre.n) document.getElementById('which').selectedIndex = Math.min(pre.n, 4) - 1;
     const loc = wireLoc('If the deer crossed the line, say so in Anything else.');
+    const outsideLegal = () => {
+      const m = minsOf(v('shot-time')), day = v('day');
+      if (m === null || !day) return '';
+      const w = legalWindow(day);
+      const g = legalGrace(day);
+      return m < g.from || m > g.to ? 'Legal shooting hours that day were ' + clockOf(w.from) + ' to ' + clockOf(w.to) + '. Check the time of shot (and AM / PM).' : '';
+    };
+    const legalCheck = () => { const msg = outsideLegal(); document.getElementById('legal').hidden = !msg; document.getElementById('legal-text').textContent = msg; };
+    document.getElementById('shot-time').addEventListener('change', legalCheck);
+    document.getElementById('day').addEventListener('change', legalCheck);
     document.querySelectorAll('input[name=dark]').forEach(r => r.onchange = () => { document.getElementById('dark-yes').hidden = picked('dark') !== 'Yes'; });
     document.querySelectorAll('input[name=donate]').forEach(r => r.onchange = () => { document.getElementById('donate-yes').hidden = picked('donate') !== 'Yes, the whole deer'; });
     document.getElementById('send').onclick = async () => {
       const e = [];
       if (!v('prop')) e.push('Choose a property.');
       if (!v('shot-time')) e.push('Enter the time of the shot.');
+      else if (notYet(v('day'), v('shot-time'))) e.push('The time of shot hasn\'t happened yet. Check the time (and AM / PM).');
+      else if (outsideLegal() && !v('timewhy').trim()) { legalCheck(); e.push('The time of shot is outside legal shooting hours. Fix the time, or say what happened.'); }
       if (!picked('impl')) e.push('Choose the hunting implement.');
       if (!picked('deer')) e.push('Choose which kind of deer.');
       if (!v('conf').trim()) e.push('Enter the MassWildlife confirmation number.');
@@ -1068,7 +1116,7 @@
           which: v('which'), confirmation: v('conf').trim(), band: v('band').trim(), afterDark: picked('dark'),
           afterDarkForms: allPicked('darkforms').join(' '), donate: picked('donate'),
           donateChecks: picked('donate') === 'No' ? '' : allPicked('rules').length + ' of 3 confirmed',
-          notes: v('notes').trim(), noLocationReason: loc.g ? '' : v('why').trim() },
+          notes: v('notes').trim(), noLocationReason: loc.g ? '' : v('why').trim(), timeNote: outsideLegal() ? v('timewhy').trim() : '' },
         files: photo1.concat(photo2) });
       const saved = 'Harvest report saved for band ' + esc(v('band')) + '.' + (navigator.onLine ? '' : ' It will send as soon as you have signal.');
       if (pre.of && pre.n < pre.of) {
