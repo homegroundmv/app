@@ -167,6 +167,92 @@
     if (sel) sel.addEventListener('change', show);
     return hold;
   }
+  // Reads when and where a photo was taken from its EXIF data (JPEG only), before shrink() drops it.
+  // Returns {takenMs, lat, lng} (any may be missing), or null when the file has none. Phones often strip
+  // the location from photos picked from the library, so a missing location is normal.
+  async function readExif(file) {
+    try {
+      const buf = await file.slice(0, 262144).arrayBuffer(), dv = new DataView(buf);
+      if (dv.byteLength < 4 || dv.getUint16(0) !== 0xFFD8) return null;
+      let off = 2, tiff = -1;
+      while (off + 4 <= dv.byteLength) {
+        const mk = dv.getUint16(off), len = dv.getUint16(off + 2);
+        if (mk === 0xFFE1 && dv.getUint32(off + 4) === 0x45786966) { tiff = off + 10; break; }
+        if (mk === 0xFFDA || (mk & 0xFF00) !== 0xFF00) break;
+        off += 2 + len;
+      }
+      if (tiff < 0 || tiff + 8 > dv.byteLength) return null;
+      const le = dv.getUint16(tiff) === 0x4949;
+      const u16 = o => dv.getUint16(o, le), u32 = o => dv.getUint32(o, le);
+      const ifd = start => {
+        const out = {};
+        if (start + 2 > dv.byteLength) return out;
+        const n = u16(start);
+        for (let i = 0; i < n; i++) {
+          const e = start + 2 + i * 12;
+          if (e + 12 > dv.byteLength) break;
+          out[u16(e)] = { type: u16(e + 2), count: u32(e + 4), at: e + 8 };
+        }
+        return out;
+      };
+      const ascii = x => {
+        if (!x) return '';
+        const o = x.count <= 4 ? x.at : tiff + u32(x.at);
+        let s = '';
+        for (let i = 0; i < x.count - 1 && o + i < dv.byteLength; i++) s += String.fromCharCode(dv.getUint8(o + i));
+        return s.trim();
+      };
+      const rats = x => {
+        if (!x) return null;
+        const o = tiff + u32(x.at), r = [];
+        for (let i = 0; i < 3; i++) { const d = u32(o + i * 8 + 4); r.push(d ? u32(o + i * 8) / d : 0); }
+        return r[0] + r[1] / 60 + r[2] / 3600;
+      };
+      const ifd0 = ifd(tiff + u32(tiff + 4)), out = {};
+      if (ifd0[0x8769]) {
+        const ex = ifd(tiff + u32(ifd0[0x8769].at));
+        const m = ascii(ex[0x9003] || ex[0x9004]).match(/^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/);
+        if (m) {
+          const zone = ascii(ex[0x9011]);
+          out.takenMs = /^[+-]\d{2}:\d{2}$/.test(zone)
+            ? Date.parse(m[1] + '-' + m[2] + '-' + m[3] + 'T' + m[4] + ':' + m[5] + ':' + m[6] + zone)
+            : new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
+        }
+      }
+      if (ifd0[0x8825]) {
+        const gp = ifd(tiff + u32(ifd0[0x8825].at));
+        const lat = rats(gp[2]), lng = rats(gp[4]);
+        if (lat && lng) {
+          out.lat = +(ascii(gp[1]) === 'S' ? -lat : lat).toFixed(6);
+          out.lng = +(ascii(gp[3]) === 'W' ? -lng : lng).toFixed(6);
+        }
+      }
+      return Object.keys(out).length ? out : null;
+    } catch (e) { return null; }
+  }
+  // A short note under a harvest photo: when it was taken, and whether that was on the property.
+  function photoNote(meta, code, day) {
+    if (!meta) return '';
+    const bits = [], warn = [];
+    if (meta.takenMs) {
+      const t = new Date(meta.takenMs);
+      bits.push('Taken ' + t.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ', ' + t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + '.');
+      const shotDay = day ? new Date(day + 'T00:00:00').getTime() : Date.now();
+      if (t.getTime() < shotDay - 3600000 || t.getTime() > shotDay + 3 * 86400000) warn.push('That isn\'t the day of the shot.');
+    }
+    if (meta.lat && code) {
+      const w = whereOn(code, { lat: meta.lat, lng: meta.lng, acc: 0 });
+      if (w.status === 'inside' || w.status === 'edge') bits.push('On ' + code + '.');
+      else if (w.status === 'outside') {
+        const d = w.edgeFt >= 2640 ? (w.edgeFt / 5280).toFixed(1) + ' miles' : w.edgeFt + ' ft';
+        bits.push('About ' + d + ' from ' + code + '.');
+        if (w.edgeFt > 1500) warn.push('That\'s far from the property.');
+      }
+    }
+    if (!bits.length) return '';
+    return '<div class="note ' + (warn.length ? 'warn' : 'ok') + '">' + esc(bits.concat(warn).join(' ')) +
+      (warn.length ? ' ' + esc('Use photos of this deer. The office checks photo dates and places against your report.') : '') + '</div>';
+  }
   // Shrinks a photo to at most 1600 px on its long side (keeps uploads small on a weak signal).
   function shrink(file) {
     return new Promise((resolve, reject) => {
@@ -876,7 +962,12 @@
     el.onchange = async () => {
       store.length = 0; th.innerHTML = '';
       for (const file of el.files) {
-        try { const x = await shrink(file); store.push(Object.assign({ kind }, x)); th.innerHTML += '<img src="data:image/jpeg;base64,' + x.data + '" alt="">'; }
+        try {
+          const meta = kind === 'harvest' ? await readExif(file) : null;
+          const x = await shrink(file);
+          store.push(Object.assign({ kind }, x, meta ? { taken: meta.takenMs || '', plat: meta.lat || '', plng: meta.lng || '' } : {}));
+          th.innerHTML += '<img src="data:image/jpeg;base64,' + x.data + '" alt="">' + photoNote(meta, v('prop'), v('day'));
+        }
         catch (e) { document.getElementById('err').textContent = e.message; }
       }
       if (onChange) onChange();
