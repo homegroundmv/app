@@ -233,7 +233,7 @@
       (note ? '<div class="note ok">' + note + '</div>' : '') +
       '<div id="outbox-status" class="status"></div>' +
       '<div id="alerts"></div><div id="push"></div><div id="outing"></div>' +
-      '<button class="big" data-go="book">Book a Hunt<small>By 5 pm the day before. Required before every hunt.</small></button>' +
+      '<button class="big" data-go="book">Book a Hunt<small>At least an hour before you go. Required before every hunt.</small></button>' +
       '<button class="big" data-go="hunt">Report Your Hunt<small>Every outing, within 48 hours, even if you saw nothing.</small></button>' +
       '<button class="big alt" data-go="harvest">Report Your Harvest<small>One report for each deer, the day you take it.</small></button>' +
       (me.track
@@ -530,7 +530,8 @@
   /** "5 pm Tue 10/20" style text for when free cancelling ends. */
   function freeText(b) {
     const d = new Date(b.freeUntil);
-    return (b.slot === 'PM' ? '9 am' : '5 pm') + ' ' + d.toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' });
+    const h = d.getHours(), m = d.getMinutes();
+    return ((h % 12) || 12) + (m ? ':' + pad(m) : '') + (h < 12 ? ' am' : ' pm') + ' ' + d.toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' });
   }
   function renderBookings(fresh) {
     const box = document.getElementById('bookings');
@@ -543,7 +544,7 @@
       '<span><b>' + esc(dayName(b.date)) + '</b> · ' + esc(slotName(b.slot)) + '<br><span class="status">' + esc(b.property) + (b.stand ? ' · Stand ' + esc(b.stand) : '') + '</span></span>' +
       (b.canCancel ? '<button class="plain" data-cancel="' + i + '" style="color:var(--bad)">Cancel</button>' : '<span class="status">Started</span>') + '</div>' +
       (b.canCancel && b.freeUntil ? '<div class="status" style="margin:-4px 0 6px">' + (Date.now() < b.freeUntil ? 'Free to cancel until ' + freeText(b) : 'Cancelling now costs 1 point') + '</div>' : '')).join('') +
-      '<p class="status" style="margin:8px 0 0">Can\'t make it? Cancel for free by 5 pm the day before a morning or all-day hunt, or by 9 am for an afternoon hunt, so the landowner knows and the time opens up for another hunter. Cancelling later (until the hunt starts) costs 1 point; a booking you don\'t cancel or report costs 3. You\'ll get a reminder 2 hours before free cancelling ends. To change a booking, cancel it and book again.</p>';
+      '<p class="status" style="margin:8px 0 0">Can\'t make it? Cancel for free by 5 pm the day before a morning or all-day hunt, or by 9 am for an afternoon hunt (a booking made after that can be cancelled free for an hour), so the landowner knows and the time opens up for another hunter. Cancelling later (until the hunt starts) costs 1 point; a booking you don\'t cancel or report costs 3. You\'ll get a reminder 2 hours before free cancelling ends. To change a booking, cancel it and book again.</p>';
     box.querySelectorAll('[data-cancel]').forEach(btn => btn.onclick = async () => {
       const b = bookingsCache[Number(btn.dataset.cancel)];
       const late = b.freeUntil && Date.now() >= b.freeUntil;
@@ -602,22 +603,35 @@
       list.map(p => '<option value="' + esc(p.code) + '">' + esc(p.code) + (p.town ? ' · ' + esc(p.town) : '') + '</option>').join('') + '</select>';
   }
 
-  // Booking window: by 5 pm the day before. After 5 pm the earliest bookable day is the day after tomorrow.
+  // Booking window (Joe, 22 Oct; bookings are automatic): at least an hour before the hunt starts, so by 11 pm the night
+  // before a morning or all-day hunt and by 11 am for an afternoon one. A property whose landowner asked for notice before
+  // a hunter enters (book5pm, sent at sign-in) still closes at 5 pm the day before. The server checks the same rule.
+  function bookCutoff(prop, iso, slot) {
+    const [y, m, d] = iso.split('-').map(Number);
+    const p = (me.properties || []).find(x => x.code === prop);
+    if (p && p.book5pm) return new Date(y, m - 1, d - 1, 17).getTime();
+    return new Date(y, m - 1, d, slot === 'PM' ? 11 : -1).getTime();
+  }
+  const cutoffWords = prop => {
+    const p = (me.properties || []).find(x => x.code === prop);
+    return p && p.book5pm ? prop + '\'s landowner asks for notice before a hunter enters, so it closes at 5 pm the day before.'
+      : 'Bookings close an hour before the hunt starts: 11 pm the night before a morning or all-day hunt, 11 am for an afternoon one.';
+  };
   function earliestBookable() {
-    const d = new Date(); d.setDate(d.getDate() + (d.getHours() >= 17 ? 2 : 1)); return isoDate(d);
+    const d = new Date(); if (d.getHours() >= 11) d.setDate(d.getDate() + 1); return isoDate(d);
   }
 
   function showBook() {
     const min = earliestBookable();
     $app.innerHTML = header() + '<h1>Book a Hunt</h1>' +
-      '<div class="note warn">Book by 5 pm the day before. Bookings are confirmed automatically: you\'ll get a notification (or an email) within a minute or two of it going through. No confirmation, no hunt.</div>' +
+      '<div class="note warn">Book at least an hour before the hunt starts: by 11 pm the night before a morning or all-day hunt, by 11 am for an afternoon one. A few landowners ask for notice before a hunter enters; those properties close at 5 pm the day before, and the calendar shows it. Bookings are confirmed automatically: you\'ll get a notification (or an email) within a minute or two of it going through. No confirmation, no hunt.</div>' +
       propertySelect() +
       '<div id="cal"></div>' +
-      '<label for="day">Date of hunt</label><input id="day" type="date" min="' + min + '" value="' + min + '">' +
+      '<label for="day">Date of hunt</label><input id="day" type="date" min="' + isoDate(new Date()) + '" value="' + min + '">' +
       '<label for="time">Time of hunt</label><select id="time"><option value="">Choose…</option>' +
       '<option>AM</option><option>PM</option><option>All day</option></select>' +
       '<label for="stand">Stand ID <span class="hint">Optional. The stand or spot you plan to use.</span></label><input id="stand" type="text">' +
-      '<label class="choice"><input id="agree" type="checkbox"> I understand I\'m not booked until I get Home Ground\'s confirmation. To cancel, I\'ll use Your bookings on the app\'s home screen: free by 5 pm the day before (9 am for an afternoon hunt); later than that costs 1 point.</label>' +
+      '<label class="choice"><input id="agree" type="checkbox"> I understand I\'m not booked until I get Home Ground\'s confirmation. To cancel, I\'ll use Your bookings on the app\'s home screen: free by 5 pm the day before (9 am for an afternoon hunt), or within an hour of booking; later than that costs 1 point.</label>' +
       '<div id="err" class="err"></div><button class="submit" id="send">Send booking</button>' +
       '<p class="center"><button class="plain" id="back">Back</button></p>';
     document.getElementById('back').onclick = () => showHome();
@@ -629,8 +643,10 @@
       const err = [];
       if (!prop) err.push('Choose a property.');
       if (!f('day').value) err.push('Pick a date.');
-      else if (f('day').value < earliestBookable()) err.push('That date is past the 5 pm cutoff. Pick a later day.');
       if (!f('time').value) err.push('Choose a time.');
+      else if (prop && f('day').value && Date.now() > bookCutoff(prop, f('day').value, f('time').value === 'PM' ? 'PM' : 'AM')) {
+        err.push('Too late to book that. ' + cutoffWords(prop) + ' Pick a later time.');
+      }
       else if (prop && f('day').value) {
         const why = slotProblem(prop, f('day').value, f('time').value);
         if (why) err.push(why);
@@ -663,8 +679,9 @@
       if (sel && sel.value === prop) drawCalendar(prop);
     } catch (e) { if (!calFor(prop)) box.innerHTML = '<p class="status">Calendar not available right now. You can still book.</p>'; }
   }
-  function slotState(c, iso, slot) {
+  function slotState(c, iso, slot, prop) {
     const d = new Date(iso + 'T12:00:00');
+    if (prop && Date.now() > bookCutoff(prop, iso, slot)) return { kind: 'blocked', label: 'Closed' };
     const b = c.blackouts.find(x => iso >= x.from && iso <= x.to && (!x.days.length || x.days.indexOf(d.getDay()) >= 0) && overlap(x.slot, slot));
     if (b) return { kind: 'blocked', label: 'Paused', note: b.note };
     const taken = c.bookings.filter(x => x.date === iso && overlap(x.slot, slot));
@@ -689,17 +706,17 @@
     if (!box) return;
     if (!c) { box.innerHTML = '<p class="status">Loading the calendar for ' + esc(prop) + '…</p>'; return; }
     const style = { open: 'background:#EEF0E0;color:#363C17', mine: 'background:#4B5320;color:#fff', full: 'background:#FCE8E6;color:#A12A1F', blocked: 'background:#EEE;color:#777;text-decoration:line-through' };
-    const start = new Date(earliestBookable() + 'T12:00:00');
+    const start = new Date(isoDate(new Date()) + 'T12:00:00');
     let rows = '';
     for (let i = 0; i < 14; i++) {
       const d = new Date(start); d.setDate(d.getDate() + i);
       const iso = isoDate(d);
-      const cell = sl => { const st = slotState(c, iso, sl); const tap = st.kind === 'open';
+      const cell = sl => { const st = slotState(c, iso, sl, prop); const tap = st.kind === 'open';
         return '<button type="button" ' + (tap ? 'data-pick="' + iso + '|' + sl + '"' : 'disabled') + ' style="flex:1;border:0;border-radius:8px;padding:8px 6px;font-size:13px;text-align:left;' + style[st.kind] + '"><b>' + sl + '</b> ' + esc(st.label) + '</button>'; };
       rows += '<div style="display:flex;gap:6px;align-items:center;margin:4px 0"><div style="width:72px;font-size:14px;font-weight:600">' + DOW[d.getDay()] + ' ' + (d.getMonth() + 1) + '/' + d.getDate() + '</div>' + cell('AM') + cell('PM') + '</div>';
     }
     box.innerHTML = '<div class="card"><b>' + esc(prop) + ' · next two weeks</b><div class="status">Up to ' + c.max + ' hunter' + (c.max > 1 ? 's' : '') +
-      ' at a time. Tap an open slot to pick it. Paused = the landowner has asked for no hunting.' +
+      ' at a time. Tap an open slot to pick it. Paused = the landowner has asked for no hunting. Closed = too late to book. ' + cutoffWords(prop) +
       (navigator.onLine ? '' : ' Shown as last seen; no signal.') + '</div>' + rows + '</div>';
     box.querySelectorAll('[data-pick]').forEach(b => b.onclick = () => {
       const [iso, sl] = b.dataset.pick.split('|');
