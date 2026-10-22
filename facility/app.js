@@ -208,8 +208,7 @@
       (note ? '<div class="note ok">' + note + '</div>' : '') +
       '<div id="alerts">' + alertsHtml() + '</div><div id="push"></div>' + clockCard + tiles +
       group('Work') +
-      big('intake', 'Check in a deer', 'Band, tag, skinning, print the intake band') +
-      big('donate', 'Process a donated deer', 'Everything for Martin\'s sheet, package numbers filled in for you') +
+      big('intake', 'Check in a deer', 'Band, tag, hunter, print the intake band') +
       big('shifts', 'Book your time', 'Pick your own start and end · up to ' + s.maxAtOnce + ' at once') +
       big('daily', 'Daily log', 'Temperatures, cleaning, waste, complaints') +
       big('messages', 'Messages' + (h.unread ? ' (' + h.unread + ' new)' : ''), 'Team chat and direct messages') +
@@ -342,14 +341,13 @@
         '<label>Carcass weight (lb) <span class="hint">On the hanging scale: field dressed, skin and head off</span></label><input id="f1" type="number" inputmode="decimal" min="0" step="0.1">',
       finish: () => '<p class="status">Started ' + esc(d['Processing started'] || '') + ' · carcass ' + esc(d['Carcass weight (lb)'] || '?') + ' lb</p>' +
         '<div class="grid2"><div><label>Ground packages (' + esc(s.pkgSize) + ' lb)</label><input id="f1" type="number" inputmode="numeric" min="0" step="1"></div>' +
-        '<div><label>Intact cut packages</label><input id="f2" type="number" inputmode="numeric" min="0" step="1" value="0"></div>' +
-        '<div><label>Intact cuts total (lb)</label><input id="f3" type="number" inputmode="decimal" min="0" step="0.1" value="0"></div>' +
-        '<div><label>Trim discarded (lb) <span class="hint">optional</span></label><input id="f4" type="number" inputmode="decimal" min="0" step="0.1"></div></div>' +
+        (d.Type === 'Donated' ? '<input id="f2" type="hidden" value="0"><input id="f3" type="hidden" value="0"></div><p class="status">Donated deer: all grind, to the state standard, on the MassWildlife label.</p>'
+          : '<div><label>Intact cut packages</label><input id="f2" type="number" inputmode="numeric" min="0" step="1" value="0"></div>' +
+          '<div><label>Intact cuts total (lb)</label><input id="f3" type="number" inputmode="decimal" min="0" step="0.1" value="0"></div></div>') +
         '<div class="calc" id="calc"></div>' +
         (d.Type === 'Donated' && !d['First pack #'] ? '<div class="note bad">Tap <b>Get package numbers</b> before grinding, so the labels run in order.</div>' : '') +
         '<div class="note ' + (fatOn ? 'warn">Grind with <b>' + esc(fatPct) + '% pork fat</b>.' : 'ok">All-venison grind: <b>no pork fat</b>.') + '</div>' +
         (fatOn && d.Type !== 'Donated' ? '<label class="choice"><input id="f7" type="checkbox"> Out of pork fat: grind all venison and take the $' + esc(s.porkAddOn || 20) + ' off the hunter\'s price</label>' : '') +
-        '<label class="choice"><input id="f5" type="checkbox"> Allergen labels on every package (alpha-gal)' + (fatOn ? '; ground also says "Contains pork"' : '') + '</label>' +
         '<label class="choice"><input id="f6" type="checkbox"> Knives, hooks, luggers and grinder sanitized after this deer</label>',
       release: () => '<label>Released to</label><select id="f1"><option value="">Choose…</option><option>Hunter pickup</option>' +
         (s.pantries || []).map(p => '<option>' + esc(p) + '</option>').join('') + '<option value="other">Other…</option></select>' +
@@ -391,9 +389,8 @@
         if (!(c.pk + ip > 0)) return err('Enter the packages.');
         if (d.Type === 'Donated' && !d['First pack #']) return err('Get package numbers first (needs signal), so every label carries its MassWildlife number.');
         if (ip && !(c.il > 0)) return err('Weigh the intact cuts and enter the total.');
-        if (!document.getElementById('f5').checked) return err('Allergen labels must go on every package before it leaves the table.');
         if (!document.getElementById('f6').checked) return err('Sanitize knives, hooks, luggers and the grinder before the next deer, then tick the box.');
-        queue('finish', { band: d.Band, groundPackages: c.pk, intactPackages: ip, intactLb: c.il, trimLb: v('f4'), total: c.total, allergen: true, sanitized: true, noPork: !!(document.getElementById('f7') || {}).checked }, 'Finish ' + d.Band);
+        queue('finish', { band: d.Band, groundPackages: c.pk, intactPackages: ip, intactLb: c.il, total: c.total, sanitized: true, noPork: !!(document.getElementById('f7') || {}).checked }, 'Finish ' + d.Band);
       }
       if (kind === 'release') {
         const to = v('f1') === 'other' ? v('f3').trim() : v('f1');
@@ -434,41 +431,31 @@
       '<div id="bandbox" hidden><label for="band">IAP field band number <span class="hint">On the hock</span></label><input id="band" type="text" autocapitalize="characters"></div>' +
       '<div id="genbox" class="note ok" hidden>Home Ground ID: <b id="genid">enter the date of the shot below</b><br><span class="status">Printed on the intake band; it stays with the deer from intake to release.</span></div>' +
       '<label>Donated or private?</label>' +
-      '<label class="choice"><input type="radio" name="type" value="Donated"> <span><b>Donated</b> (Share the Harvest). TFMV mails the hunter a check: $' + esc(s.payDoe || 150) + ' a doe, $' + esc(s.payBuck || 100) + ' a buck (antlered or button).</span></label>' +
+      '<label class="choice"><input type="radio" name="type" value="Donated"> <span><b>Donated</b> (Share the Harvest). TFMV mails the hunter a check: $' + esc(s.payDoe || 150) + ' a doe, $' + esc(s.payBuck || 100) + ' a buck (any male deer).</span></label>' +
       '<label class="choice"><input type="radio" name="type" value="Private"> <span><b>Private</b>: processed for the hunter, $' + esc(s.privatePrice || 250) + '.</span></label>' +
       (s.porkInStock === false ? '<p class="status" id="porkbox" hidden>Pork fat add-on: not available right now. The grind will be all venison.</p>'
         : '<label class="choice" id="porkbox" hidden><input id="pork" type="checkbox"> <span>Add pork fat to the ground (' + esc(s.fatPrivate || 10) + '%), <b>+$' + esc(s.porkAddOn || 20) + '</b>. Local-farm pork fat, as available. Without it, the grind is all venison.</span></label>') +
-      '<label for="deer">Deer</label><select id="deer"><option value="">Choose…</option><option>Doe</option><option>Button buck</option><option>Antlered buck</option></select>' +
+      '<label for="deer">Deer</label><select id="deer"><option value="">Choose…</option><option>Doe</option><option>Button buck</option><option>Sub-legal adult male</option><option>Antlered buck</option></select>' +
       '<div id="ptsbox" hidden><label for="pts">Points <span class="hint">count every point 1 inch and longer</span></label><input id="pts" type="number" inputmode="numeric" min="1" max="40" step="1" style="max-width:140px"></div>' +
-      '<div class="grid2"><div><label for="hn">Hunter number <span class="hint">if enrolled: fills in their details</span></label><input id="hn" type="text" autocapitalize="characters" placeholder="H-001"></div>' +
-      '<div id="hunterbox" style="grid-column:1/-1"></div>' +
+      '<div class="grid2">' +
       '<div><label for="fn">Hunter first name</label><input id="fn" type="text" autocomplete="off"></div>' +
       '<div><label for="ln">Hunter last name</label><input id="ln" type="text" autocomplete="off"></div>' +
-      '<div><label for="lic">Hunting license number <span class="hint">6 digits, on their license</span></label><input id="lic" type="text" inputmode="numeric" maxlength="6" pattern="[0-9]*"></div>' +
+      '<div><label for="lic">MassWildlife customer ID <span class="hint">5 to 8 digits</span></label><input id="lic" type="text" inputmode="numeric" maxlength="8" pattern="[0-9]*"></div>' +
       '<div><label for="ph">Hunter phone</label><input id="ph" type="tel"></div>' +
       '<div><label for="cf">MassWildlife confirmation number</label><input id="cf" type="text"></div>' +
-      '<div><label for="sd">Date of the shot</label><input id="sd" type="date" value="' + isoDate(now) + '" max="' + isoDate(now) + '"></div>' +
-      '<div><label for="stm">Time of the shot</label><input id="stm" type="time"></div></div>' +
+      '<div id="sdbox" hidden><label for="sd">Date of the shot <span class="hint">for the Home Ground ID</span></label><input id="sd" type="date" value="' + isoDate(now) + '" max="' + isoDate(now) + '"></div>' +
+      '</div>' +
       '<div id="addrbox" hidden><label for="ad1">Hunter mailing address <span class="hint">TFMV mails the donation check here</span></label><input id="ad1" type="text" autocomplete="street-address" placeholder="Street or PO box">' +
       '<div class="grid2"><div><label for="adt">Town</label><input id="adt" type="text"></div><div><label for="ads">State</label><input id="ads" type="text" value="MA" maxlength="2" autocapitalize="characters"></div>' +
       '<div><label for="adz">ZIP</label><input id="adz" type="text" inputmode="numeric" maxlength="10"></div></div></div>' +
       cutsHtml() +
-      '<div id="age" class="status"></div>' +
       '<label class="choice"><input id="fd" type="checkbox"> Field dressed within 4 hours of the shot (or the air stayed below 37°F)</label>' +
-      '<label class="choice"><input id="ddp" type="checkbox"> Taken under a deer depredation permit (DDP)</label>' +
+      '<label class="choice"><input id="ddp" type="checkbox"> Taken under a deer damage permit (DDP)</label>' +
       '<p class="status">The deer hangs in the receiving cooler skin-on, head-on. It\'s skinned and the head removed at the station behind MHU #1 when processing starts.</p>' +
       '<label for="nt">Notes</label><textarea id="nt"></textarea>' +
       '<div class="err" id="err"></div><button class="submit" id="save">Check in and print band</button>' +
       '<button class="btn ghost" id="away" style="width:100%">Turn this deer away instead</button><div id="awaybox"></div></div>');
     const v = id => document.getElementById(id).value.trim();
-    const shotAt = () => { if (!v('sd') || !v('stm')) return null; const [y, m, d] = v('sd').split('-').map(Number), [hh, mm] = v('stm').split(':').map(Number); return new Date(y, m - 1, d, hh, mm); };
-    const ageNote = () => {
-      const t = shotAt(), el = document.getElementById('age');
-      if (!t) { el.textContent = ''; return 0; }
-      const h = (Date.now() - t) / 36e5;
-      el.innerHTML = h > 24 ? '<div class="note bad">' + Math.floor(h) + ' hours since the shot. Over 24 hours: we can\'t accept it, donated or private. Turn it away.</div>' : Math.max(0, Math.floor(h)) + ' hours since the shot.';
-      return h;
-    };
     // Non-IAP deer: ID = date of the shot (MMDDYYYY) + a two-digit count for that day, e.g. 0908202601
     const genId = () => {
       const sd = v('sd'); if (!sd) return '';
@@ -477,45 +464,6 @@
         .filter(x => x.length === 10 && x.indexOf(pre) === 0).map(x => parseInt(x.slice(8), 10) || 0);
       return pre + ('0' + (Math.max(0, ...used) + 1)).slice(-2);
     };
-    // Enrolled hunter: look the number up in the Office Registry, show it, the hunter confirms, then fill the form.
-    let hunterInfo = null, hunterConfirmed = false;
-    const hbox = document.getElementById('hunterbox');
-    // Accepts "1 Main St, Edgartown, MA 02539" (ours) and Squarespace's "1 Main St, Apt 2, Edgartown, MA, 02539, United States" style.
-    const splitAddr = a => {
-      let p = String(a || '').split(/\s*[,\n]\s*/).filter(Boolean);
-      if (p.length && /^(united states|usa|us)$/i.test(p[p.length - 1])) p.pop();
-      const last = p.pop() || '';
-      let zip = (last.match(/\b(\d{5}(?:-\d{4})?)$/) || [])[1] || '', state = (last.match(/\b([A-Za-z]{2})\b(?=\s*\d{5}|$)/) || [])[1] || '';
-      if (!state && /^[A-Za-z]{2}$/.test(p[p.length - 1] || '')) state = p.pop();
-      if (!zip || !p.length) return null;
-      const town = p.pop() || '';
-      return p.length ? { st: p.join(', '), town, state: (state || 'MA').toUpperCase(), zip } : null;
-    };
-    document.getElementById('hn').onchange = async () => {
-      hunterInfo = null; hunterConfirmed = false;
-      const raw = v('hn'); if (!raw) { hbox.innerHTML = ''; return; }
-      hbox.innerHTML = '<p class="status">Looking up ' + esc(raw) + '…</p>';
-      try {
-        const h = await call({ action: 'hunter', hunterNumber: raw });
-        if (!h.found) { hbox.innerHTML = '<div class="note warn">No enrolled hunter ' + esc(h.number) + '. Check the number, or leave it blank and type the details.</div>'; return; }
-        hunterInfo = h;
-        const addr = h.address ? h.address + (h.addressFrom === 'application' ? ' (from their application)' : '') : 'not on file yet', lic = h.license || 'not on file yet';
-        hbox.innerHTML = '<div class="card" style="margin:8px 0;border:2px solid var(--green)"><b>Hunter: please check this is you</b>' +
-          (/active/i.test(h.status) ? '' : '<div class="note warn">Status in the Registry: ' + esc(h.status) + '</div>') +
-          '<table class="mrow"><tr><th>Hunter</th><td><b>' + esc(h.number) + '</b></td></tr><tr><th>Name</th><td><b>' + esc(h.first + ' ' + h.last) + '</b></td></tr>' +
-          '<tr><th>Mailing address</th><td>' + esc(addr) + '</td></tr><tr><th>Hunting license #</th><td>' + esc(lic) + '</td></tr></table>' +
-          ((!h.address || !h.license) ? '<p class="status">Anything not on file: enter it below and it\'s saved to your Home Ground record for next time.</p>' : '') +
-          '<button class="btn" id="hyes">Yes, that\'s me</button> <button class="btn ghost" id="hno">No, edit</button></div>';
-        document.getElementById('hyes').onclick = () => {
-          hunterConfirmed = true;
-          const set = (id, val) => { const el = document.getElementById(id); if (el && val && !el.value) el.value = val; };
-          set('fn', h.first); set('ln', h.last); set('lic', h.license);
-          const a = splitAddr(h.address); if (a) { set('ad1', a.st); set('adt', a.town); const sEl = document.getElementById('ads'); if (sEl) sEl.value = a.state; set('adz', a.zip); }
-          hbox.innerHTML = '<div class="note ok">Confirmed by ' + esc(h.first) + '. Details filled in below; change anything that\'s out of date and it\'s updated on their record.</div>';
-        };
-        document.getElementById('hno').onclick = () => { hunterConfirmed = false; hbox.innerHTML = '<div class="note warn">Not confirmed: type the hunter\'s details below. Nothing is saved to their record.</div>'; };
-      } catch (e) { hbox.innerHTML = '<div class="note warn">' + esc(e.offline ? 'Lookup needs signal: type the details below.' : e.message) + '</div>'; }
-    };
     document.getElementById('deer').onchange = () => { document.getElementById('ptsbox').hidden = v('deer') !== 'Antlered buck'; };
     if (!document.getElementById('mrow-css')) { const c = document.createElement('style'); c.id = 'mrow-css';
       c.textContent = '.mrow{width:100%;table-layout:fixed;border-collapse:collapse;margin:10px 0;font-size:15px}.mrow th{text-align:left;font-weight:600;font-size:14px;color:var(--muted);padding:7px 8px 7px 0;width:45%;vertical-align:top;white-space:normal}.mrow td{padding:7px 0;border-bottom:1px solid var(--line);text-align:left;white-space:normal;overflow-wrap:anywhere}.mrow th{border-bottom:1px solid var(--line)}';
@@ -523,8 +471,9 @@
     const iapNow = () => (document.querySelector('input[name=iap]:checked') || {}).value;
     const showId = () => { const g = document.getElementById('genid'); if (iapNow() === 'No') g.textContent = genId() || 'enter the date of the shot below'; };
     document.querySelectorAll('input[name=iap]').forEach(r => r.onchange = () => {
-      document.getElementById('bandbox').hidden = iapNow() !== 'Yes'; document.getElementById('genbox').hidden = iapNow() !== 'No'; showId(); });
-    ['sd', 'stm'].forEach(id => { document.getElementById(id).onchange = () => { ageNote(); showId(); }; });
+      document.getElementById('bandbox').hidden = iapNow() !== 'Yes'; document.getElementById('genbox').hidden = iapNow() !== 'No';
+      document.getElementById('sdbox').hidden = iapNow() !== 'No'; showId(); });
+    document.getElementById('sd').onchange = showId;
     document.querySelectorAll('input[name=type]').forEach(r => r.onchange = () => { document.getElementById('porkbox').hidden = r.value !== 'Private' || !r.checked; document.getElementById('addrbox').hidden = r.value !== 'Donated' || !r.checked; document.getElementById('cutbox').hidden = r.value !== 'Private' || !r.checked; });
     const err = m => { document.getElementById('err').textContent = m; };
     document.getElementById('save').onclick = () => {
@@ -536,28 +485,24 @@
       if (!b) return err('Enter the IAP field band number from the hock.');
       if (deerList().some(d => band(d.Band) === b && d.Status !== 'Released')) return err('Band ' + b + ' is already in the cooler.');
       if (!type) return err('Choose donated or private.');
-      if (!v('deer')) return err('Choose doe, button buck or antlered buck.');
+      if (!v('deer')) return err('Choose doe, button buck, sub-legal adult male or antlered buck.');
       const pts = parseInt(v('pts'), 10);
       if (v('deer') === 'Antlered buck' && !(pts >= 1 && pts <= 40)) return err('Count the points 1 inch and longer and enter the number.');
       if (!v('fn') || !v('ln')) return err('Enter the hunter\'s first and last name.');
       const lic = v('lic').replace(/\D/g, '');
-      if (lic && lic.length !== 6) return err('The hunting license number is 6 digits.');
-      if (type === 'Donated' && !lic) return err('Enter the hunter\'s 6-digit hunting license number. MassWildlife needs it for donated deer.');
+      if (lic && (lic.length < 5 || lic.length > 8)) return err('The MassWildlife customer ID is 5 to 8 digits.');
+      if (type === 'Donated' && !lic) return err('Enter the hunter\'s MassWildlife customer ID. Martin needs it for donated deer.');
       if (type === 'Donated' && (!v('ad1') || !v('adt') || !v('adz'))) return err('Enter the hunter\'s mailing address (street, town and ZIP). TFMV mails the donation check there.');
       if (!v('cf')) return err('Enter the MassWildlife confirmation number. No confirmation number, no intake.');
-      const t = shotAt();
-      if (!t) return err('Enter the date and time of the shot.');
-      const h = ageNote();
-      if (h > 24) return err('Over 24 hours since the shot. We can\'t accept it, donated or private: tap Turn this deer away instead.');
       if (type === 'Donated' && !document.getElementById('fd').checked) return err('Donated deer must be field dressed within 4 hours of the shot.');
       if (type === 'Private' && coolerCount() >= S().coolerCap) return err('The cooler is full. Hold private deer until there\'s room.');
-      const f = { band: b, iap: iap === 'Yes', hunterConfirmed: hunterConfirmed && !!hunterInfo, type, deer: v('deer'), points: v('deer') === 'Antlered buck' ? pts : '', hunterNumber: v('hn'), firstName: v('fn'), lastName: v('ln'), license: lic, hunterPhone: v('ph'), confirmation: v('cf'),
+      const f = { band: b, iap: iap === 'Yes', type, deer: v('deer'), points: v('deer') === 'Antlered buck' ? pts : '', firstName: v('fn'), lastName: v('ln'), customerId: lic, hunterPhone: v('ph'), confirmation: v('cf'),
         cuts: type === 'Private' ? readCuts() : '',
         address: type === 'Donated' ? v('ad1') + ', ' + v('adt') + ', ' + (v('ads') || 'MA').toUpperCase() + ' ' + v('adz') : '',
-        shotAt: stamp(t), dressed4h: document.getElementById('fd').checked, ddp: document.getElementById('ddp').checked, skinned: false, notes: v('nt'),
+        dressed4h: document.getElementById('fd').checked, ddp: document.getElementById('ddp').checked, skinned: false, notes: v('nt'),
         porkFat: type === 'Private' && !!document.getElementById('pork') && document.getElementById('pork').checked };
       queue('intake', f, 'Check-in ' + b);
-      printBand({ Band: b, Intake: stamp(), Type: type, Deer: f.deer, 'Hunter number': f.hunterNumber });
+      printBand({ Band: b, Intake: stamp(), Type: type, Deer: f.deer });
       showBoard();
       toast('Band ' + b + ' checked in.', true);
     };
@@ -967,7 +912,7 @@
       const row = (k, val, note) => '<tr><th>' + esc(k) + '</th><td>' + (val ? '<b>' + esc(val) + '</b>' : '') + (note ? ' <span class="status">' + note + '</span>' : '') + '</td></tr>';
       body += '<div class="card"><b>' + esc(d.Band) + '</b> <span class="tag don">DONATED</span> <span class="status">' + esc(d.Deer || '') + '</span>' +
         '<table class="mrow">' +
-        row('Customer ID', d['Hunter license #'], d['Hunter license #'] ? '' : '<span id="licbox"><input id="lic2" type="text" inputmode="numeric" maxlength="6" placeholder="6-digit license"><button class="btn ghost" id="licsave" style="padding:8px 12px">Save</button></span>') +
+        row('Customer ID', d['Customer ID'], d['Customer ID'] ? '' : '<span id="licbox"><input id="lic2" type="text" inputmode="numeric" maxlength="8" placeholder="5 to 8 digits"><button class="btn ghost" id="licsave" style="padding:8px 12px">Save</button></span>') +
         row('First Name', first) + row('Last Name', last) +
         row('Date Received', String(d.Intake || '').split(' ')[0]) +
         row('Confirmation/Seal #', d['MassWildlife confirmation']) +
@@ -997,10 +942,10 @@
     const ls = document.getElementById('licsave');
     if (ls) ls.onclick = async () => {
       const lic = (document.getElementById('lic2').value || '').replace(/\D/g, '');
-      if (lic.length !== 6) return toast('The hunting license number is 6 digits.');
+      if (lic.length < 5 || lic.length > 8) return toast('The MassWildlife customer ID is 5 to 8 digits.');
       ls.disabled = true;
       try { await call({ action: 'setlicense', band: d.Band, license: lic });
-        (st.home.deer || []).forEach(x => { if (band(x.Band) === band(d.Band) && x.Status !== 'Released') x['Hunter license #'] = lic; }); save(); showDonate(); }
+        (st.home.deer || []).forEach(x => { if (band(x.Band) === band(d.Band) && x.Status !== 'Released') x['Customer ID'] = lic; }); save(); showDonate(); }
       catch (e) { ls.disabled = false; toast(e.offline ? 'Needs signal.' : e.message); }
     };
   }
