@@ -355,7 +355,7 @@
     $app.innerHTML = header() +
       (note ? '<div class="note ok">' + note + '</div>' : '') +
       '<div id="outbox-status" class="status"></div>' +
-      '<div id="alerts"></div><div id="push"></div><div id="outing"></div>' +
+      '<div id="todo"></div><div id="alerts"></div><div id="push"></div><div id="outing"></div>' +
       '<button class="big" data-go="book">Book a Hunt<small>At least an hour before you go. Required before every hunt.</small></button>' +
       '<button class="big" data-go="hunt">Report Your Hunt<small>Every outing, within 48 hours, even if you saw nothing.</small></button>' +
       '<p class="center" style="margin:-2px 0 12px"><button class="plain" data-go="harvest">Report another deer</button><br><span class="hint">Took more than one, or found a deer later? The hunt report opens this for you otherwise.</span></p>' +
@@ -375,6 +375,7 @@
       '<p class="center"><button class="plain" id="out">Sign out</button></p>';
     const screens = { book: showBook, hunt: () => (me.outing && me.outing.left ? showLeaving() : showHunt()), harvest: () => showHarvest(), before: showBefore, after: showAfter, track: () => showTracking(), stand: showStand, find: () => showFind(), help: showHelp, messages: showMessages };
     $app.querySelectorAll('[data-go]').forEach(b => b.onclick = () => screens[b.dataset.go]());
+    renderTodo(); loadTodo();
     document.getElementById('out').onclick = async () => {
       const waiting = (await outbox('all')).length;
       if (waiting && !confirm(waiting + ' report(s) haven\'t sent yet. Sign out anyway? They\'ll be lost.')) return;
@@ -419,6 +420,58 @@
       const any = document.getElementById('on-any');
       if (any) any.onclick = () => showCheckin('');
     }
+  }
+  // "Needs your attention": the hunter's flagged reports, each with a one-tap fix (or a short explanation).
+  let todoCache = [];
+  async function loadTodo() {
+    if (!me || !navigator.onLine) return;
+    try { const out = await call({ action: 'todo', hunter: me.hunter, pin: me.pin }); todoCache = out.items || []; } catch (e) { return; }
+    renderTodo();
+  }
+  function renderTodo() {
+    const box = document.getElementById('todo');
+    if (!box) return;
+    if (!todoCache.length) { box.innerHTML = ''; return; }
+    box.innerHTML = '<div class="card" style="border:2px solid #8A2E1F"><b>Needs your attention (' + todoCache.length + ')</b>' +
+      todoCache.map((t, i) => '<div style="padding:8px 0;border-top:1px solid var(--line);margin-top:8px">' + esc(t.check) + ' · ' + esc(t.property) + ' · ' + esc(dayName(t.date)) +
+        '<br><button class="plain" data-fix="' + i + '" style="padding:4px 0">Fix it</button></div>').join('') + '</div>';
+    box.querySelectorAll('[data-fix]').forEach(b => b.onclick = () => showFix(todoCache[+b.dataset.fix]));
+  }
+  function showFix(t) {
+    const photos = [];
+    const field = {
+      time: '<label for="fv">The right time of shot</label><input id="fv" type="time">',
+      band: '<label for="fv">The right Home Ground band number for this deer</label><input id="fv" type="text">',
+      conf: '<label for="fv">The right MassWildlife confirmation number for this deer</label><input id="fv" type="text" inputmode="numeric">',
+      photos: photoField('fp', 'Photos of this deer', 'Band visible.'),
+      harvest: '<button class="big" id="fh">File the missing harvest report<small>' + esc(t.property) + ', ' + esc(dayName(t.date)) + '</small></button>'
+    }[t.fix] || '';
+    $app.innerHTML = header() + '<h1>' + esc(t.check) + '</h1><p class="status">' + esc(t.property) + ' · ' + esc(dayName(t.date)) + '</p>' +
+      '<div class="note warn">' + esc(t.ask) + '</div>' + (t.report ? '<p class="status">' + esc(t.report) + '</p>' : '') + field +
+      (field ? '<p class="status" style="margin-top:14px">Or, if it\'s right as it is:</p>' : '') +
+      '<label for="fx">Tell us what happened</label><textarea id="fx"></textarea>' +
+      '<div id="err" class="err"></div><button class="submit" id="send">Send</button><p class="center"><button class="plain" id="back">Back</button></p>';
+    document.getElementById('back').onclick = () => showHome();
+    if (t.fix === 'photos') wirePhoto('fp', 'harvest', photos);
+    const fh = document.getElementById('fh');
+    if (fh) fh.onclick = () => showHarvest({ property: t.property, date: t.date });
+    document.getElementById('send').onclick = async () => {
+      const val = ((document.getElementById('fv') || {}).value || '').trim(), text = v('fx').trim(), err = document.getElementById('err');
+      let kind = 'explain';
+      if (t.fix === 'time' && val) kind = 'time';
+      else if ((t.fix === 'band' || t.fix === 'conf') && val) kind = t.fix;
+      else if (t.fix === 'photos' && photos.length) kind = 'photos';
+      if (kind === 'explain' && !text) { err.textContent = field && t.fix !== 'harvest' ? 'Fix it above, or tell us what happened.' : 'Tell us what happened.'; return; }
+      if (kind === 'time' && notYet(t.date, val)) { err.textContent = 'That time hasn\'t happened yet. Check AM / PM.'; return; }
+      if (!navigator.onLine) { err.textContent = 'This needs signal. Try again when you have it.'; return; }
+      const btn = document.getElementById('send');
+      btn.disabled = true; btn.textContent = 'Sending…';
+      try {
+        const out = await call({ action: 'fix', hunter: me.hunter, pin: me.pin, key: t.key, kind, value: val, text, files: kind === 'photos' ? photos : [] });
+        todoCache = todoCache.filter(x => x.key !== t.key);
+        showHome('Thanks, that\'s sent.' + (out.still ? ' That time is still outside legal shooting hours, so the office will look at it.' : ''));
+      } catch (e) { btn.disabled = false; btn.textContent = 'Send'; err.textContent = e.message || 'Couldn\'t send. Try again.'; }
+    };
   }
   // Start an unbooked hunt: books the property for today right now (the server refuses it during a landowner pause,
   // when the property is full, or where the landowner asks for notice the day before), then checks in On stand.
@@ -1261,7 +1314,7 @@
     } catch (e) { trackState = { status: 'past-offline', past }; trackAlert(); }
   }
   function trackAlert() {
-    if (Date.now() - lastAlert < ALERT_EVERY_MS) return;
+    if (Date.now() - lastAlert < (me && me.track && me.track.ack ? 15 * 60000 : ALERT_EVERY_MS)) return;
     lastAlert = Date.now();
     const body = trackState.status === 'off'
       ? 'You\'ve left enrolled land. Stop unless you have the owner\'s permission or the Environmental Police\'s direction.'
@@ -1295,6 +1348,40 @@
     let walked = 0; for (let i = 1; i < (t.path || []).length; i++) walked += distBearing({ lat: t.path[i - 1][0], lng: t.path[i - 1][1] }, { lat: t.path[i][0], lng: t.path[i][1] }).ft;
     box.innerHTML = '<div class="note ' + view[0] + '" style="font-size:18px">' + view[1] + '</div>' +
       '<p class="status">Tracking ' + mins + ' min · ' + (t.path || []).length + ' points · about ' + howFar(walked) + ' walked</p>';
+    drawAck();
+  }
+  // Off enrolled land: the hunter confirms who gave them permission to be there (logged for the office).
+  function drawAck() {
+    const box = document.getElementById('track-ack');
+    if (!box || !me || !me.track) return;
+    const t = me.track;
+    if (t.ack) {
+      const who = { owner: 'the landowner', authority: 'a ruling authority', police: 'the Environmental Police' }[t.ack.basis];
+      const html = '<div class="note ok">Permission confirmed: from ' + esc(who) + ' at ' + esc(clock(t.ack.time)) + '. Warnings now every 15 minutes while you\'re off enrolled land.</div>';
+      if (box.dataset.state !== 'acked') { box.innerHTML = html; box.dataset.state = 'acked'; }
+      return;
+    }
+    if (trackState.status !== 'off') { if (box.dataset.state !== 'none') { box.innerHTML = ''; box.dataset.state = 'none'; } return; }
+    if (box.dataset.state === 'ask') return;   // don't wipe a half-filled form
+    box.dataset.state = 'ask';
+    box.innerHTML = '<div class="card" style="border:2px solid #8A2E1F"><b>Have permission to track here?</b>' +
+      '<p class="status">You\'re outside Home Ground\'s enrolled land. Go back unless someone with authority has said you can follow the deer here.</p>' +
+      '<label class="choice"><input type="radio" name="basis" value="owner"> The landowner gave me permission</label>' +
+      '<label class="choice"><input type="radio" name="basis" value="authority"> A ruling authority (town, police) gave me permission</label>' +
+      '<label class="choice"><input type="radio" name="basis" value="police"> The Massachusetts Environmental Police gave me permission</label>' +
+      '<label class="choice"><input type="checkbox" id="ackok"> I confirm I have this permission to track here. I understand Home Ground isn\'t responsible if I don\'t.</label>' +
+      '<div id="ackerr" class="err"></div><button class="submit" id="acksend">Confirm permission</button></div>';
+    document.getElementById('acksend').onclick = async () => {
+      const basis = picked('basis'), err = document.getElementById('ackerr'), btn = document.getElementById('acksend');
+      if (!basis) { err.textContent = 'Choose who gave you permission.'; return; }
+      if (!document.getElementById('ackok').checked) { err.textContent = 'Tick the box to confirm.'; return; }
+      if (!navigator.onLine) { err.textContent = 'No signal to send this. Go back to enrolled land, or call ' + CFG.OFFICE_PHONE + '.'; return; }
+      btn.disabled = true; btn.textContent = 'Sending…';
+      try {
+        await call({ action: 'trackack', hunter: me.hunter, pin: me.pin, property: t.property, basis, gps: t.lastFix || null, clientId: uid() });
+        t.ack = { basis, time: nowTime() }; save(me); drawAck();
+      } catch (e) { btn.disabled = false; btn.textContent = 'Confirm permission'; err.textContent = e.message || 'Couldn\'t send. Try again.'; }
+    };
   }
   function showTracking(note) {
     if (!me.track) return showHome();
@@ -1304,7 +1391,7 @@
     $app.innerHTML = header() + (note ? '<div class="note ok">' + note + '</div>' : '') +
       '<h1>Tracking on ' + esc(me.track.property) + '</h1>' +
       '<p class="status">Keep this screen open. It records your route and warns you if you leave enrolled land. No weapon.</p>' +
-      '<div id="track-status"><div class="note">Finding you…</div></div>' +
+      '<div id="track-status"><div class="note">Finding you…</div></div><div id="track-ack"></div>' +
       ('Notification' in window && Notification.permission === 'default' ? '<button class="big alt" id="notif">Turn on warnings<small>So the phone can alert you even if the screen dims.</small></button>' : '') +
       '<button class="big" style="background:#8A2E1F" id="done">I\'m finished<small>Found or not. Sends After the Track with your route.</small></button>' +
       '<button class="big alt" id="truck">Back to my truck<small>Compass and distance, if you marked where you parked.</small></button>' +
