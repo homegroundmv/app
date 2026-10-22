@@ -1,6 +1,6 @@
 // Home Ground hunter app — keeps the app working with no signal.
 // Bump VERSION whenever any app file changes so phones pick up the new copy.
-const VERSION = 'hg-app-v16';
+const VERSION = 'hg-app-v17';
 const ICON = 'icon-192.png';
 const SHELL = ['./', 'index.html', 'app.js', 'push.js', 'config.js', 'manifest.webmanifest',
   'logo.png', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];

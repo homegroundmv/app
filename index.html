@@ -64,6 +64,21 @@
   .bubble.mine { background: var(--green); color: #fff; margin-left: auto; border-bottom-right-radius: 4px; }
   .bubble.theirs { background: #F3EFE6; border-bottom-left-radius: 4px; }
   .bubble .meta { font-size: 12px; opacity: .8; margin-top: 4px; }
+  .compass { text-align: center; margin: 8px 0 4px; }
+  .dial { position: relative; width: 260px; height: 260px; margin: 8px auto; border-radius: 50%; border: 3px solid var(--line); background: var(--card); }
+  .dial .north { position: absolute; left: 50%; top: 50%; width: 24px; height: 24px; margin: -12px 0 0 -12px; line-height: 24px;
+    font-weight: 700; color: var(--brown); transform: translateY(-118px); transition: transform .2s linear; }
+  .dial svg { position: absolute; left: 40px; top: 40px; width: 180px; height: 180px; transition: transform .2s linear; }
+  .dial svg path { fill: var(--green); }
+  .dial svg.close path { fill: var(--brown); opacity: .55; }
+  .compass .dist { font-size: 40px; font-weight: 800; margin-top: 6px; }
+  .compass .dir { font-size: 18px; margin: 2px 0 4px; }
+  body.night, body.night main { background: #000 !important; color: #c22 !important; }
+  body.night .dial { background: #000; border-color: #511; }
+  body.night .dial svg path, body.night .dial svg.close path { fill: #c22; }
+  body.night .dial .north, body.night .status, body.night .hint, body.night label { color: #a11 !important; }
+  body.night header.top, body.night .big, body.night select, body.night .note, body.night button.plain { background: #120000 !important; color: #c22 !important; border-color: #400 !important; }
+  body.night img { opacity: .25; }
   [hidden] { display: none !important; }
 </style>
 </head>

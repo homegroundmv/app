@@ -1,5 +1,6 @@
 /* Home Ground hunter app.
- * Screens: sign-in, home (with On stand / Leaving), Book a Hunt, Report Your Hunt, Harvest, tracking, Stand & Camera Log.
+ * Screens: sign-in, home (with On stand / Leaving), Book a Hunt, Report Your Hunt, Harvest, tracking, Stand & Camera Log,
+ * Find my stand (compass and distance to your own stands, cameras and truck).
  * Every submission goes into an outbox on the phone first and is sent when there is signal.
  */
 (function () {
@@ -208,7 +209,7 @@
       btn.disabled = true; btn.textContent = 'Signing in…';
       try {
         const out = await call({ action: 'login', hunter, pin });
-        me = { hunter: out.hunter, pin, name: out.name, phone: out.phone, properties: out.properties, refreshed: Date.now() };
+        me = { hunter: out.hunter, pin, name: out.name, phone: out.phone, properties: out.properties, stands: out.stands || [], refreshed: Date.now() };
         save(me); showHome();
       } catch (e) {
         showLogin(e.fatal ? e.message : e.offline ? 'No signal. The first sign-in needs a connection.' : e.message + ' Try again in a minute.');
@@ -221,7 +222,9 @@
     if (!navigator.onLine) return;
     try {
       const out = await call({ action: 'login', hunter: me.hunter, pin: me.pin });
-      me.properties = out.properties; me.name = out.name; me.phone = out.phone; me.refreshed = Date.now(); save(me);
+      me.properties = out.properties; me.name = out.name; me.phone = out.phone; me.refreshed = Date.now();
+      if (Array.isArray(out.stands)) { me.stands = out.stands; settleStandEdits(); }
+      save(me);
     } catch (e) {
       if (e.fatal) { me = null; save(null); showLogin(e.message); }
     }
@@ -229,6 +232,7 @@
 
   function showHome(note) {
     if (typeof stopThread === 'function') stopThread();
+    if (findStop) findStop();
     $app.innerHTML = header() +
       (note ? '<div class="note ok">' + note + '</div>' : '') +
       '<div id="outbox-status" class="status"></div>' +
@@ -240,6 +244,7 @@
         ? '<button class="big" style="background:#8A2E1F" data-go="after">Finished tracking on ' + esc(me.track.property) + '<small>Tap when you\'re done, found or not.</small></button>'
         : '<button class="big alt" data-go="before">Tracking After Dark<small>Before you go in after dark. Needs signal: Home Ground is alerted at once.</small></button>') +
       '<button class="big alt" data-go="stand">Stand &amp; Camera Log<small>Every placement, move or removal.</small></button>' +
+      '<button class="big" data-go="find">Find my stand<small>Compass and distance to your stands and cameras, or back to your truck.</small></button>' +
       '<button class="big" style="background:#8A5A00" data-go="help">Need a hand?<small>Ask other Island hunters to help track or drag a deer, through the app.</small></button>' +
       '<button class="big alt" data-go="messages" id="msg-btn">Messages<small>Your landowners and help chats.</small></button>' +
       '<h2>Your properties</h2><div class="card">' +
@@ -249,7 +254,7 @@
       '</div><h2>Your bookings</h2><div class="card" id="bookings"><span class="status">Loading…</span></div>' +
       '<h2>Your points</h2><div class="card" id="points"><span class="status">Loading…</span></div>' +
       '<p class="center"><button class="plain" id="out">Sign out</button></p>';
-    const screens = { book: showBook, hunt: () => (me.outing && me.outing.left ? showLeaving() : showHunt()), harvest: () => showHarvest(), before: showBefore, after: showAfter, stand: showStand, help: showHelp, messages: showMessages };
+    const screens = { book: showBook, hunt: () => (me.outing && me.outing.left ? showLeaving() : showHunt()), harvest: () => showHarvest(), before: showBefore, after: showAfter, stand: showStand, find: () => showFind(), help: showHelp, messages: showMessages };
     $app.querySelectorAll('[data-go]').forEach(b => b.onclick = () => screens[b.dataset.go]());
     document.getElementById('out').onclick = async () => {
       const waiting = (await outbox('all')).length;
@@ -1014,6 +1019,63 @@
     };
   }
 
+  /* ---------- Stands and cameras: your IDs, nearest first, and Find my stand ----------
+   * Tags are your hunter number plus a letter (H-112 -> 112-A, 112-B...). The server sends the stands and
+   * cameras you have out (yours only) at sign-in; anything you log on this phone shows straight away, even
+   * before it sends. Everything here works with no signal once it's on the phone. */
+  const DECLINATION = -14.4;   // Martha's Vineyard: magnetic north is about 14.4 degrees west of true north
+  const tagNum = () => String((me.hunter || '').match(/\d+/) || '').padStart(3, '0');
+  const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+  function myStands() {
+    const out = {};
+    (me.stands || []).forEach(s => { out[s.id] = Object.assign({}, s); });
+    (me.standEdits || []).forEach(e => {
+      if (e.op === 'remove') { delete out[e.id]; return; }
+      const cur = out[e.id] || { id: e.id, kind: e.kind || 'Stand', prop: e.prop, placed: e.date };
+      if (e.kind) cur.kind = e.kind;
+      if (e.prop) cur.prop = e.prop;
+      if (e.lat) { cur.lat = e.lat; cur.lng = e.lng; cur.accFt = e.accFt; }
+      out[e.id] = cur;
+    });
+    return Object.keys(out).sort().map(k => out[k]);
+  }
+  // Drops phone-only changes once the server's list shows them (or after two weeks).
+  function settleStandEdits() {
+    const srv = {}; (me.stands || []).forEach(s => { srv[s.id] = s; });
+    me.standEdits = (me.standEdits || []).filter(e => {
+      if (Date.now() - e.at > 14 * 864e5) return false;
+      const s = srv[e.id];
+      if (e.op === 'remove') return !!s;
+      return !(s && s.prop === e.prop && (!e.lat || (Math.abs(s.lat - e.lat) < 1e-5 && Math.abs(s.lng - e.lng) < 1e-5)));
+    });
+  }
+  // Distance (feet) and true bearing (degrees) from fix a to point b.
+  function distBearing(a, b) {
+    const R = 20902231, r = x => x * Math.PI / 180;
+    const p1 = r(a.lat), p2 = r(b.lat), dp = r(b.lat - a.lat), dl = r(b.lng - a.lng);
+    const h = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+    const ft = 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+    const y = Math.sin(dl) * Math.cos(p2), x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+    return { ft, deg: (Math.atan2(y, x) * 180 / Math.PI + 360) % 360 };
+  }
+  const POINTS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  const compassWord = deg => POINTS[Math.round(deg / 45) % 8];
+  const howFar = ft => ft < 90 ? Math.round(ft) + ' ft' : ft < 5280 * 0.6 ? Math.round(ft / 3) + ' yds' : (ft / 5280).toFixed(1) + ' mi';
+  const kindWord = s => s.kind === 'Camera' ? 'camera' : 'stand';
+  const placedWord = s => s.placed ? ' since ' + new Date(s.placed + 'T12:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
+
+  // Heading (0-360, clockwise from north) of the way the phone points: the top edge when it's held flat, the back
+  // camera when it's held upright, whichever lies flatter. Works from the absolute alpha/beta/gamma angles.
+  function tiltHeading(alpha, beta, gamma) {
+    if (beta == null || gamma == null) return (360 - alpha) % 360;
+    const r = Math.PI / 180, x = beta * r, y = gamma * r, z = alpha * r;
+    const cX = Math.cos(x), cY = Math.cos(y), cZ = Math.cos(z), sX = Math.sin(x), sY = Math.sin(y), sZ = Math.sin(z);
+    const topE = -sZ * cX, topN = cZ * cX;                                  // top edge of the phone
+    const backE = -cZ * sY - sZ * sX * cY, backN = -sZ * sY + cZ * sX * cY;  // back camera
+    const top = Math.hypot(topE, topN) >= Math.hypot(backE, backN);
+    return (Math.atan2(top ? topE : backE, top ? topN : backN) * 180 / Math.PI + 360) % 360;
+  }
+
   function showStand() {
     const camRules = ['Audio recording is turned off.',
       'It\'s pointed at a deer trail, not at a home, driveway, building or path, unless the landowner approved.',
@@ -1023,38 +1085,188 @@
       'I\'m standing at the stand as I log it, and it\'s on the property.',
       'The radius doesn\'t take in an occupied dwelling on a property that isn\'t enrolled with Home Ground.'];
     $app.innerHTML = header() + '<h1>Stand &amp; Camera Log</h1>' + propertySelect() +
-      '<label>I\'m logging <span class="hint">Tick all that apply.</span></label>' +
-      checks('log', ['Stand placement', 'Stand move', 'Stand removal', 'Camera placement', 'Camera move', 'Camera removal']) +
-      '<label for="ids">Stand or camera ID(s) <span class="hint">e.g. 112-A</span></label><input id="ids" type="text">' +
-      locField('Where it is', 'Stand at the stand or camera and tap the button.') +
+      '<label>What are you doing?</label>' + radios('act', ['Placing', 'Moving', 'Removing']) +
+      '<div id="kind-box" hidden><label>What is it?</label>' + radios('kind', ['Stand', 'Camera']) + '</div>' +
+      '<div id="id-box" hidden><label for="sid">Which one? <span class="hint" id="sid-hint"></span></label><select id="sid"></select>' +
+      '<div id="sid-other" hidden><label for="sid-text">Tag as written on it</label><input id="sid-text" type="text" autocapitalize="characters"></div>' +
+      '<div id="near"></div></div>' +
+      locField('Where it is', 'Stand at the stand or camera and tap the button. It also sorts the list by distance.') +
       '<label>Who can know about this?</label>' + radios('share', ['Home Ground only', 'Home Ground and program hunters hunting next to me']) +
       '<div id="cam-box" hidden><label>For cameras</label>' + checks('camrules', camRules) + '</div>' +
       '<div id="stand-box" hidden><label>For stands</label>' + checks('standrules', standRules) + '</div>' +
       '<label for="notes">Notes <span class="hint">Optional</span></label><textarea id="notes"></textarea>' + foot('Send log');
     back();
     const loc = wireLoc('Stands and cameras must be on the property. If it is, step into the open and tap Update my location.');
-    const placing = () => allPicked('log').filter(x => !/removal/.test(x));
-    document.querySelectorAll('input[name=log]').forEach(c => c.onchange = () => {
-      document.getElementById('cam-box').hidden = !placing().some(x => /Camera/.test(x));
-      document.getElementById('stand-box').hidden = !placing().some(x => /Stand/.test(x));
-    });
+    const num = tagNum();
+    const draw = () => {
+      const act = picked('act'), kind = picked('kind'), prop = v('prop'), mine = myStands();
+      document.getElementById('kind-box').hidden = act !== 'Placing';
+      document.getElementById('id-box').hidden = !act;
+      const placing = act === 'Placing';
+      document.getElementById('cam-box').hidden = !(placing && kind === 'Camera');
+      document.getElementById('stand-box').hidden = !(placing && kind === 'Stand');
+      if (!act) return;
+      const sel = document.getElementById('sid'), was = sel.value;
+      const where = s => (s.lat && loc.g ? ' · ' + howFar(distBearing(loc.g, s).ft) + ' ' + compassWord(distBearing(loc.g, s).deg) : '');
+      let opts = [];
+      if (placing) {
+        document.getElementById('sid-hint').textContent = 'Grayed-out tags are already out.';
+        opts = LETTERS.map(L => {
+          const id = num + '-' + L, s = mine.find(x => x.id === id);
+          return s ? { id, off: true, text: id + ' · out: ' + kindWord(s) + ' on ' + s.prop + placedWord(s) }
+            : { id, off: false, text: id + ' · free' };
+        });
+        const first = opts.find(o => !o.off);
+        if (first && !was) setTimeout(() => { if (!sel.value || sel.selectedOptions[0].disabled) sel.value = first.id; }, 0);
+      } else {
+        document.getElementById('sid-hint').textContent = loc.g ? 'Nearest first.' : 'Tap Use my location below to sort by distance.';
+        let here = mine.filter(s => s.prop === prop), other = mine.filter(s => s.prop !== prop);
+        if (loc.g) here = here.slice().sort((a, b) => (a.lat ? distBearing(loc.g, a).ft : 1e9) - (b.lat ? distBearing(loc.g, b).ft : 1e9));
+        opts = [{ id: '', off: false, text: here.length ? 'Choose…' : 'Nothing logged as out on ' + (prop || 'this property') }]
+          .concat(here.map(s => ({ id: s.id, off: false, text: s.id + ' · ' + kindWord(s) + placedWord(s) + (s.lat ? where(s) : ' · no location on file') })))
+          .concat(other.map(s => ({ id: s.id, off: true, text: s.id + ' · on ' + s.prop })));
+      }
+      opts.push({ id: '__other', off: false, text: 'Other / old tag…' });
+      sel.innerHTML = opts.map(o => '<option value="' + esc(o.id) + '"' + (o.off ? ' disabled' : '') + '>' + esc(o.text) + '</option>').join('');
+      if (was && opts.some(o => o.id === was && !o.off)) sel.value = was;
+      document.getElementById('sid-other').hidden = sel.value !== '__other';
+      const near = document.getElementById('near');
+      const located = mine.filter(s => s.lat && s.prop === prop);
+      if (!placing && loc.g && located.length) {
+        const n = located.map(s => ({ s, d: distBearing(loc.g, s) })).sort((a, b) => a.d.ft - b.d.ft)[0];
+        near.innerHTML = '<div class="note ok">Nearest: <b>' + esc(n.s.id) + '</b> (' + kindWord(n.s) + '), ' + howFar(n.d.ft) + ' ' + compassWord(n.d.deg) +
+          '. <button class="plain" id="go-find" style="padding:0">Find it with the compass</button></div>';
+        document.getElementById('go-find').onclick = () => showFind(n.s.id);
+      } else near.innerHTML = '';
+    };
+    document.querySelectorAll('input[name=act], input[name=kind]').forEach(c => c.onchange = draw);
+    document.getElementById('prop') && document.getElementById('prop').addEventListener('change', draw);
+    document.getElementById('sid').onchange = () => { document.getElementById('sid-other').hidden = v('sid') !== '__other'; };
+    document.getElementById('loc-btn').addEventListener('click', () => { const t = setInterval(() => { const b = document.getElementById('loc-btn'); if (!b || !b.disabled) { clearInterval(t); if (b) draw(); } }, 300); });
     document.getElementById('send').onclick = async () => {
-      const e = [];
-      const logging = allPicked('log');
+      const e = [], act = picked('act'), placing = act === 'Placing';
+      const id = v('sid') === '__other' ? v('sid-text').trim().toUpperCase() : v('sid');
+      const known = myStands().find(s => s.id === id);
+      const kind = placing ? picked('kind') : (known ? known.kind : (/cam/i.test(v('notes')) ? 'Camera' : 'Stand'));
       if (!v('prop')) e.push('Choose a property.');
-      if (!logging.length) e.push('Tick what you\'re logging.');
-      if (!v('ids').trim()) e.push('Enter the stand or camera ID.');
-      if (!loc.g && !v('why').trim()) e.push('Tap "Use my location" at the stand or camera, or say why you couldn\'t.');
+      if (!act) e.push('Choose Placing, Moving or Removing.');
+      if (placing && !kind) e.push('Choose stand or camera.');
+      if (!id) e.push('Choose which stand or camera.');
+      if (act !== 'Removing' && !loc.g && !v('why').trim()) e.push('Tap "Use my location" at the stand or camera, or say why you couldn\'t.');
       if (!picked('share')) e.push('Choose who can know about this.');
-      if (placing().some(x => /Camera/.test(x)) && !allTicked('camrules')) e.push('All camera boxes must be true.');
-      if (placing().some(x => /Stand/.test(x)) && !allTicked('standrules')) e.push('All stand boxes must be true.');
+      if (placing && kind === 'Camera' && !allTicked('camrules')) e.push('All camera boxes must be true.');
+      if (placing && kind === 'Stand' && !allTicked('standrules')) e.push('All stand boxes must be true.');
       if (fail(e)) return;
       document.getElementById('send').disabled = true;
+      const word = { Placing: 'placement', Moving: 'move', Removing: 'removal' }[act];
       await queue('Stand & Camera Log', { form: 'stand', submittedOn: stamp(), gps: loc.g,
-        fields: { property: v('prop'), logging: logging.join(', '), ids: v('ids').trim(), share: picked('share'),
-          checks: placing().length ? 'Placement rules confirmed' : '', notes: v('notes').trim(),
-          noLocationReason: loc.g ? '' : v('why').trim() } });
-      showHome('Log saved for ' + esc(v('ids')) + '.' + (navigator.onLine ? '' : ' It will send as soon as you have signal.'));
+        fields: { property: v('prop'), logging: kind + ' ' + word, ids: id, share: picked('share'),
+          checks: placing ? 'Placement rules confirmed' : '', notes: v('notes').trim(),
+          noLocationReason: loc.g || act === 'Removing' ? '' : v('why').trim() } });
+      me.standEdits = (me.standEdits || []).concat([{ op: { Placing: 'place', Moving: 'move', Removing: 'remove' }[act], id, kind, prop: v('prop'),
+        lat: loc.g ? loc.g.lat : null, lng: loc.g ? loc.g.lng : null, accFt: loc.g ? Math.round(loc.g.acc * FT) : null, date: isoDate(new Date()), at: Date.now() }]);
+      save(me);
+      showHome('Log saved for ' + esc(id) + '.' + (navigator.onLine ? '' : ' It will send as soon as you have signal.'));
+    };
+  }
+
+  /* ---------- Find my stand: compass arrow and distance ---------- */
+  let findStop = null;
+  function showFind(target) {
+    if (findStop) findStop();
+    const list = myStands().filter(s => s.lat);
+    const noLoc = myStands().filter(s => !s.lat);
+    const truck = me.truck;
+    $app.innerHTML = header() + '<h1>Find my stand</h1>' +
+      '<p class="status">Pick where you\'re going. The arrow points the way and the distance counts down. Works with no signal.</p>' +
+      '<label for="target">Go to</label><select id="target">' +
+      (truck ? '<option value="__truck">My truck (marked ' + esc(truck.when) + ')</option>' : '') +
+      list.map(s => '<option value="' + esc(s.id) + '">' + esc(s.id) + ' · ' + kindWord(s) + ' on ' + esc(s.prop) + '</option>').join('') +
+      (list.length || truck ? '' : '<option value="">Nothing with a location yet</option>') + '</select>' +
+      (noLoc.length ? '<p class="status">No location on file for ' + noLoc.map(s => esc(s.id)).join(', ') + '. Log a move at the stand with Use my location to add one.</p>' : '') +
+      '<div id="compass" class="compass"><div class="dial"><div class="north" id="north">N</div>' +
+      '<svg id="arrow" viewBox="0 0 100 100" aria-hidden="true"><path d="M50 6 L74 70 L50 58 L26 70 Z"/></svg></div>' +
+      '<div class="dist" id="dist">Finding you…</div><div class="dir" id="dir"></div><div class="status" id="acc"></div></div>' +
+      '<div id="compass-note"></div>' +
+      '<button class="big alt" id="truck">' + (truck ? 'Re-mark my truck here' : 'Mark my truck here') + '<small>Tap where you park. The arrow can lead you back after dark.</small></button>' +
+      '<p class="center"><button class="plain" id="night">' + (me.night ? 'Normal screen' : 'Red night screen') + '</button></p>' +
+      '<p class="center"><button class="plain" id="back">Back</button></p>';
+    if (me.night) document.body.classList.add('night');
+    const sel = document.getElementById('target');
+    if (target && [...sel.options].some(o => o.value === target)) sel.value = target;
+    let fix = null, heading = null, gotHeading = false, wake = null, watch = null;
+    const goal = () => sel.value === '__truck' ? me.truck : myStands().find(s => s.id === sel.value);
+    const draw = () => {
+      const g = goal(), dist = document.getElementById('dist');
+      if (!dist) return;
+      if (!g) { dist.textContent = 'Nothing to point at yet'; return; }
+      if (!fix) return;
+      const d = distBearing(fix, g), accFt = Math.round(fix.acc * FT);
+      const close = d.ft <= Math.max(75, accFt * 1.5);
+      dist.textContent = close ? 'You\'re close' : howFar(d.ft);
+      document.getElementById('dir').textContent = close
+        ? 'Within about ' + howFar(Math.max(d.ft, accFt)) + '. GPS can\'t do better under the trees: look for your tag.'
+        : 'Head ' + compassWord(d.deg) + ' (' + Math.round(d.deg) + '°)';
+      document.getElementById('acc').textContent = 'GPS ±' + accFt + ' ft' + (accFt > 60 ? ' (weak: step into the open if you can)' : '');
+      const arrow = document.getElementById('arrow');
+      arrow.classList.toggle('close', close);
+      const turn = heading == null ? d.deg : d.deg - heading;
+      arrow.style.transform = 'rotate(' + turn + 'deg)';
+      document.getElementById('north').style.transform = 'rotate(' + (heading == null ? 0 : -heading) + 'deg) translateY(-118px)';
+    };
+    const onFix = p => { fix = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy }; draw(); };
+    if (navigator.geolocation) watch = navigator.geolocation.watchPosition(onFix,
+      () => { const dd = document.getElementById('dist'); if (dd && !fix) dd.textContent = 'No GPS. Check Location is on for this app.'; },
+      { enableHighAccuracy: true, maximumAge: 2000, timeout: 30000 });
+    // Compass: iPhone gives webkitCompassHeading; Android gives an absolute alpha (relative events are never used:
+    // they have no north). Both read magnetic north, so DECLINATION turns it into true north to match GPS bearings.
+    // tiltHeading keeps it right whether the phone is held flat or upright.
+    const onTurn = e => {
+      let h = null;
+      if (typeof e.webkitCompassHeading === 'number') h = e.webkitCompassHeading;
+      else if ((e.absolute || evt === 'deviceorientationabsolute') && typeof e.alpha === 'number') h = tiltHeading(e.alpha, e.beta, e.gamma);
+      if (h == null) return;
+      const screenAngle = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
+      h = (h + screenAngle + DECLINATION + 360) % 360;
+      if (heading == null) heading = h;
+      else { const diff = ((h - heading + 540) % 360) - 180; heading = (heading + diff * 0.25 + 360) % 360; }
+      gotHeading = true; draw();
+    };
+    const evt = 'ondeviceorientationabsolute' in window ? 'deviceorientationabsolute' : 'deviceorientation';
+    const startCompass = () => window.addEventListener(evt, onTurn);
+    const note = document.getElementById('compass-note');
+    if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      note.innerHTML = '<button class="big" id="perm">Turn on the compass<small>Your phone asks each time. Tap Allow.</small></button>';
+      document.getElementById('perm').onclick = async () => {
+        try { if (await DeviceOrientationEvent.requestPermission() === 'granted') { startCompass(); note.innerHTML = ''; } else note.innerHTML = '<div class="note warn">Compass not allowed. The arrow points as if the top of the phone faces north; the direction words still work.</div>'; }
+        catch (err) { note.innerHTML = '<div class="note warn">Couldn\'t turn on the compass. The direction words still work.</div>'; }
+      };
+    } else startCompass();
+    setTimeout(() => { if (!gotHeading && !document.getElementById('perm') && document.getElementById('compass-note')) document.getElementById('compass-note').innerHTML = '<div class="note warn">No compass reading from this phone. The arrow points as if the top of the phone faces north; use the direction words.</div>'; }, 4000);
+    // Keep the screen on while finding (where supported).
+    if (navigator.wakeLock) navigator.wakeLock.request('screen').then(w => { wake = w; }).catch(() => {});
+    findStop = () => {
+      if (watch != null) navigator.geolocation.clearWatch(watch);
+      window.removeEventListener(evt, onTurn);
+      if (wake) wake.release().catch(() => {});
+      document.body.classList.remove('night');
+      findStop = null;
+    };
+    sel.onchange = draw;
+    document.getElementById('back').onclick = () => { findStop && findStop(); showHome(); };
+    document.getElementById('night').onclick = () => {
+      me.night = !me.night; save(me);
+      document.body.classList.toggle('night', me.night);
+      document.getElementById('night').textContent = me.night ? 'Normal screen' : 'Red night screen';
+    };
+    document.getElementById('truck').onclick = async () => {
+      const b = document.getElementById('truck');
+      b.disabled = true; b.firstChild.textContent = 'Getting your location…';
+      const g = fix && fix.acc < 30 ? { lat: fix.lat, lng: fix.lng, acc: fix.acc } : await gps(true);
+      if (!g) { b.disabled = false; b.firstChild.textContent = 'Couldn\'t get a location. Try again'; return; }
+      me.truck = { lat: g.lat, lng: g.lng, acc: g.acc, when: new Date().toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' }) };
+      save(me);
+      findStop(); showFind(sel.value === '__truck' ? '__truck' : sel.value);
     };
   }
 
