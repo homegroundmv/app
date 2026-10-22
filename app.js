@@ -1083,7 +1083,7 @@
     const standRules = ['I wear a full-body harness whenever I\'m in my stand (tree saddles qualify).',
       'It\'s placed the way the landowner allows (no screw-in steps or permanent stands unless they\'ve said yes).',
       'I\'m standing at the stand as I log it, and it\'s on the property.',
-      'The radius doesn\'t take in an occupied dwelling on a property that isn\'t enrolled with Home Ground.'];
+      'No home or building in use is within 500 feet, unless its owner or occupant has given Home Ground permission (enrolled landowners and signed neighbor permissions count).'];
     $app.innerHTML = header() + '<h1>Stand &amp; Camera Log</h1>' + propertySelect() +
       '<label>What are you doing?</label>' + radios('act', ['Placing', 'Moving', 'Removing']) +
       '<div id="kind-box" hidden><label>What is it?</label>' + radios('kind', ['Stand', 'Camera']) + '</div>' +
