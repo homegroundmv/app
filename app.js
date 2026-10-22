@@ -325,7 +325,7 @@
       '<div id="alerts"></div><div id="push"></div><div id="outing"></div>' +
       '<button class="big" data-go="book">Book a Hunt<small>At least an hour before you go. Required before every hunt.</small></button>' +
       '<button class="big" data-go="hunt">Report Your Hunt<small>Every outing, within 48 hours, even if you saw nothing.</small></button>' +
-      '<button class="big alt" data-go="harvest">Report Your Harvest<small>One report for each deer, the day you take it.</small></button>' +
+      '<p class="center" style="margin:-2px 0 12px"><button class="plain" data-go="harvest">Report another deer</button><br><span class="hint">Took more than one, or found a deer later? The hunt report opens this for you otherwise.</span></p>' +
       (me.track
         ? '<button class="big" style="background:#8A2E1F" data-go="track">Tracking on ' + esc(me.track.property) + '<small>Open the tracking screen: route, warnings, I\'m finished.</small></button>'
         : '<button class="big alt" data-go="before">Tracking After Dark<small>Before you go in after dark. Needs signal: Home Ground is alerted at once.</small></button>') +
@@ -473,7 +473,7 @@
         }
       });
       me.outing = null; save(me);
-      if (outcome === 'Took a deer') showHarvest({ property: o.property, date: o.date });
+      if (outcome === 'Took a deer') showHarvest({ property: o.property, date: o.date, n: 1, of: Math.max(1, Math.min(10, Number(v('harv')) || 1)) });
       else showHome('Hunt report saved for ' + esc(o.property) + '. Thank you.' + (navigator.onLine ? '' : ' It will send as soon as you have signal.'));
     };
   }
@@ -940,7 +940,7 @@
           notes: f('notes').value.trim()
         }
       });
-      if (outcome === 'Took a deer') showHarvest({ property: prop, date: f('day').value });
+      if (outcome === 'Took a deer') showHarvest({ property: prop, date: f('day').value, n: 1, of: Math.max(1, Math.min(10, Number(f('harv').value) || 1)) });
       else showHome('Hunt report saved for ' + esc(prop) + '.' + (navigator.onLine ? '' : ' It will send as soon as you have signal.'));
     };
   }
@@ -987,8 +987,9 @@
     const donateRules = ['I recovered and field dressed the deer within 4 hours of the shot (or it stayed below 37 degrees).',
       'I\'ll drop it off whole and field dressed at the facility within 24 hours of the shot.',
       'It\'s reported to MassWildlife and tagged with my confirmation number.'];
-    $app.innerHTML = header() + '<h1>Report Your Harvest</h1>' +
-      '<p class="status">One report for each deer, with its own band, confirmation number and photos.</p>' + propertySelect() +
+    const multi = pre.of > 1 ? ' (deer ' + pre.n + ' of ' + pre.of + ')' : '';
+    $app.innerHTML = header() + '<h1>Report Your Harvest' + multi + '</h1>' +
+      '<p class="status">' + (pre.of > 1 ? 'Your hunt report says ' + pre.of + ' deer. Each one gets its own report, band, confirmation number and photos.' : 'One report for each deer, with its own band, confirmation number and photos.') + '</p>' + propertySelect() +
       '<div class="row"><div><label for="day">Date</label><input id="day" type="date" value="' + esc(pre.date || isoDate(new Date())) + '" max="' + isoDate(new Date()) + '"></div>' +
       '<div><label for="shot-time">Time of shot</label><input id="shot-time" type="time"></div></div>' +
       '<label>Hunting implement</label>' + radios('impl', ['Archery', 'Shotgun', 'Primitive firearm']) +
@@ -1008,6 +1009,7 @@
     back();
     wirePhoto('p1', 'harvest', photo1); wirePhoto('p2', 'harvest', photo2);
     if (pre.property && document.getElementById('prop')) document.getElementById('prop').value = pre.property;
+    if (pre.n) document.getElementById('which').selectedIndex = Math.min(pre.n, 4) - 1;
     const loc = wireLoc('If the deer crossed the line, say so in Anything else.');
     document.querySelectorAll('input[name=dark]').forEach(r => r.onchange = () => { document.getElementById('dark-yes').hidden = picked('dark') !== 'Yes'; });
     document.querySelectorAll('input[name=donate]').forEach(r => r.onchange = () => { document.getElementById('donate-yes').hidden = picked('donate') !== 'Yes, the whole deer'; });
@@ -1035,7 +1037,12 @@
           donateChecks: picked('donate') === 'No' ? '' : allPicked('rules').length + ' of 3 confirmed',
           notes: v('notes').trim(), noLocationReason: loc.g ? '' : v('why').trim() },
         files: photo1.concat(photo2) });
-      showHome('Harvest report saved for band ' + esc(v('band')) + '.' + (navigator.onLine ? '' : ' It will send as soon as you have signal.'));
+      const saved = 'Harvest report saved for band ' + esc(v('band')) + '.' + (navigator.onLine ? '' : ' It will send as soon as you have signal.');
+      if (pre.of && pre.n < pre.of) {
+        showHarvest({ property: v('prop'), date: v('day'), n: pre.n + 1, of: pre.of });
+        const top = document.querySelector('h1');
+        if (top) top.insertAdjacentHTML('beforebegin', '<div class="note ok">' + saved + ' Now deer ' + (pre.n + 1) + ' of ' + pre.of + '.</div>');
+      } else showHome(saved);
     };
   }
 
