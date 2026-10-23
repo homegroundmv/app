@@ -348,7 +348,8 @@
         (d.Type === 'Donated' && !d['First pack #'] ? '<div class="note bad">Tap <b>Get package numbers</b> before grinding, so the labels run in order.</div>' : '') +
         '<div class="note ' + (fatOn ? 'warn">Grind with <b>' + esc(fatPct) + '% pork fat</b>.' : 'ok">All-venison grind: <b>no pork fat</b>.') + '</div>' +
         (fatOn && d.Type !== 'Donated' ? '<label class="choice"><input id="f7" type="checkbox"> Out of pork fat: grind all venison and take the $' + esc(s.porkAddOn || 20) + ' off the hunter\'s price</label>' : '') +
-        '<label class="choice"><input id="f6" type="checkbox"> Knives, hooks, luggers and grinder sanitized after this deer</label>',
+        (d.Type === 'Private' ? '<label class="choice"><input id="f6" type="checkbox"> Grinder cleared before the next hunter\'s deer, so no meat is mixed</label>' : '') +
+        '<p class="status">Same food-safety steps for every deer. Full clean-down of the grinder and equipment at least once a day (Daily log › End-of-day clean).</p>',
       release: () => '<label>Released to</label><select id="f1"><option value="">Choose…</option><option>Hunter pickup</option>' +
         (s.pantries || []).map(p => '<option>' + esc(p) + '</option>').join('') + '<option value="other">Other…</option></select>' +
         '<input id="f3" type="text" placeholder="Who?" hidden style="margin-top:8px">' +
@@ -389,8 +390,8 @@
         if (!(c.pk + ip > 0)) return err('Enter the packages.');
         if (d.Type === 'Donated' && !d['First pack #']) return err('Get package numbers first (needs signal), so every label carries its MassWildlife number.');
         if (ip && !(c.il > 0)) return err('Weigh the intact cuts and enter the total.');
-        if (!document.getElementById('f6').checked) return err('Sanitize knives, hooks, luggers and the grinder before the next deer, then tick the box.');
-        queue('finish', { band: d.Band, groundPackages: c.pk, intactPackages: ip, intactLb: c.il, total: c.total, sanitized: true, noPork: !!(document.getElementById('f7') || {}).checked }, 'Finish ' + d.Band);
+        if (d.Type === 'Private' && !document.getElementById('f6').checked) return err('Clear the grinder before the next hunter\'s deer goes through, then tick the box.');
+        queue('finish', { band: d.Band, groundPackages: c.pk, intactPackages: ip, intactLb: c.il, total: c.total, grinderCleared: d.Type === 'Private', noPork: !!(document.getElementById('f7') || {}).checked }, 'Finish ' + d.Band);
       }
       if (kind === 'release') {
         const to = v('f1') === 'other' ? v('f3').trim() : v('f1');
@@ -926,7 +927,7 @@
       else if (d.Status === 'Hanging') body += step(1, 'Start processing') + '<button class="btn" data-a="start">Start processing</button>';
       else if (!fp) body += step(2, 'Before grinding') + '<p class="status">Get this deer\'s package numbers before the first package comes off the grinder.</p><button class="btn alt" data-a="grind">Get package numbers</button>';
       else body += step(3, 'Grind, label and finish') + '<div class="note warn" style="font-size:17px">Label the 2 lb packages in order from <b>' + esc(fp) + '</b>: ' + esc(fp) + ', ' + esc(pk(parseInt(fp, 10) + 1)) + ', …</div>' +
-        '<p class="status">When the last package is labelled, tap Finished, then clean and sanitize the grinder before the next deer.</p><button class="btn" data-a="finish">Finished</button>';
+        '<p class="status">When the last package is labelled, tap Finished.</p><button class="btn" data-a="finish">Finished</button>';
       body += '<div class="form"></div></div>';
     }
     frame('donate', 'Process a donated deer', body);
