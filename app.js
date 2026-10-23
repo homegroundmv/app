@@ -385,7 +385,13 @@
       btn.disabled = true; btn.textContent = 'Sending…';
       try {
         const out = await call({ action: 'license', hunter: me.hunter, pin: me.pin, submittedOn: stamp(), files });
-        me.license = out.license || isoDate(new Date()); save(me);
+        me.license = 'license' in out ? (out.license || '') : isoDate(new Date()); save(me);
+        if (out.problem) {
+          btn.disabled = false; btn.textContent = 'Send license';
+          files.length = 0; input.value = ''; list.textContent = '';
+          err.innerHTML = esc(out.problem) + '<br>That doesn\'t look like your ' + new Date().getFullYear() + ' Massachusetts hunting license. We kept it for the office to look at. Send a clear photo, or the PDF from MassFishHunt.';
+          return;
+        }
         showHome('Thanks, your license is on file.');
       } catch (e) { btn.disabled = false; btn.textContent = 'Send license'; err.textContent = e.message || 'Couldn\'t send. Try again.'; }
     };
@@ -548,7 +554,7 @@
     if (!box) return;
     if (!todoCache.length) { box.innerHTML = ''; return; }
     box.innerHTML = '<div class="card" style="border:2px solid #8A2E1F"><b>Needs your attention (' + todoCache.length + ')</b>' +
-      todoCache.map((t, i) => '<div style="padding:8px 0;border-top:1px solid var(--line);margin-top:8px">' + esc(t.check) + ' · ' + esc(t.property) + ' · ' + esc(dayName(t.date)) +
+      todoCache.map((t, i) => '<div style="padding:8px 0;border-top:1px solid var(--line);margin-top:8px">' + esc(t.check) + ' · ' + (t.property ? esc(t.property) + ' · ' : '') + esc(dayName(t.date)) +
         '<br><button class="plain" data-fix="' + i + '" style="padding:4px 0">Fix it</button></div>').join('') + '</div>';
     box.querySelectorAll('[data-fix]').forEach(b => b.onclick = () => showFix(todoCache[+b.dataset.fix]));
   }
@@ -560,9 +566,10 @@
       conf: '<label for="fv">The right MassWildlife confirmation number for this deer</label><input id="fv" type="text" inputmode="numeric">',
       photos: photoField('fp', 'Photos of this deer', 'Band visible.'),
       impl: '<label>The implement you used</label>' + radios('fv-impl', IMPLEMENTS),
-      harvest: '<button class="big" id="fh">File the missing harvest report<small>' + esc(t.property) + ', ' + esc(dayName(t.date)) + '</small></button>'
+      harvest: '<button class="big" id="fh">File the missing harvest report<small>' + esc(t.property) + ', ' + esc(dayName(t.date)) + '</small></button>',
+      license: '<button class="big" id="fl">Send your license again<small>A clear photo, or the PDF from MassFishHunt.</small></button>'
     }[t.fix] || '';
-    $app.innerHTML = header() + '<h1>' + esc(t.check) + '</h1><p class="status">' + esc(t.property) + ' · ' + esc(dayName(t.date)) + '</p>' +
+    $app.innerHTML = header() + '<h1>' + esc(t.check) + '</h1><p class="status">' + (t.property ? esc(t.property) + ' · ' : '') + esc(dayName(t.date)) + '</p>' +
       '<div class="note warn">' + esc(t.ask) + '</div>' + (t.report ? '<p class="status">' + esc(t.report) + '</p>' : '') + field +
       (field ? '<p class="status" style="margin-top:14px">Or, if it\'s right as it is:</p>' : '') +
       '<label for="fx">Tell us what happened</label><textarea id="fx"></textarea>' +
@@ -571,6 +578,8 @@
     if (t.fix === 'photos') wirePhoto('fp', 'harvest', photos);
     const fh = document.getElementById('fh');
     if (fh) fh.onclick = () => showHarvest({ property: t.property, date: t.date });
+    const fl = document.getElementById('fl');
+    if (fl) fl.onclick = () => showLicense();
     document.getElementById('send').onclick = async () => {
       const val = ((document.getElementById('fv') || {}).value || '').trim(), text = v('fx').trim(), err = document.getElementById('err');
       let kind = 'explain';
@@ -578,7 +587,7 @@
       else if ((t.fix === 'band' || t.fix === 'conf') && val) kind = t.fix;
       else if (t.fix === 'photos' && photos.length) kind = 'photos';
       else if (t.fix === 'impl' && picked('fv-impl')) kind = 'impl';
-      if (kind === 'explain' && !text) { err.textContent = field && t.fix !== 'harvest' ? 'Fix it above, or tell us what happened.' : 'Tell us what happened.'; return; }
+      if (kind === 'explain' && !text) { err.textContent = field && t.fix !== 'harvest' && t.fix !== 'license' ? 'Fix it above, or tell us what happened.' : 'Tell us what happened.'; return; }
       if (kind === 'time' && notYet(t.date, val)) { err.textContent = 'That time hasn\'t happened yet. Check AM / PM.'; return; }
       if (!navigator.onLine) { err.textContent = 'This needs signal. Try again when you have it.'; return; }
       const btn = document.getElementById('send');
@@ -1285,6 +1294,7 @@
       if (!picked('deer')) e.push('Choose which kind of deer.');
       if (!v('conf').trim()) e.push('Enter the MassWildlife confirmation number.');
       if (!v('band').trim()) e.push('Enter the Home Ground band number.');
+      else if (v('conf').trim() && v('band').replace(/\s/g, '').toUpperCase() === v('conf').replace(/\s/g, '').toUpperCase()) e.push('The band number and the MassWildlife confirmation number are the same. They come from different places: check both.');
       if (!picked('dark')) e.push('Say whether it was recovered after dark.');
       if (picked('dark') === 'Yes' && !allTicked('darkforms')) e.push('After dark: file Before the Track and After the Track, then tick both.');
       if (!photo1.length) e.push('Add photo 1, the deer where it fell.');
