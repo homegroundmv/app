@@ -333,6 +333,14 @@
     if (s.open.length && s.open.every(x => /youth/i.test(x.name)) && !me.youth) return dayName(iso) + ' is the Youth Deer Hunt: only youth hunters (12 to 17) can book.';
     return '';
   }
+  // Youth hunters who need an adult (12 to 14, or 15 to 17 without Hunter Education): the adult's Home Ground number.
+  const adultFields = () => !me.adultNeeded ? '' :
+    '<div class="note warn">You hunt with a licensed adult (18 or older). Enter their Home Ground hunter number. They\'ll get a notification.</div>' +
+    '<label for="adult">Adult going with you (hunter number)</label><input id="adult" type="text" autocapitalize="characters" placeholder="H-001">' +
+    '<label class="choice"><input id="adultok" type="checkbox"> They\'re 18 or older with a valid Massachusetts hunting license (and a firearms license if we use a firearm), and they\'re not with another youth hunter. If I\'m 12 to 14, we share one bow or gun and one bag limit.</label>';
+  const adultErr = () => !me.adultNeeded ? '' : !/^\s*h?-?\s*\d{1,3}\s*$/i.test(v('adult')) ? 'Enter the adult\'s hunter number, like H-001.' :
+    !document.getElementById('adultok').checked ? 'Tick the box about the adult going with you.' : '';
+  const adultData = () => (me.adultNeeded ? { adult: v('adult').trim(), adultOk: document.getElementById('adultok').checked } : {});
   // Shrinks a photo to at most 1600 px on its long side (keeps uploads small on a weak signal).
   function shrink(file) {
     return new Promise((resolve, reject) => {
@@ -375,7 +383,7 @@
       btn.disabled = true; btn.textContent = 'Signing in…';
       try {
         const out = await call({ action: 'login', hunter, pin });
-        me = { hunter: out.hunter, pin, name: out.name, phone: out.phone, properties: out.properties, stands: out.stands || [], youth: !!out.youth, refreshed: Date.now() };
+        me = { hunter: out.hunter, pin, name: out.name, phone: out.phone, properties: out.properties, stands: out.stands || [], youth: !!out.youth, adultNeeded: !!out.adultNeeded, refreshed: Date.now() };
         save(me); showHome();
       } catch (e) {
         showLogin(e.fatal ? e.message : e.offline ? 'No signal. The first sign-in needs a connection.' : e.message + ' Try again in a minute.');
@@ -388,7 +396,7 @@
     if (!navigator.onLine) return;
     try {
       const out = await call({ action: 'login', hunter: me.hunter, pin: me.pin });
-      me.properties = out.properties; me.name = out.name; me.phone = out.phone; me.youth = !!out.youth; me.refreshed = Date.now();
+      me.properties = out.properties; me.name = out.name; me.phone = out.phone; me.youth = !!out.youth; me.adultNeeded = !!out.adultNeeded; me.refreshed = Date.now();
       if (Array.isArray(out.stands)) { me.stands = out.stands; settleStandEdits(); }
       save(me);
     } catch (e) {
@@ -542,6 +550,7 @@
       (h < 12 ? '<label class="choice"><input type="radio" name="part" value="AM"' + (h < 10 ? ' checked' : '') + '> Morning (until noon)</label>' : '') +
       '<label class="choice"><input type="radio" name="part" value="PM"' + (h >= 10 && h < 12 ? '' : h >= 12 ? ' checked' : '') + '> Afternoon</label>' +
       (h < 12 ? '<label class="choice"><input type="radio" name="part" value="All day"' + (h >= 10 ? ' checked' : '') + '> Rest of the day</label>' : '') +
+      adultFields() +
       '<div id="err" class="err"></div><button class="submit" id="send">Start hunt</button>' +
       '<p class="center"><button class="plain" id="back">Back</button></p>';
     document.getElementById('back').onclick = () => showHome();
@@ -549,10 +558,11 @@
       const p = v('prop'), part = picked('part'), err = document.getElementById('err'), btn = document.getElementById('send');
       if (!p) { err.textContent = 'Choose a property.'; return; }
       if (!part) { err.textContent = 'Choose morning, afternoon or the rest of the day.'; return; }
+      if (adultErr()) { err.textContent = adultErr(); return; }
       if (!navigator.onLine) { err.textContent = 'Starting an unbooked hunt needs signal. No signal? Call ' + CFG.OFFICE_PHONE + ' before you go in.'; return; }
       btn.disabled = true; btn.textContent = 'Checking ' + p + '…';
       try {
-        await call({ action: 'walkin', hunter: me.hunter, pin: me.pin, property: p, slot: part, submittedOn: stamp(), clientId: uid() });
+        await call(Object.assign({ action: 'walkin', hunter: me.hunter, pin: me.pin, property: p, slot: part, submittedOn: stamp(), clientId: uid() }, adultData()));
         try { await loadBookings(); } catch (e) { /* the check-in still works */ }
         showCheckin(p);
       } catch (e) {
@@ -900,6 +910,7 @@
       '<label for="time">Time of hunt</label><select id="time"><option value="">Choose…</option>' +
       '<option>AM</option><option>PM</option><option>All day</option></select>' +
       '<label for="stand">Stand ID <span class="hint">Optional. The stand or spot you plan to use.</span></label><input id="stand" type="text">' +
+      adultFields() +
       '<label class="choice"><input id="agree" type="checkbox"> I understand I\'m not booked until I get Home Ground\'s confirmation. To cancel, I\'ll use Your bookings on the app\'s home screen: free by 5 pm the day before (9 am for an afternoon hunt), or within an hour of booking; later than that costs 1 point.</label>' +
       '<div id="err" class="err"></div><button class="submit" id="send">Send booking</button>' +
       '<p class="center"><button class="plain" id="back">Back</button></p>';
@@ -920,11 +931,12 @@
         const why = seasonBookProblem(f('day').value) || slotProblem(prop, f('day').value, f('time').value);
         if (why) err.push(why);
       }
+      if (adultErr()) err.push(adultErr());
       if (!f('agree').checked) err.push('Tick the box to confirm you understand.');
       if (err.length) { f('err').innerHTML = err.map(esc).join('<br>'); return; }
       await queue('Booking for ' + usDate(f('day').value), {
         form: 'booking', submittedOn: stamp(),
-        fields: { property: prop, date: usDate(f('day').value), time: f('time').value, stand: f('stand').value.trim() }
+        fields: Object.assign({ property: prop, date: usDate(f('day').value), time: f('time').value, stand: f('stand').value.trim() }, adultData())
       });
       showHome('Booking saved for ' + esc(prop) + ' on ' + esc(usDate(f('day').value)) +
         '. You\'ll get a confirmation notification once it goes through, and it will show under Your bookings.' + (navigator.onLine ? '' : ' It will send as soon as you have signal.'));
