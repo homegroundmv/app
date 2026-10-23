@@ -341,6 +341,55 @@
   const adultErr = () => !me.adultNeeded ? '' : !/^\s*h?-?\s*\d{1,3}\s*$/i.test(v('adult')) ? 'Enter the adult\'s hunter number, like H-001.' :
     !document.getElementById('adultok').checked ? 'Tick the box about the adult going with you.' : '';
   const adultData = () => (me.adultNeeded ? { adult: v('adult').trim(), adultOk: document.getElementById('adultok').checked } : {});
+  /* My hunting license: a photo or PDF saved to the hunter's Drive folder, so the office can open it in the browser.
+   * Massachusetts licenses run the calendar year, so a license sent in an earlier year counts as missing. */
+  const licenseThisYear = () => !!(me && me.license && me.license.slice(0, 4) === String(new Date().getFullYear()));
+  const licenseStatus = () => licenseThisYear() ? 'On file: sent ' + dayName(me.license) + '.' :
+    'Send a photo or PDF of your ' + new Date().getFullYear() + ' license.';
+  function renderLicenseNote() {
+    const box = document.getElementById('lic-note');
+    if (!box) return;
+    if (licenseThisYear() || !me || !('license' in me)) { box.innerHTML = ''; return; }   // only once the server has said
+    box.innerHTML = '<div class="note warn">We don\'t have your ' + new Date().getFullYear() + ' hunting license on file. <button class="plain" id="lic-go" style="padding:0">Send it now</button></div>';
+    document.getElementById('lic-go').onclick = () => showLicense();
+  }
+  const readPdf = file => new Promise((resolve, reject) => {
+    if (file.size > 8 * 1024 * 1024) return reject(new Error('That PDF is over 8 MB. Send a photo of the license instead.'));
+    const r = new FileReader();
+    r.onload = () => resolve({ name: file.name, type: 'application/pdf', data: String(r.result).split(',')[1] });
+    r.onerror = () => reject(new Error('Couldn\'t read that file.'));
+    r.readAsDataURL(file);
+  });
+  function showLicense() {
+    const files = [];
+    $app.innerHTML = header() + '<h1>My hunting license</h1>' +
+      '<p class="status">' + esc(licenseStatus()) + ' Home Ground keeps a copy of your current Massachusetts hunting license (and any stamps or permits on it). Licenses run January to December, so send the new one each year.</p>' +
+      '<label for="lic">Photo or PDF of your license <span class="hint">Your MassFishHunt license or receipt. Make sure the text is readable.</span></label>' +
+      '<input id="lic" type="file" accept="image/*,application/pdf" multiple><div id="lic-list" class="status"></div>' +
+      '<div id="err" class="err"></div><button class="submit" id="send">Send license</button>' +
+      '<p class="center"><button class="plain" id="back">Back</button></p>';
+    document.getElementById('back').onclick = () => showHome();
+    const input = document.getElementById('lic'), list = document.getElementById('lic-list'), err = document.getElementById('err');
+    input.onchange = async () => {
+      files.length = 0; list.textContent = ''; err.textContent = '';
+      for (const f of [...input.files].slice(0, 3)) {
+        try { files.push(/pdf$/i.test(f.type) || /\.pdf$/i.test(f.name) ? await readPdf(f) : await shrink(f)); }
+        catch (e) { err.textContent = e.message; }
+      }
+      list.textContent = files.length ? files.length + ' file' + (files.length > 1 ? 's' : '') + ' ready: ' + files.map(f => f.name).join(', ') : '';
+    };
+    document.getElementById('send').onclick = async () => {
+      if (!files.length) { err.textContent = 'Add a photo or PDF of your license.'; return; }
+      if (!navigator.onLine) { err.textContent = 'Sending your license needs signal. Try again when you have it.'; return; }
+      const btn = document.getElementById('send');
+      btn.disabled = true; btn.textContent = 'Sending…';
+      try {
+        const out = await call({ action: 'license', hunter: me.hunter, pin: me.pin, submittedOn: stamp(), files });
+        me.license = out.license || isoDate(new Date()); save(me);
+        showHome('Thanks, your license is on file.');
+      } catch (e) { btn.disabled = false; btn.textContent = 'Send license'; err.textContent = e.message || 'Couldn\'t send. Try again.'; }
+    };
+  }
   // Shrinks a photo to at most 1600 px on its long side (keeps uploads small on a weak signal).
   function shrink(file) {
     return new Promise((resolve, reject) => {
@@ -384,6 +433,7 @@
       try {
         const out = await call({ action: 'login', hunter, pin });
         me = { hunter: out.hunter, pin, name: out.name, phone: out.phone, properties: out.properties, stands: out.stands || [], youth: !!out.youth, adultNeeded: !!out.adultNeeded, refreshed: Date.now() };
+        if ('license' in out) me.license = out.license || '';
         save(me); showHome();
       } catch (e) {
         showLogin(e.fatal ? e.message : e.offline ? 'No signal. The first sign-in needs a connection.' : e.message + ' Try again in a minute.');
@@ -396,7 +446,7 @@
     if (!navigator.onLine) return;
     try {
       const out = await call({ action: 'login', hunter: me.hunter, pin: me.pin });
-      me.properties = out.properties; me.name = out.name; me.phone = out.phone; me.youth = !!out.youth; me.adultNeeded = !!out.adultNeeded; me.refreshed = Date.now();
+      me.properties = out.properties; me.name = out.name; me.phone = out.phone; me.youth = !!out.youth; me.adultNeeded = !!out.adultNeeded; if ('license' in out) me.license = out.license || ''; me.refreshed = Date.now();
       if (Array.isArray(out.stands)) { me.stands = out.stands; settleStandEdits(); }
       save(me);
     } catch (e) {
@@ -411,7 +461,7 @@
       (note ? '<div class="note ok">' + note + '</div>' : '') +
       '<div id="outbox-status" class="status"></div>' +
       '<div id="season" class="status"></div>' +
-      '<div id="todo"></div><div id="alerts"></div><div id="push"></div><div id="outing"></div>' +
+      '<div id="lic-note"></div><div id="todo"></div><div id="alerts"></div><div id="push"></div><div id="outing"></div>' +
       '<button class="big" data-go="book">Book a Hunt<small>At least an hour before you go. Required before every hunt.</small></button>' +
       '<button class="big" data-go="hunt">Report Your Hunt<small>Every outing, within 48 hours, even if you saw nothing.</small></button>' +
       '<p class="center" style="margin:-2px 0 12px"><button class="plain" data-go="harvest">Report another deer</button><br><span class="hint">Took more than one, or found a deer later? The hunt report opens this for you otherwise.</span></p>' +
@@ -419,6 +469,7 @@
         ? '<button class="big" style="background:#8A2E1F" data-go="track">Tracking on ' + esc(me.track.property) + '<small>Open the tracking screen: route, warnings, I\'m finished.</small></button>'
         : '<button class="big alt" data-go="before">Tracking After Dark<small>Before you go in after dark. Needs signal: Home Ground is alerted at once.</small></button>') +
       '<button class="big alt" data-go="stand">Stand &amp; Camera Log<small>Every placement, move or removal.</small></button>' +
+      '<button class="big alt" data-go="license">My hunting license<small>' + esc(licenseStatus()) + '</small></button>' +
       '<button class="big" data-go="find">Find my stand<small>Compass and distance to your stands and cameras, or back to your truck.</small></button>' +
       '<button class="big" style="background:#8A5A00" data-go="help">Need a hand?<small>Ask other Island hunters to help track or drag a deer, through the app.</small></button>' +
       '<button class="big alt" data-go="messages" id="msg-btn">Messages<small>Your landowners and help chats.</small></button>' +
@@ -429,9 +480,9 @@
       '</div><h2>Your bookings</h2><div class="card" id="bookings"><span class="status">Loading…</span></div>' +
       '<h2>Your points</h2><div class="card" id="points"><span class="status">Loading…</span></div>' +
       '<p class="center"><button class="plain" id="out">Sign out</button></p>';
-    const screens = { book: showBook, hunt: () => (me.outing && me.outing.left ? showLeaving() : showHunt()), harvest: () => showHarvest(), before: showBefore, after: showAfter, track: () => showTracking(), stand: showStand, find: () => showFind(), help: showHelp, messages: showMessages };
+    const screens = { book: showBook, hunt: () => (me.outing && me.outing.left ? showLeaving() : showHunt()), harvest: () => showHarvest(), before: showBefore, after: showAfter, track: () => showTracking(), stand: showStand, license: showLicense, find: () => showFind(), help: showHelp, messages: showMessages };
     $app.querySelectorAll('[data-go]').forEach(b => b.onclick = () => screens[b.dataset.go]());
-    renderTodo(); loadTodo(); renderSeason();
+    renderTodo(); loadTodo(); renderSeason(); renderLicenseNote();
     document.getElementById('out').onclick = async () => {
       const waiting = (await outbox('all')).length;
       if (waiting && !confirm(waiting + ' report(s) haven\'t sent yet. Sign out anyway? They\'ll be lost.')) return;
