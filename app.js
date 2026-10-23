@@ -286,6 +286,46 @@
     if (minsOf(tin) !== null && minsOf(tout) !== null && minsOf(tout) < minsOf(tin)) e.push('The time you left is before the time you got on stand.');
     return e;
   }
+  /* Deer seasons. The server reads the dates from MassWildlife's website each week and sends them with the to-do list
+   * (kept on the phone); this built-in list (checked 23 Oct 2026) is only used until then. Implements per season are
+   * from MassWildlife's deer regulations. No hunting on Sundays. */
+  const IMPLEMENTS = ['Archery', 'Shotgun', 'Primitive firearm'];
+  const SEASONS_BUILT_IN = [
+    ['Early season (Zones 13 & 14)', '2026-09-21', '2026-10-01', ['Archery', 'Primitive firearm']],
+    ['Youth Deer Hunt (youth hunters only)', '2026-10-02', '2026-10-03', IMPLEMENTS],
+    ['Archery season', '2026-10-05', '2026-11-28', ['Archery']],
+    ['Shotgun season', '2026-11-30', '2026-12-12', IMPLEMENTS],
+    ['Primitive firearms season', '2026-12-14', '2026-12-31', ['Archery', 'Primitive firearm']],
+    ['Winter season (Zones 13 & 14)', '2027-01-01', '2027-02-13', ['Archery', 'Primitive firearm']]
+  ].map(x => ({ name: x[0], from: x[1], to: x[2], tools: x[3] }));
+  const seasonList = () => (me && Array.isArray(me.seasons) && me.seasons.length ? me.seasons : SEASONS_BUILT_IN);
+  const lower = list => list.length === 1 ? list[0].toLowerCase() + ' only' : list.join(', ').toLowerCase().replace(/, ([^,]*)$/, ' or $1');
+  // {closed: text} | {open: [seasons]} for a yyyy-mm-dd date.
+  function seasonOn(iso) {
+    if (!iso) return { open: [] };
+    const [y, m, d] = iso.split('-').map(Number);
+    if (new Date(y, m - 1, d).getDay() === 0) return { closed: 'That\'s a Sunday. Hunting isn\'t allowed on Sundays in Massachusetts. Check the date.' };
+    const open = seasonList().filter(s => s.from <= iso && iso <= s.to);
+    return open.length ? { open } : { closed: 'No deer season was open on ' + dayName(iso) + '. Check the date.' };
+  }
+  // Warning text for a harvest's date and implement, or ''.
+  function seasonWarn(iso, impl) {
+    const s = seasonOn(iso);
+    if (s.closed) return s.closed;
+    if (!impl || !s.open.length) return '';
+    const tools = [].concat(...s.open.map(x => x.tools || []));
+    if (tools.indexOf(impl) >= 0) return '';
+    return impl + ' isn\'t legal on ' + dayName(iso) + ': ' + s.open.map(x => x.name + ' allows ' + lower(x.tools)).join('; ') + '. Check the implement you tapped.';
+  }
+  // One line for the home screen: the season open today (or the next one).
+  function seasonLine() {
+    const today = isoDate(new Date()), list = seasonList();
+    const now = list.filter(s => s.from <= today && today <= s.to);
+    if (now.length) return 'Open now: ' + now.map(s => s.name + ' (' + lower(s.tools) + ') through ' + dayName(s.to)).join('; ') + '.' +
+      (new Date().getDay() === 0 ? ' No hunting today: it\'s Sunday.' : '');
+    const next = list.filter(s => s.from > today)[0];
+    return next ? 'No deer season open today. Next: ' + next.name + ' from ' + dayName(next.from) + '.' : '';
+  }
   // Shrinks a photo to at most 1600 px on its long side (keeps uploads small on a weak signal).
   function shrink(file) {
     return new Promise((resolve, reject) => {
@@ -355,6 +395,7 @@
     $app.innerHTML = header() +
       (note ? '<div class="note ok">' + note + '</div>' : '') +
       '<div id="outbox-status" class="status"></div>' +
+      '<div id="season" class="status"></div>' +
       '<div id="todo"></div><div id="alerts"></div><div id="push"></div><div id="outing"></div>' +
       '<button class="big" data-go="book">Book a Hunt<small>At least an hour before you go. Required before every hunt.</small></button>' +
       '<button class="big" data-go="hunt">Report Your Hunt<small>Every outing, within 48 hours, even if you saw nothing.</small></button>' +
@@ -375,7 +416,7 @@
       '<p class="center"><button class="plain" id="out">Sign out</button></p>';
     const screens = { book: showBook, hunt: () => (me.outing && me.outing.left ? showLeaving() : showHunt()), harvest: () => showHarvest(), before: showBefore, after: showAfter, track: () => showTracking(), stand: showStand, find: () => showFind(), help: showHelp, messages: showMessages };
     $app.querySelectorAll('[data-go]').forEach(b => b.onclick = () => screens[b.dataset.go]());
-    renderTodo(); loadTodo();
+    renderTodo(); loadTodo(); renderSeason();
     document.getElementById('out').onclick = async () => {
       const waiting = (await outbox('all')).length;
       if (waiting && !confirm(waiting + ' report(s) haven\'t sent yet. Sign out anyway? They\'ll be lost.')) return;
@@ -425,8 +466,16 @@
   let todoCache = [];
   async function loadTodo() {
     if (!me || !navigator.onLine) return;
-    try { const out = await call({ action: 'todo', hunter: me.hunter, pin: me.pin }); todoCache = out.items || []; } catch (e) { return; }
+    try {
+      const out = await call({ action: 'todo', hunter: me.hunter, pin: me.pin });
+      todoCache = out.items || [];
+      if (Array.isArray(out.seasons) && out.seasons.length && me) { me.seasons = out.seasons; save(me); renderSeason(); }
+    } catch (e) { return; }
     renderTodo();
+  }
+  function renderSeason() {
+    const box = document.getElementById('season');
+    if (box) box.textContent = seasonLine();
   }
   function renderTodo() {
     const box = document.getElementById('todo');
@@ -444,6 +493,7 @@
       band: '<label for="fv">The right Home Ground band number for this deer</label><input id="fv" type="text">',
       conf: '<label for="fv">The right MassWildlife confirmation number for this deer</label><input id="fv" type="text" inputmode="numeric">',
       photos: photoField('fp', 'Photos of this deer', 'Band visible.'),
+      impl: '<label>The implement you used</label>' + radios('fv-impl', IMPLEMENTS),
       harvest: '<button class="big" id="fh">File the missing harvest report<small>' + esc(t.property) + ', ' + esc(dayName(t.date)) + '</small></button>'
     }[t.fix] || '';
     $app.innerHTML = header() + '<h1>' + esc(t.check) + '</h1><p class="status">' + esc(t.property) + ' · ' + esc(dayName(t.date)) + '</p>' +
@@ -461,15 +511,16 @@
       if (t.fix === 'time' && val) kind = 'time';
       else if ((t.fix === 'band' || t.fix === 'conf') && val) kind = t.fix;
       else if (t.fix === 'photos' && photos.length) kind = 'photos';
+      else if (t.fix === 'impl' && picked('fv-impl')) kind = 'impl';
       if (kind === 'explain' && !text) { err.textContent = field && t.fix !== 'harvest' ? 'Fix it above, or tell us what happened.' : 'Tell us what happened.'; return; }
       if (kind === 'time' && notYet(t.date, val)) { err.textContent = 'That time hasn\'t happened yet. Check AM / PM.'; return; }
       if (!navigator.onLine) { err.textContent = 'This needs signal. Try again when you have it.'; return; }
       const btn = document.getElementById('send');
       btn.disabled = true; btn.textContent = 'Sending…';
       try {
-        const out = await call({ action: 'fix', hunter: me.hunter, pin: me.pin, key: t.key, kind, value: val, text, files: kind === 'photos' ? photos : [] });
+        const out = await call({ action: 'fix', hunter: me.hunter, pin: me.pin, key: t.key, kind, value: kind === 'impl' ? picked('fv-impl') : val, text, files: kind === 'photos' ? photos : [] });
         todoCache = todoCache.filter(x => x.key !== t.key);
-        showHome('Thanks, that\'s sent.' + (out.still ? ' That time is still outside legal shooting hours, so the office will look at it.' : ''));
+        showHome('Thanks, that\'s sent.' + (out.still ? (out.stillWhat === 'implement' ? ' That implement still isn\'t legal that day, so the office will look at it.' : ' That time is still outside legal shooting hours, so the office will look at it.') : ''));
       } catch (e) { btn.disabled = false; btn.textContent = 'Send'; err.textContent = e.message || 'Couldn\'t send. Try again.'; }
     };
   }
@@ -1114,7 +1165,8 @@
       '<div class="row"><div><label for="day">Date</label><input id="day" type="date" value="' + esc(pre.date || isoDate(new Date())) + '" max="' + isoDate(new Date()) + '"></div>' +
       '<div><label for="shot-time">Time of shot</label><input id="shot-time" type="time"></div></div>' +
       '<div id="legal" hidden><div class="note warn" id="legal-text"></div><label for="timewhy">If the time is right, say what happened</label><textarea id="timewhy"></textarea></div>' +
-      '<label>Hunting implement</label>' + radios('impl', ['Archery', 'Shotgun', 'Primitive firearm']) +
+      '<label>Hunting implement</label>' + radios('impl', IMPLEMENTS) +
+      '<div id="season-warn" hidden><div class="note warn" id="season-text"></div><label for="seasonwhy">If it\'s right, say what happened</label><textarea id="seasonwhy"></textarea></div>' +
       '<label>The deer</label>' + radios('deer', ['Antlered buck', 'Adult antlerless (doe)', 'Subadult antlerless (button buck or doe fawn)']) +
       '<label for="which">Deer from this outing</label><select id="which"><option>1st</option><option>2nd</option><option>3rd</option><option>4th or more</option></select>' +
       '<label for="conf">MassWildlife confirmation number</label><input id="conf" type="text" inputmode="numeric">' +
@@ -1143,6 +1195,11 @@
     const legalCheck = () => { const msg = outsideLegal(); document.getElementById('legal').hidden = !msg; document.getElementById('legal-text').textContent = msg; };
     document.getElementById('shot-time').addEventListener('change', legalCheck);
     document.getElementById('day').addEventListener('change', legalCheck);
+    const outOfSeason = () => seasonWarn(v('day'), picked('impl'));
+    const seasonCheck = () => { const msg = outOfSeason(); document.getElementById('season-warn').hidden = !msg; document.getElementById('season-text').textContent = msg; };
+    document.getElementById('day').addEventListener('change', seasonCheck);
+    document.querySelectorAll('input[name=impl]').forEach(r => r.addEventListener('change', seasonCheck));
+    seasonCheck();
     document.querySelectorAll('input[name=dark]').forEach(r => r.onchange = () => { document.getElementById('dark-yes').hidden = picked('dark') !== 'Yes'; });
     document.querySelectorAll('input[name=donate]').forEach(r => r.onchange = () => { document.getElementById('donate-yes').hidden = picked('donate') !== 'Yes, the whole deer'; });
     document.getElementById('send').onclick = async () => {
@@ -1152,6 +1209,7 @@
       else if (notYet(v('day'), v('shot-time'))) e.push('The time of shot hasn\'t happened yet. Check the time (and AM / PM).');
       else if (outsideLegal() && !v('timewhy').trim()) { legalCheck(); e.push('The time of shot is outside legal shooting hours. Fix the time, or say what happened.'); }
       if (!picked('impl')) e.push('Choose the hunting implement.');
+      else if (outOfSeason() && !v('seasonwhy').trim()) { seasonCheck(); e.push('Check the date and implement: ' + outOfSeason() + ' Or, if it\'s right, say what happened.'); }
       if (!picked('deer')) e.push('Choose which kind of deer.');
       if (!v('conf').trim()) e.push('Enter the MassWildlife confirmation number.');
       if (!v('band').trim()) e.push('Enter the Home Ground band number.');
@@ -1169,7 +1227,7 @@
           which: v('which'), confirmation: v('conf').trim(), band: v('band').trim(), afterDark: picked('dark'),
           afterDarkForms: allPicked('darkforms').join(' '), donate: picked('donate'),
           donateChecks: picked('donate') === 'No' ? '' : allPicked('rules').length + ' of 3 confirmed',
-          notes: v('notes').trim(), noLocationReason: loc.g ? '' : v('why').trim(), timeNote: outsideLegal() ? v('timewhy').trim() : '' },
+          notes: v('notes').trim(), noLocationReason: loc.g ? '' : v('why').trim(), timeNote: outsideLegal() ? v('timewhy').trim() : '', seasonNote: outOfSeason() ? v('seasonwhy').trim() : '' },
         files: photo1.concat(photo2) });
       const saved = 'Harvest report saved for band ' + esc(v('band')) + '.' + (navigator.onLine ? '' : ' It will send as soon as you have signal.');
       if (pre.of && pre.n < pre.of) {
