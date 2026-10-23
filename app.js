@@ -326,6 +326,13 @@
     const next = list.filter(s => s.from > today)[0];
     return next ? 'No deer season open today. Next: ' + next.name + ' from ' + dayName(next.from) + '.' : '';
   }
+  // Why this hunter can't book that date (Sunday, no season open, youth-only day), or ''.
+  function seasonBookProblem(iso) {
+    const s = seasonOn(iso);
+    if (s.closed) return /Sunday/.test(s.closed) ? 'No hunting on Sundays in Massachusetts. Pick another day.' : 'No deer season is open on ' + dayName(iso) + '. Pick another day.';
+    if (s.open.length && s.open.every(x => /youth/i.test(x.name)) && !me.youth) return dayName(iso) + ' is the Youth Deer Hunt: only youth hunters (12 to 17) can book.';
+    return '';
+  }
   // Shrinks a photo to at most 1600 px on its long side (keeps uploads small on a weak signal).
   function shrink(file) {
     return new Promise((resolve, reject) => {
@@ -368,7 +375,7 @@
       btn.disabled = true; btn.textContent = 'Signing in…';
       try {
         const out = await call({ action: 'login', hunter, pin });
-        me = { hunter: out.hunter, pin, name: out.name, phone: out.phone, properties: out.properties, stands: out.stands || [], refreshed: Date.now() };
+        me = { hunter: out.hunter, pin, name: out.name, phone: out.phone, properties: out.properties, stands: out.stands || [], youth: !!out.youth, refreshed: Date.now() };
         save(me); showHome();
       } catch (e) {
         showLogin(e.fatal ? e.message : e.offline ? 'No signal. The first sign-in needs a connection.' : e.message + ' Try again in a minute.');
@@ -381,7 +388,7 @@
     if (!navigator.onLine) return;
     try {
       const out = await call({ action: 'login', hunter: me.hunter, pin: me.pin });
-      me.properties = out.properties; me.name = out.name; me.phone = out.phone; me.refreshed = Date.now();
+      me.properties = out.properties; me.name = out.name; me.phone = out.phone; me.youth = !!out.youth; me.refreshed = Date.now();
       if (Array.isArray(out.stands)) { me.stands = out.stands; settleStandEdits(); }
       save(me);
     } catch (e) {
@@ -910,7 +917,7 @@
         err.push('Too late to book that. ' + cutoffWords(prop) + ' Pick a later time.');
       }
       else if (prop && f('day').value) {
-        const why = slotProblem(prop, f('day').value, f('time').value);
+        const why = seasonBookProblem(f('day').value) || slotProblem(prop, f('day').value, f('time').value);
         if (why) err.push(why);
       }
       if (!f('agree').checked) err.push('Tick the box to confirm you understand.');
@@ -944,6 +951,8 @@
   function slotState(c, iso, slot, prop) {
     const d = new Date(iso + 'T12:00:00');
     if (prop && Date.now() > bookCutoff(prop, iso, slot)) return { kind: 'blocked', label: 'Closed' };
+    const sp = seasonBookProblem(iso);
+    if (sp) return { kind: 'blocked', label: /Sunday/.test(sp) ? 'Sunday' : /Youth/.test(sp) ? 'Youth only' : 'No season', note: sp };
     const b = c.blackouts.find(x => iso >= x.from && iso <= x.to && (!x.days.length || x.days.indexOf(d.getDay()) >= 0) && overlap(x.slot, slot));
     if (b) return { kind: 'blocked', label: 'Paused', note: b.note };
     const taken = c.bookings.filter(x => x.date === iso && overlap(x.slot, slot));
@@ -978,7 +987,7 @@
       rows += '<div style="display:flex;gap:6px;align-items:center;margin:4px 0"><div style="width:72px;font-size:14px;font-weight:600">' + DOW[d.getDay()] + ' ' + (d.getMonth() + 1) + '/' + d.getDate() + '</div>' + cell('AM') + cell('PM') + '</div>';
     }
     box.innerHTML = '<div class="card"><b>' + esc(prop) + ' · next two weeks</b><div class="status">Up to ' + c.max + ' hunter' + (c.max > 1 ? 's' : '') +
-      ' at a time. Tap an open slot to pick it. Paused = the landowner has asked for no hunting. Closed = too late to book. ' + cutoffWords(prop) +
+      ' at a time. Tap an open slot to pick it. Paused = the landowner has asked for no hunting. Closed = too late to book. Sundays, days with no deer season open, and Youth Deer Hunt days (youth hunters only) can\'t be booked. ' + cutoffWords(prop) +
       (navigator.onLine ? '' : ' Shown as last seen; no signal.') + '</div>' + rows + '</div>';
     box.querySelectorAll('[data-pick]').forEach(b => b.onclick = () => {
       const [iso, sl] = b.dataset.pick.split('|');
