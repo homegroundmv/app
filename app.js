@@ -564,7 +564,7 @@
       time: '<label for="fv">The right time of shot</label><input id="fv" type="time">',
       band: '<label for="fv">The right Home Ground band number for this deer</label><input id="fv" type="text">',
       conf: '<label for="fv">The right MassWildlife confirmation number for this deer</label><input id="fv" type="text" inputmode="numeric">',
-      photos: photoField('fp', 'Photos of this deer', 'Band visible.'),
+      photos: photoField('fp', 'Photos of this deer', 'Your state tag visible.'),
       impl: '<label>The implement you used</label>' + radios('fv-impl', IMPLEMENTS),
       harvest: '<button class="big" id="fh">File the missing harvest report<small>' + esc(t.property) + ', ' + esc(dayName(t.date)) + '</small></button>',
       license: '<button class="big" id="fl">Send your license again<small>A clear photo, or the PDF from MassFishHunt.</small></button>'
@@ -1242,7 +1242,7 @@
       'It\'s reported to MassWildlife and tagged with my confirmation number.'];
     const multi = pre.of > 1 ? ' (deer ' + pre.n + ' of ' + pre.of + ')' : '';
     $app.innerHTML = header() + '<h1>Report Your Harvest' + multi + '</h1>' +
-      '<p class="status">' + (pre.of > 1 ? 'Your hunt report says ' + pre.of + ' deer. Each one gets its own report, band, confirmation number and photos.' : 'One report for each deer, with its own band, confirmation number and photos.') + '</p>' + propertySelect() +
+      '<p class="status">' + (pre.of > 1 ? 'Your hunt report says ' + pre.of + ' deer. Each one gets its own report, confirmation number and photos.' : 'One report for each deer, with its own confirmation number and photos.') + '</p>' + propertySelect() +
       '<div class="row"><div><label for="day">Date</label><input id="day" type="date" value="' + esc(pre.date || isoDate(new Date())) + '" max="' + isoDate(new Date()) + '"></div>' +
       '<div><label for="shot-time">Time of shot</label><input id="shot-time" type="time"></div></div>' +
       '<div id="legal" hidden><div class="note warn" id="legal-text"></div><label for="timewhy">If the time is right, say what happened</label><textarea id="timewhy"></textarea></div>' +
@@ -1251,11 +1251,10 @@
       '<label>The deer</label>' + radios('deer', ['Antlered buck', 'Adult antlerless (doe)', 'Subadult antlerless (button buck or doe fawn)']) +
       '<label for="which">Deer from this outing</label><select id="which"><option>1st</option><option>2nd</option><option>3rd</option><option>4th or more</option></select>' +
       '<label for="conf">MassWildlife confirmation number</label><input id="conf" type="text" inputmode="numeric">' +
-      '<label for="band">Home Ground band number</label><input id="band" type="text">' +
       '<label>Recovered after dark?</label>' + radios('dark', ['No', 'Yes']) +
       '<div id="dark-yes" hidden>' + checks('darkforms', ['I filed Before the Track.', 'I filed After the Track.']) + '</div>' +
-      photoField('p1', 'Photo 1: the deer where it fell', 'Band visible.') +
-      photoField('p2', 'Photo 2: band close-up', 'Optional.') +
+      photoField('p1', 'Photo 1: the deer where it fell', 'Your state tag visible.') +
+      photoField('p2', 'Photo 2: a second angle', 'Optional.') +
       locField('Where the deer fell', 'Stand at the deer (or where it fell) and tap the button.') +
       '<label>Donate through Hunters Share the Harvest?</label>' + radios('donate', ['Yes, the whole deer', 'No']) +
       '<div id="donate-yes" hidden>' + checks('rules', donateRules) + '</div>' +
@@ -1293,8 +1292,6 @@
       else if (outOfSeason() && !v('seasonwhy').trim()) { seasonCheck(); e.push('Check the date and implement: ' + outOfSeason() + ' Or, if it\'s right, say what happened.'); }
       if (!picked('deer')) e.push('Choose which kind of deer.');
       if (!v('conf').trim()) e.push('Enter the MassWildlife confirmation number.');
-      if (!v('band').trim()) e.push('Enter the Home Ground band number.');
-      else if (v('conf').trim() && v('band').replace(/\s/g, '').toUpperCase() === v('conf').replace(/\s/g, '').toUpperCase()) e.push('The band number and the MassWildlife confirmation number are the same. They come from different places: check both.');
       if (!picked('dark')) e.push('Say whether it was recovered after dark.');
       if (picked('dark') === 'Yes' && !allTicked('darkforms')) e.push('After dark: file Before the Track and After the Track, then tick both.');
       if (!photo1.length) e.push('Add photo 1, the deer where it fell.');
@@ -1304,14 +1301,14 @@
       if (!document.getElementById('agree').checked) e.push('Tick the accuracy box.');
       if (fail(e)) return;
       document.getElementById('send').disabled = true;
-      await queue('Harvest report ' + v('band'), { form: 'harvest', submittedOn: stamp(), gps: loc.g,
+      await queue('Harvest report ' + v('conf').trim(), { form: 'harvest', submittedOn: stamp(), gps: loc.g,
         fields: { property: v('prop'), date: usDate(v('day')), shotTime: v('shot-time'), implement: picked('impl'), deerType: picked('deer'),
-          which: v('which'), confirmation: v('conf').trim(), band: v('band').trim(), afterDark: picked('dark'),
+          which: v('which'), confirmation: v('conf').trim(), afterDark: picked('dark'),
           afterDarkForms: allPicked('darkforms').join(' '), donate: picked('donate'),
           donateChecks: picked('donate') === 'No' ? '' : allPicked('rules').length + ' of 3 confirmed',
           notes: v('notes').trim(), noLocationReason: loc.g ? '' : v('why').trim(), timeNote: outsideLegal() ? v('timewhy').trim() : '', seasonNote: outOfSeason() ? v('seasonwhy').trim() : '' },
         files: photo1.concat(photo2) });
-      const saved = 'Harvest report saved for band ' + esc(v('band')) + '.' + (navigator.onLine ? '' : ' It will send as soon as you have signal.');
+      const saved = 'Harvest report saved, confirmation number ' + esc(v('conf').trim()) + '.' + (navigator.onLine ? '' : ' It will send as soon as you have signal.');
       if (pre.of && pre.n < pre.of) {
         showHarvest({ property: v('prop'), date: v('day'), n: pre.n + 1, of: pre.of });
         const top = document.querySelector('h1');
