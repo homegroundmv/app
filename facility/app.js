@@ -26,10 +26,28 @@
   const dayName = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }); };
   const t12 = hm => { const [h, m] = String(hm).split(':').map(Number); const ap = h >= 12 ? 'pm' : 'am'; const hh = h % 12 || 12; return hh + (m ? ':' + pad(m) : '') + ' ' + ap; };
   const when = t => { const d = parse(t); return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : esc(t); };
-  // Day-dot colours, food-service standard (Mon blue … Sun black): the colour of the intake day.
-  const DOTS = [['Sunday', 'Black', '#111'], ['Monday', 'Blue', '#1E5BD8'], ['Tuesday', 'Yellow', '#F2C200'],
-    ['Wednesday', 'Red', '#D22'], ['Thursday', 'Brown', '#7A4A1E'], ['Friday', 'Green', '#2A9A3A'], ['Saturday', 'Orange', '#F07A00']];
-  const dotFor = s => { const d = parse(s); return d ? DOTS[d.getDay()] : null; };
+  // Intake band colour: the roll in the printer changes every day through a 5-colour cycle (Settings), so no two deer
+  // in the cooler share a colour (a deer hangs at most 5 days).
+  const BAND_HEX = { 'aqua': '#00B5B8', 'yellow': '#F5D000', 'orange': '#F57C00', 'day glow green': '#39E046', 'day glow pink': '#FF4FA8' };
+  const hexFor = name => BAND_HEX[String(name || '').toLowerCase()] || '#999';
+  function bandColour(when) {
+    const s = S(), list = s.bandColours && s.bandColours.length ? s.bandColours : ['Aqua', 'Yellow', 'Orange', 'Day Glow Green', 'Day Glow Pink'];
+    const d = when instanceof Date ? when : parse(when), b = String(s.bandStart || '2026-11-01').split('-').map(Number);
+    if (!d || b.length < 3) return '';
+    const days = Math.round((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(b[0], b[1] - 1, b[2])) / 864e5);
+    return list[((days % list.length) + list.length) % list.length];
+  }
+  const colourOf = d => d['Band colour'] || bandColour(d.Intake);
+  const swatch = name => name ? '<span class="dot" style="background:' + hexFor(name) + '"></span>' + esc(name) + ' band' : '';
+  // Processing urgency from hours hung (Joe, 25 Oct): Low, Medium, High, Urgent at the start-by time, Overdue at the
+  // maximum hold. Donated deer move up one level (they go first), but never to Overdue on that alone.
+  const LEVELS = [['Low', '#5B7F3A'], ['Medium', '#C9A100'], ['High', '#E07000'], ['Urgent', '#C0392B'], ['Overdue', '#5A0F0F']];
+  function urgency(d) {
+    const s = S(), h = hoursHung(d), start = s.startBy || 96, max = s.maxHold || 120;
+    let i = h >= max ? 4 : h >= start ? 3 : h >= start - 24 ? 2 : h >= start - 48 ? 1 : 0;
+    if (d.Type === 'Donated' && i < 3) i++;
+    return { level: LEVELS[i][0], colour: LEVELS[i][1], i, hours: h };
+  }
 
   function load() { try { return JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { return {}; } }
   let st = load();          // { number, pin, staff, device, home, outbox:[], synced }
@@ -96,6 +114,7 @@
     if (current === 'home') showHome();
     if (current === 'board' && !document.querySelector('.form input, .form select')) showBoard();
     if (current === 'donate' && !document.querySelector('.form input, .form select, #lic2:focus')) showDonate();
+    if (current === 'deer' && shownBand && !document.querySelector('.form input, .form select')) showDeer(shownBand);
   }
   window.addEventListener('online', flush);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) flush(); });
@@ -168,7 +187,7 @@
     const go = async () => {
       const btn = document.getElementById('go'); btn.disabled = true;
       st.number = document.getElementById('num').value.trim(); st.pin = document.getElementById('pin').value.trim();
-      try { const out = await call({ action: 'login' }); st.staff = out.staff; st.number = out.staff.number; save(); showHome(); refresh(); flush(); }
+      try { const out = await call({ action: 'login' }); st.staff = out.staff; st.number = out.staff.number; save(); showHome(); refresh().then(() => { if (pendingBand) { const b = pendingBand; pendingBand = null; showDeer(b); } }); flush(); }
       catch (e) { st.pin = ''; save(); showLogin(e.offline ? 'No signal. Sign-in needs a connection.' : e.message); }
     };
     document.getElementById('go').onclick = go;
@@ -208,7 +227,8 @@
       (note ? '<div class="note ok">' + note + '</div>' : '') +
       '<div id="alerts">' + alertsHtml() + '</div><div id="push"></div>' + clockCard + tiles +
       group('Work') +
-      big('intake', 'Check in a deer', 'Band, tag, hunter, print the intake band') +
+      big('intake', 'Check in a deer', 'Band, tag, hunter, print the intake band' + (bandColour(new Date()) ? ' · today\'s band: ' + bandColour(new Date()) : '')) +
+      big('scan', 'Scan a band', 'Point at the QR code: see how urgent that deer is') +
       big('shifts', 'Book your time', 'Pick your own start and end · up to ' + s.maxAtOnce + ' at once') +
       big('daily', 'Daily log', 'Temperatures, cleaning, waste, complaints') +
       big('messages', 'Messages' + (h.unread ? ' (' + h.unread + ' new)' : ''), 'Team chat and direct messages') +
@@ -286,30 +306,7 @@
     const ready = all.filter(d => d.Status === 'Ready');
     const released = all.filter(d => d.Status === 'Released').slice(-10).reverse();
     const n = hanging.length + proc.length, full = n >= s.coolerCap;
-    const card = d => {
-      const h = hoursHung(d), dot = dotFor(d.Intake);
-      const cls = d.Status === 'Hanging' ? (h >= s.maxHold ? ' red' : h >= s.startBy ? ' amber' : '') : '';
-      const mineOrMgr = d['Processor number'] === st.staff.number || isMgr();
-      const act = isViewer() ? '' : d.Status === 'Hanging' ? '<button class="btn" data-a="start">Start processing</button>'
-        : d.Status === 'Processing' ? (mineOrMgr ? (d.Type === 'Donated' && !d['First pack #'] ? '<button class="btn alt" data-a="grind">Get package numbers</button> ' : '') + '<button class="btn" data-a="finish">Finished</button>' : '')
-        : d.Status === 'Ready' ? '<button class="btn alt" data-a="release">Release</button>' : '';
-      return '<div class="card' + cls + (d.Type === 'Donated' ? ' donated' : '') + '" data-band="' + esc(d.Band) + '">' +
-        '<div class="deer"><div><span class="band">' + esc(d.Band) + '</span> ' +
-        '<span class="tag ' + (d.Type === 'Donated' ? 'don">DONATED' : 'prv">PRIVATE') + '</span>' + (d['DDP deer'] === 'Yes' ? '<span class="tag">DDP</span>' : '') +
-        (d.Type !== 'Donated' && d['Pork fat added'] === 'Yes' ? '<span class="tag">+ PORK FAT</span>' : '') +
-        (d.pending ? '<span class="pill wait">not sent yet</span>' : '') +
-        '<div class="status">' + (dot ? '<span class="dot" style="background:' + dot[2] + '"></span>' + dot[1] + ' dot · ' : '') +
-        'in ' + esc(d.Intake) + ' · ' + esc(d.Deer || '') + (d['Antler points'] ? ' (' + esc(d['Antler points']) + ' pts)' : '') + ' · ' + esc(d['Hunter number'] || d['Hunter name'] || '') +
-        (d.Butcher ? ' · ' + esc(d.Butcher) + (d['Processor number'] ? ' (' + esc(d['Processor number']) + ')' : '') : '') +
-        (d['Carcass weight (lb)'] ? ' · ' + esc(d['Carcass weight (lb)']) + ' lb carcass' : '') +
-        (d['Pounds packaged'] ? ' · ' + esc(d['Pounds packaged']) + ' lb packaged' : '') + '</div></div>' +
-        '<div class="hrs">' + (d.Status === 'Released' ? '' : Math.floor(h) + ' h') + '</div></div>' +
-        (d.Cuts && d.Status !== 'Released' ? '<div class="note ok"><b>Cuts:</b> ' + esc(d.Cuts) + '</div>' : '') +
-        (d['First pack #'] && d['Last pack #'] ? '<div class="note ok"><b>Package numbers ' + esc(d['First pack #']) + '–' + esc(d['Last pack #']) + '</b> (MassWildlife)</div>'
-          : d['First pack #'] ? '<div class="note warn" style="font-size:17px">Label the 2 lb packages in order from <b>' + esc(d['First pack #']) + '</b>: ' + esc(d['First pack #']) + ', ' + esc(('000' + (parseInt(d['First pack #'], 10) + 1)).slice(-4)) + ', …</div>' : '') +
-        (d.Status === 'Released' ? '<div class="status">Released ' + esc(d.Released) + ' to ' + esc(d['Released to']) + '</div>' : '') +
-        '<div class="actions">' + act + (d.Status !== 'Released' && !isViewer() ? '<button class="btn ghost" data-a="print">Print band</button>' : '') + '</div><div class="form"></div></div>';
-    };
+    const card = deerCard;
     const section = (title, list, empty) => '<h2>' + title + ' (' + list.length + ')</h2>' + (list.length ? list.map(card).join('') : '<p class="status">' + empty + '</p>');
     frame('board', 'Cooler',
       '<div class="card"><b>In the cooler: ' + n + ' of ' + s.coolerCap + '</b>' +
@@ -323,6 +320,33 @@
       (released.length ? section('Released this week', released, '') : ''));
     document.getElementById('reload').onclick = () => refresh();
     $app.querySelectorAll('[data-band]').forEach(c => c.querySelectorAll('[data-a]').forEach(b => b.onclick = () => act(b.dataset.a, all.find(d => d.Band === c.dataset.band), c.querySelector('.form'))));
+  }
+
+  function deerCard(d) {
+    const s = S();
+    const h = hoursHung(d), bc = colourOf(d), u = d.Status === 'Hanging' ? urgency(d) : null;
+    const cls = d.Status === 'Hanging' ? (h >= s.maxHold ? ' red' : h >= s.startBy ? ' amber' : '') : '';
+    const mineOrMgr = d['Processor number'] === st.staff.number || isMgr();
+    const act = isViewer() ? '' : d.Status === 'Hanging' ? '<button class="btn" data-a="start">Start processing</button>'
+      : d.Status === 'Processing' ? (mineOrMgr ? (d.Type === 'Donated' && !d['First pack #'] ? '<button class="btn alt" data-a="grind">Get package numbers</button> ' : '') + '<button class="btn" data-a="finish">Finished</button>' : '')
+      : d.Status === 'Ready' ? '<button class="btn alt" data-a="release">Release</button>' : '';
+    return '<div class="card' + cls + (d.Type === 'Donated' ? ' donated' : '') + '" data-band="' + esc(d.Band) + '">' +
+      '<div class="deer"><div><span class="band">' + esc(d.Band) + '</span> ' +
+      '<span class="tag ' + (d.Type === 'Donated' ? 'don">DONATED' : 'prv">PRIVATE') + '</span>' + (d['DDP deer'] === 'Yes' ? '<span class="tag">DDP</span>' : '') +
+      (d.Type !== 'Donated' && d['Pork fat added'] === 'Yes' ? '<span class="tag">+ PORK FAT</span>' : '') +
+      (d.pending ? '<span class="pill wait">not sent yet</span>' : '') +
+      (u ? '<span class="pill" style="background:' + u.colour + ';color:#fff;font-weight:700">' + u.level.toUpperCase() + '</span>' : '') +
+      '<div class="status">' + (bc ? swatch(bc) + ' · ' : '') +
+      'in ' + esc(d.Intake) + ' · ' + esc(d.Deer || '') + (d['Antler points'] ? ' (' + esc(d['Antler points']) + ' pts)' : '') + ' · ' + esc(d['Hunter number'] || d['Hunter name'] || '') +
+      (d.Butcher ? ' · ' + esc(d.Butcher) + (d['Processor number'] ? ' (' + esc(d['Processor number']) + ')' : '') : '') +
+      (d['Carcass weight (lb)'] ? ' · ' + esc(d['Carcass weight (lb)']) + ' lb carcass' : '') +
+      (d['Pounds packaged'] ? ' · ' + esc(d['Pounds packaged']) + ' lb packaged' : '') + '</div></div>' +
+      '<div class="hrs">' + (d.Status === 'Released' ? '' : Math.floor(h) + ' h') + '</div></div>' +
+      (d.Cuts && d.Status !== 'Released' ? '<div class="note ok"><b>Cuts:</b> ' + esc(d.Cuts) + '</div>' : '') +
+      (d['First pack #'] && d['Last pack #'] ? '<div class="note ok"><b>Package numbers ' + esc(d['First pack #']) + '–' + esc(d['Last pack #']) + '</b> (MassWildlife)</div>'
+        : d['First pack #'] ? '<div class="note warn" style="font-size:17px">Label the 2 lb packages in order from <b>' + esc(d['First pack #']) + '</b>: ' + esc(d['First pack #']) + ', ' + esc(('000' + (parseInt(d['First pack #'], 10) + 1)).slice(-4)) + ', …</div>' : '') +
+      (d.Status === 'Released' ? '<div class="status">Released ' + esc(d.Released) + ' to ' + esc(d['Released to']) + '</div>' : '') +
+      '<div class="actions">' + act + (d.Status !== 'Released' && !isViewer() ? '<button class="btn ghost" data-a="print">Print band</button>' : '') + '</div><div class="form"></div></div>';
   }
 
   function act(kind, d, box, after) {
@@ -424,7 +448,9 @@
   const readCuts = () => CUTS.map((c, i) => { const v = document.getElementById('cut' + i).value; return i > 3 ? (v ? c[0] + ' ' + v : '') : c[0] + ': ' + (v || 'Ground'); }).filter(Boolean).join('; ');
   function showIntake() {
     const s = S(), now = new Date();
+    const todayBand = bandColour(new Date());
     frame('intake', 'Check in a deer',
+      (todayBand ? '<div class="note ok" style="font-size:17px">' + swatch(todayBand) + ' today. Make sure the <b>' + esc(todayBand) + '</b> roll is in the band printer.</div>' : '') +
       '<div class="card">' +
       '<label>Is this an Island Access Program (IAP) deer?</label>' +
       '<label class="choice"><input type="radio" name="iap" value="Yes"> <span><b>Yes</b>: it has an IAP field band from the harvest</span></label>' +
@@ -503,7 +529,7 @@
         dressed4h: document.getElementById('fd').checked, ddp: document.getElementById('ddp').checked, skinned: false, notes: v('nt'),
         porkFat: type === 'Private' && !!document.getElementById('pork') && document.getElementById('pork').checked };
       queue('intake', f, 'Check-in ' + b);
-      printBand({ Band: b, Intake: stamp(), Type: type, Deer: f.deer });
+      printBand({ Band: b, Intake: stamp(), Type: type, Deer: f.deer, 'MassWildlife confirmation': f.confirmation });
       showBoard();
       toast('Band ' + b + ' checked in.', true);
     };
@@ -522,14 +548,91 @@
   }
 
   // Intake band: band number, intake date large, donated/private, day-dot colour.
-  function printBand(d) {
-    const dot = dotFor(d.Intake), w = parse(d.Intake);
-    document.getElementById('label').innerHTML =
-      '<div class="lt">' + (d.Type === 'Donated' ? 'DONATED' : 'PRIVATE') + ' · HOME GROUND</div>' +
-      '<div class="ld">IN ' + (w ? (w.getMonth() + 1) + '/' + w.getDate() : '') + '</div>' +
-      '<div class="lb">' + esc(d.Band) + ' · ' + esc(d.Deer || '') + ' · ' + esc(d['Hunter number'] || '') + '</div>' +
-      '<div>' + (dot ? dot[0] + ': ' + dot[1].toUpperCase() + ' DOT' : '') + '</div>';
-    setTimeout(() => window.print(), 50);
+  // QR maker and reader (qr.js) load only when needed, then stay cached for offline use.
+  let qrLib = null;
+  function loadQR() {
+    if (window.qrcode && window.jsQR) return Promise.resolve();
+    return qrLib || (qrLib = new Promise((ok, no) => { const sc = document.createElement('script'); sc.src = 'qr.js'; sc.onload = ok; sc.onerror = () => { qrLib = null; no(new Error('Needs signal once to load the QR tools.')); }; document.head.appendChild(sc); }));
+  }
+  const deerLink = b => location.origin + location.pathname.replace(/[^/]*$/, '') + '#d=' + encodeURIComponent(band(b));
+  // Intake band: ScanBand S 1-1/8" x 11-1/2" on the PDC printer (203 dpi), printed from Chrome on the intake laptop.
+  function bandCss() {
+    const s = S(), off = Number(s.bandOffset == null ? 2.5 : s.bandOffset), rot = s.bandRotate !== false;
+    let c = document.getElementById('band-css'); if (!c) { c = document.createElement('style'); c.id = 'band-css'; document.head.appendChild(c); }
+    c.textContent = '@media print{@page{size:1.125in 11.5in;margin:0}html,body{margin:0;padding:0;background:#fff}' +
+      '#label{position:absolute;left:0;top:0;width:1.125in;height:11.5in;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#000}' +
+      '#label .bw{position:absolute;width:7.4in;height:1.05in;display:flex;align-items:center;gap:.12in;' +
+      (rot ? 'left:1.09in;top:' + off + 'in;transform-origin:0 0;transform:rotate(90deg)}' : 'left:.04in;top:' + off + 'in}') +
+      '#label .bt{font-size:11pt;font-weight:800;letter-spacing:1px;padding:.04in .08in;border:2px solid #000;white-space:nowrap}' +
+      '#label .bt.don{background:#000;color:#fff}#label .bi{font-size:24pt;font-weight:800;line-height:1;white-space:nowrap}' +
+      '#label .bx{font-size:10pt;font-weight:700;line-height:1.25;white-space:nowrap}#label .bq{width:.95in;height:.95in;flex:0 0 auto}#label .bq svg{width:100%;height:100%}}';
+  }
+  async function printBand(d) {
+    try { await loadQR(); } catch (e) { toast(e.message); return; }
+    bandCss();
+    const w = parse(d.Intake), bc = colourOf(d);
+    const qr = window.qrcode(0, 'M'); qr.addData(deerLink(d.Band)); qr.make();
+    document.getElementById('label').innerHTML = '<div class="bw">' +
+      '<div class="bt' + (d.Type === 'Donated' ? ' don">DONATED' : '">PRIVATE') + '</div>' +
+      '<div><div class="bi">' + esc(band(d.Band)) + '</div>' +
+      '<div class="bx">IN ' + (w ? w.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase() + ' ' + (w.getMonth() + 1) + '/' + w.getDate() : '') +
+      (bc ? ' · ' + esc(bc.toUpperCase()) : '') + '</div>' +
+      '<div class="bx">' + esc((d.Deer || '').toUpperCase()) + (d['MassWildlife confirmation'] ? ' · ' + (/^mw/i.test(d['MassWildlife confirmation']) ? '' : 'MW ') + esc(d['MassWildlife confirmation']) : '') + '</div></div>' +
+      '<div class="bq">' + qr.createSvgTag({ cellSize: 2, margin: 0, scalable: true }) + '</div></div>';
+    setTimeout(() => window.print(), 80);
+  }
+
+  /* ---------- scan a band: QR from the band opens that deer with its processing urgency ---------- */
+  let pendingBand = (location.hash.match(/[#&]d=([^&]+)/) || [])[1] || null;
+  if (pendingBand) { pendingBand = band(decodeURIComponent(pendingBand)); history.replaceState(null, '', location.pathname + location.search); }
+  let shownBand = null;
+  function showDeer(b) {
+    b = band(b); shownBand = b;
+    const d = deerList().filter(x => band(x.Band) === b).pop();
+    if (!d) {
+      frame('deer', 'Band ' + esc(b), '<div class="card"><div class="note warn">This band isn\'t in the app\'s list. It may have been released over a week ago, or the list needs refreshing.</div>' +
+        '<button class="btn" id="dr">Refresh and try again</button> <button class="btn ghost" id="ds">Scan another</button></div>');
+      document.getElementById('dr').onclick = async () => { await refresh(); showDeer(b); };
+      document.getElementById('ds').onclick = () => showScan();
+      return;
+    }
+    const u = d.Status === 'Hanging' ? urgency(d) : null;
+    const head = u ? '<div class="card" style="background:' + u.colour + ';color:#fff;text-align:center;padding:18px 12px">' +
+        '<div style="font-size:34px;font-weight:800;letter-spacing:2px">' + u.level.toUpperCase() + '</div>' +
+        '<div style="font-size:17px;margin-top:4px">' + Math.floor(u.hours) + ' hours hung' + (d.Type === 'Donated' ? ' · donated: goes first' : '') + '</div>' +
+        '<div style="font-size:14px;opacity:.9;margin-top:4px">' + (u.i >= 4 ? 'Over the maximum hold: tell a manager now.' : u.i === 3 ? 'Past the start-by time: process next.' : u.i === 2 ? 'Process today.' : u.i === 1 ? 'Process when there\'s room.' : 'Let it hang at least overnight.') + '</div></div>'
+      : '<div class="card"><b>' + esc(d.Status === 'Processing' ? 'Being processed' : d.Status === 'Ready' ? 'Processed: ready for pickup or delivery' : d.Status) + '</b></div>';
+    frame('deer', 'Band ' + esc(band(d.Band)), head + deerCard(d) + '<button class="btn ghost" id="ds" style="width:100%;margin-top:8px">Scan another band</button>');
+    const c = $app.querySelector('[data-band]');
+    c.querySelectorAll('[data-a]').forEach(x => x.onclick = () => act(x.dataset.a, d, c.querySelector('.form'), () => showDeer(b)));
+    document.getElementById('ds').onclick = () => showScan();
+  }
+  let scanStream = null;
+  function stopScan() { if (scanStream) { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; } }
+  async function showScan() {
+    frame('scan', 'Scan a band', '<div class="card"><p class="status">Point the camera at the QR code on the band.</p>' +
+      '<video id="sv" playsinline muted style="width:100%;border-radius:12px;background:#000"></video><canvas id="sc" hidden></canvas><div id="sm"></div>' +
+      '<label for="sb">Or type the band number</label><input id="sb" type="text" autocapitalize="characters"><button class="btn" id="sg" style="margin-top:8px">Open</button></div>');
+    const msg = h => { document.getElementById('sm').innerHTML = h; };
+    document.getElementById('sg').onclick = () => { const v = document.getElementById('sb').value.trim(); if (v) { stopScan(); showDeer(v); } };
+    try {
+      await loadQR();
+      scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+    } catch (e) { msg('<div class="note warn">' + esc(/Permission|NotAllowed/i.test(e.name + e.message) ? 'Allow the camera for this app, or type the band number.' : e.message || 'No camera here: type the band number.') + '</div>'); return; }
+    const v = document.getElementById('sv'), cv = document.getElementById('sc'), cx = cv.getContext('2d', { willReadFrequently: true });
+    v.srcObject = scanStream; await v.play().catch(() => {});
+    const tick = () => {
+      if (current !== 'scan' || !scanStream) return stopScan();
+      if (v.readyState >= 2 && v.videoWidth) {
+        cv.width = v.videoWidth; cv.height = v.videoHeight; cx.drawImage(v, 0, 0);
+        const r = window.jsQR(cx.getImageData(0, 0, cv.width, cv.height).data, cv.width, cv.height, { inversionAttempts: 'dontInvert' });
+        const m = r && String(r.data).match(/[#&]d=([^&]+)/);
+        if (m) { stopScan(); return showDeer(decodeURIComponent(m[1])); }
+        if (r) msg('<div class="note warn">That QR code isn\'t a Home Ground band.</div>');
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
   }
 
   /* ---------- booking your time (start and end, first come first served) ---------- */
@@ -1046,9 +1149,13 @@
   }
 
   const GO = { payments: showPayments, status: showStatus, board: showBoard, intake: showIntake, shifts: () => showShifts(), messages: showMessages, help: showHelp,
-    numbers: showNumbers, daily: showDaily, team: showTeam, martin: () => showMartin(), donate: showDonate };
+    numbers: showNumbers, daily: showDaily, team: showTeam, martin: () => showMartin(), donate: showDonate, scan: () => showScan() };
 
   /* ---------- start ---------- */
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
-  if (st.pin && st.staff) { showHome(); refresh(true); flush(); } else showLogin();
+  if (st.pin && st.staff) {
+    if (pendingBand) { const b = pendingBand; pendingBand = null; showDeer(b); refresh(true); } else { showHome(); refresh(true); }
+    flush();
+  } else showLogin(pendingBand ? 'Sign in to see band ' + pendingBand + '.' : '');
+  window.addEventListener('hashchange', () => { const m = location.hash.match(/[#&]d=([^&]+)/); if (m && st.staff) { history.replaceState(null, '', location.pathname); showDeer(decodeURIComponent(m[1])); } });
 })();
