@@ -1,8 +1,9 @@
 /* Home Ground Facility app (v2): processors' phones and the intake laptop.
  * Sign in with your staff number (P-001) and PIN.
- * Screens: Home (help alerts, clock in/out, your numbers), Cooler board, Check in a deer, Book your time,
- * Messages (team chat and direct), Need help, My numbers, Team numbers (managers),
- * Daily log, Donation report.
+ * Screens: Home (help alerts, clock in/out, your numbers), Cooler board, Check in a deer, Book your time
+ * (processing or skinning), Messages (team chat and direct), Need help, My numbers, Team numbers (managers),
+ * Daily log, Donation report, and the three Friesla sanitation records:
+ * Pre-op SSOP, Operational SSOP and Sanitation corrective action.
  * Deer actions and log entries are saved on the device first and sent when there's signal.
  * The deer's field band number is its ID all the way through.
  */
@@ -24,6 +25,9 @@
   const fmt = n => r1(n).toLocaleString('en-US');
   const isoDate = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
   const dayName = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }); };
+  const nowMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
+  const fromHM = n => Math.floor(n / 60) + ':' + pad(n % 60);
+  const hm2 = hm => { const [h, m] = String(hm).split(':').map(Number); return pad(h) + ':' + pad(m || 0); };
   const t12 = hm => { const [h, m] = String(hm).split(':').map(Number); const ap = h >= 12 ? 'pm' : 'am'; const hh = h % 12 || 12; return hh + (m ? ':' + pad(m) : '') + ' ' + ap; };
   const when = t => { const d = parse(t); return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : esc(t); };
   // Intake band colour: the roll in the printer changes every day through a 5-colour cycle (Settings), so no two deer
@@ -56,7 +60,7 @@
   st.home = st.home || {};
   function save() { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { /* keep in memory */ } }
   save();
-  const S = () => st.home.settings || { coolerCap: 30, coolerAlert: 80, startBy: 72, maxHold: 120, maxAtOnce: 6, slots: [], pieceRate: 125, minWage: 15, pkgSize: 2, fatDonated: 10, fatPrivate: 10, privatePrice: 250, porkAddOn: 20, porkInStock: true, pantries: [], helpHours: 4 };
+  const S = () => st.home.settings || { coolerCap: 30, coolerAlert: 80, startBy: 72, maxHold: 120, maxAtOnce: 6, slots: [], pieceRate: 125, minWage: 15, pkgSize: 2, fatDonated: 10, fatPrivate: 10, privatePrice: 250, porkAddOn: 20, porkInStock: true, pantries: [], helpHours: 4, skinRate: 25, skinHourly: 25, otherHourly: 25, intakeFee: 10, maxSkinners: 5, mhu1Cap: 12, loneGrace: 30, preopItems: [], opItems: [] };
   const isMgr = () => !!(st.staff && st.staff.manager);
   const isViewer = () => !!(st.staff && st.staff.viewer);
 
@@ -142,12 +146,16 @@
     const by = b => list.find(d => band(d.Band) === b && d.Status !== 'Released');
     st.outbox.filter(x => !x.error).forEach(x => {
       const f = x.fields, b = band(f.band);
+      if (['preop', 'opssop', 'corrective', 'log', 'reject'].indexOf(x.action) >= 0) return;
       if (!b) return;
       const d = by(b);
       if (x.action === 'intake' && !d) list.push({ Band: b, Intake: x.at, 'Hunter number': f.hunterNumber, 'Hunter name': f.hunterName || ((f.firstName || '') + ' ' + (f.lastName || '')).trim(), 'MassWildlife confirmation': f.confirmation, Deer: f.deer, Type: f.type, 'Pork fat added': f.porkFat ? 'Yes' : (f.type === 'Donated' ? 'Yes' : 'No'), Status: 'Hanging', pending: true });
       if (!d) return;
       d.pending = true;
-      if (x.action === 'start') { d.Status = 'Processing'; d['Processing started'] = x.at; d['Processor number'] = f.processor || st.staff.number; d.Butcher = f.processorName || st.staff.name; d['Carcass weight (lb)'] = f.weight; }
+      if (x.action === 'skin') { d['Skinner'] = f.skinner || st.staff.number; d['Skinner name'] = f.skinnerName || st.staff.name; d['Skinned at'] = x.at; d['Skinned at station'] = 'Yes'; }
+      if (x.action === 'start') {
+        if (f.skinned && !d['Skinner']) { d['Skinner'] = f.skinner || f.processor || st.staff.number; d['Skinner name'] = f.processorName || st.staff.name; d['Skinned at'] = x.at; }
+        d.Status = 'Processing'; d['Processing started'] = x.at; d['Processor number'] = f.processor || st.staff.number; d.Butcher = f.processorName || st.staff.name; d['Carcass weight (lb)'] = f.weight; }
       if (x.action === 'finish') { d.Status = 'Ready'; d['Pounds packaged'] = f.total; d.Packages = num(f.groundPackages) + num(f.intactPackages); }
       if (x.action === 'release') { d.Status = 'Released'; d.Released = x.at; d['Released to'] = f.to; }
     });
@@ -198,55 +206,171 @@
   function hoursHung(d) { const t = parse(d.Intake); return t ? Math.max(0, (Date.now() - t) / 36e5) : 0; }
   function coolerCount() { return deerList().filter(d => d.Status === 'Hanging' || d.Status === 'Processing').length; }
 
+  /* ---------- home: what needs doing, then the day, then everything else ----------
+   * The three commonest actions (start, finish, release) live on the Cooler board, so a home
+   * screen that only lists buttons puts the work two screens down. This one leads with the one
+   * thing to do now — and when a deer is on your table, with that deer and its button.
+   */
+  function leadDeer() {
+    const list = deerList();
+    const mine = list.find(d => d.Status === 'Processing' && d['Processor number'] === st.staff.number);
+    if (mine) return { d: mine, kind: 'mine' };
+    const hanging = list.filter(d => d.Status === 'Hanging')
+      .sort((a, b) => (a.Type === 'Donated' ? 0 : 1) - (b.Type === 'Donated' ? 0 : 1) || hoursHung(b) - hoursHung(a));
+    const next = hanging.find(d => urgency(d).i >= 2);        // High, Urgent or Overdue
+    return next ? { d: next, kind: 'next' } : null;
+  }
+  function leadCard(lead) {
+    const d = lead.d, u = urgency(d), s = S();
+    const donatedNoPack = d.Type === 'Donated' && !d['First pack #'];
+    const act = lead.kind === 'mine'
+      ? (donatedNoPack ? '<button class="btn alt" data-la="grind">Get package numbers</button> ' : '') +
+        '<button class="btn" data-la="finish">Finished</button>'
+      : '<button class="btn" data-la="start">Start processing</button>';
+    return '<div class="lead' + (lead.kind === 'mine' ? ' on' : '') + '" data-band="' + esc(d.Band) + '">' +
+      '<div class="lh">' + (lead.kind === 'mine' ? 'On your table' : 'Start this one next') + '</div>' +
+      '<div class="lb">' + esc(d.Band) + ' <span class="tag ' + (d.Type === 'Donated' ? 'don">DONATED' : 'prv">PRIVATE') + '</span>' +
+      (lead.kind === 'next' ? '<span class="pill" style="background:' + u.colour + ';color:#fff;font-weight:700">' + u.level.toUpperCase() + '</span>' : '') + '</div>' +
+      '<div class="ls">' + esc(d.Deer || 'Deer') + ' · ' + Math.floor(hoursHung(d)) + ' hours hung' +
+      (lead.kind === 'mine'
+        ? (d['Processing started'] ? ' · started ' + esc(when(d['Processing started'])) : '') +
+          (d['Carcass weight (lb)'] ? ' · ' + esc(d['Carcass weight (lb)']) + ' lb carcass' : '') +
+          (d['First pack #'] ? ' · packages from ' + esc(d['First pack #']) : '')
+        : ' · in ' + esc(when(d.Intake))) + '</div>' +
+      (lead.kind === 'mine' && donatedNoPack ? '<div class="note bad" style="margin:8px 0 0">Get package numbers before the grinder, so every label runs in order.</div>' : '') +
+      '<div class="actions">' + act + '</div><div class="form"></div></div>';
+  }
+
   let homeNote = null;   // a confirmation stays on Home for 20 seconds, through background refreshes
   function showHome(note) {
     if (note) homeNote = { text: note, until: Date.now() + 20000 };
     else if (homeNote && Date.now() < homeNote.until) note = homeNote.text;
     const h = st.home, s = S(), m = h.mine || {}, inC = coolerCount();
     const next = (h.myShifts || [])[0];
-    const clockCard = '<div class="card"><div class="deer"><div>' +
-      (h.clockedIn ? '<b>Clocked in</b><div class="status">Since ' + esc(when(h.clockedIn)) + '</div>' : '<b>Not clocked in</b><div class="status">Clock in when you start work, including cleaning and training time.</div>') +
-      (next ? '<div class="status">Next booking: ' + esc(dayName(next.date)) + ', ' + t12(next.starts) + '–' + t12(next.ends) + '</div>' : '') +
-      '</div><button class="btn' + (h.clockedIn ? ' alt' : '') + '" id="clock">' + (h.clockedIn ? 'Clock out' : 'Clock in') + '</button></div><div id="clock-err" class="err"></div></div>';
-    const tiles = '<div class="tiles">' +
-      tile(m.deer || 0, 'Deer processed') + tile(m.donated || 0, 'Donated deer') +
-      tile(fmt(m.packagedLb || 0), 'lb packaged') + tile(fmt(m.groundVenisonLb || 0), 'lb ground venison') + '</div>' +
-      '<p class="status center">Your season so far · ' + esc(s.pkgSize) + ' lb packages, ' + esc(s.fatDonated) + '% pork fat</p>';
+    const here = (h.onSite || []).filter(x => x.number !== st.staff.number);
+    const alone = !!h.clockedIn && !here.length;
+    const preop = h.preopToday || {};
+    const held = (preop.held || []).length;
+    const processing = deerList().some(d => d.Status === 'Processing');
+
     if (isViewer()) {
       frame('home', '', '<div class="note ok">View-only sign-in: you can look at everything below, but nothing can be changed from this sign-in.</div>' +
         group('Check on things') +
-        big('status', 'Facility status', 'Cooler, oldest deer, temperatures, who\'s here', 'view') +
         big('board', 'Cooler', inC + ' of ' + s.coolerCap + ' in the cooler' + (inC >= s.coolerCap ? ' · FULL' : ''), 'view') +
+        big('status', 'Facility status', 'Cooler, oldest deer, temperatures, who\'s here', 'view') +
+        big('records', 'Sanitation records', 'Pre-op, operational and corrective actions signed today', 'view') +
         group('Office') +
         big('martin', 'Donation report', 'Donated deer for Martin\'s sheet', 'alt') +
         big('payments', 'Hunter payments', 'Donation checks owed and sent, with mailing addresses', 'alt'), true);
       $app.querySelectorAll('[data-go]').forEach(b => b.onclick = () => GO[b.dataset.go]());
       return;
     }
-    frame('home', '',
-      (note ? '<div class="note ok">' + note + '</div>' : '') +
-      '<div id="alerts">' + alertsHtml() + '</div><div id="push"></div>' + clockCard + tiles +
-      group('Work') +
-      big('intake', 'Check in a deer', 'Band, tag, hunter, print the intake band' + (bandColour(new Date()) ? ' · today\'s band: ' + bandColour(new Date()) : '')) +
-      big('scan', 'Scan a band', 'Point at the QR code: see how urgent that deer is') +
-      big('shifts', 'Book your time', 'Pick your own start and end · up to ' + s.maxAtOnce + ' at once') +
-      big('daily', 'Daily log', 'Temperatures, cleaning, waste, complaints') +
-      big('messages', 'Messages' + (h.unread ? ' (' + h.unread + ' new)' : ''), 'Team chat and direct messages') +
-      big('help', 'Need help', 'Sends a notification to everyone on the team', 'red') +
-      group('Check on things') +
-      big('status', 'Facility status', 'Cooler, oldest deer, temperatures, who\'s here', 'view') +
-      big('board', 'Cooler', inC + ' of ' + s.coolerCap + ' in the cooler' + (inC >= s.coolerCap ? ' · FULL' : ''), 'view') +
+
+    const lead = h.clockedIn ? leadDeer() : null;
+    const clockStrip = h.clockedIn
+      ? '<div class="card strip"><div class="deer"><div><b>Clocked in' + (h.clockKind && h.clockKind !== 'Processing' ? ' · ' + esc(h.clockKind.toLowerCase()) : '') + '</b>' +
+        '<div class="status">Since ' + esc(when(h.clockedIn)) + (h.expectedOut ? ' · finishing by ' + t12(h.expectedOut) : '') +
+        (next ? ' · next booking ' + esc(dayName(next.date).split(',')[0]) + ' ' + t12(next.starts) : '') + '</div>' +
+        (here.length ? '<div class="status">Also here: ' + esc(here.map(x => x.name).join(', ')) + '</div>' : '') +
+        '</div><button class="btn alt" id="clock">Clock out</button></div>' +
+        (alone ? '<div class="note warn"><b>You are the only one clocked in.</b> Keep your phone on you. Joe gets a push if you have not clocked out ' +
+          esc(s.loneGrace || 30) + ' minutes after ' + esc(h.expectedOut ? t12(h.expectedOut) : 'the time you gave') + '.</div>' : '') +
+        '<button class="plain" id="still">Still here: change my finish time</button><div id="clock-err" class="err"></div></div>'
+      : '<div class="card"><div class="deer"><div><b>Not clocked in</b>' +
+        '<div class="status">Clock in when you start work, including cleaning and training time.</div>' +
+        (next ? '<div class="status">Next booking: ' + esc(dayName(next.date)) + ', ' + t12(next.starts) + '–' + t12(next.ends) + (next.kind === 'Skinning' ? ' (skinning)' : '') + '</div>' : '') +
+        '</div><button class="btn" id="clock">Clock in</button></div><div id="clock-err" class="err"></div></div>';
+
+    const mine = '<button class="seasonline" data-go="numbers"><span>Your season: <b>' + esc(m.deer || 0) + '</b> deer · <b>' +
+      esc(m.skinned || 0) + '</b> skinned · <b>' + esc(fmt(m.packagedLb || 0)) + '</b> lb</span><span class="ch">›</span></button>';
+
+    // Pre-op is a gate, so it says what to do. It only turns red once a deer is on the table without it.
+    const preopCls = held ? 'red' : preop.done ? 'view' : processing ? 'red' : '';
+    const preopSub = preop.done
+      ? (held ? held + ' line' + (held === 1 ? '' : 's') + ' still not released — do not use it' : 'Signed ' + esc(preop.time || '') + ' by ' + esc(preop.initials || ''))
+      : processing ? 'A deer is on the table — sign this now' : 'Sign it before the first deer. Sixteen lines, A or U';
+
+    const more =
+      big('shifts', 'Book your time', 'Processing · up to ' + s.maxAtOnce + ' at once') +
+      big('skinning', 'Book skinning time', 'Behind MHU #1' + (h.skinRoom ? ' · room for ' + h.skinRoom.room + ' more' : ''), 'alt') +
+      big('scan', 'Scan a band', 'Point at the QR code on a band') +
+      big('corrective', 'Corrective action', 'Write up a problem and what you did about it', 'alt') +
+      big('records', 'Today\'s records', 'Read back what has been signed today', 'view') +
+      big('status', 'Facility status', 'Temperatures, who\'s here, the oldest deer', 'view') +
       big('numbers', 'My numbers', 'Deer, pounds, hours and pay this week', 'view') +
       (isMgr() ? big('team', 'Team numbers', 'Every processor, this week and the season', 'view') : '') +
-      group('Office') +
-      big('martin', 'Donation report', 'Copy new rows to paste into Martin\'s sheet', 'alt') +
-      (isMgr() ? big('payments', 'Hunter payments', 'Donation checks owed and sent, with mailing addresses', 'alt') : ''), true);
+      (isMgr() || /intake/i.test((st.staff && st.staff.role) || '') ? big('martin', 'Donation report', 'Rows for Martin\'s sheet', 'alt') : '') +
+      (isMgr() ? big('payments', 'Hunter payments', 'Checks owed and sent', 'alt') : '');
+
+    frame('home', '',
+      (note ? '<div class="note ok">' + note + '</div>' : '') +
+      '<div id="alerts">' + alertsHtml() + '</div><div id="push"></div>' +
+      (lead ? leadCard(lead) : '') + clockStrip + mine +
+      group('Now') +
+      big('board', 'Cooler', inC + ' of ' + s.coolerCap + ' in the cooler' + (inC >= s.coolerCap ? ' · FULL' : '') + ' · start, finish and release here') +
+      big('intake', 'Check in a deer', 'The front door: tag, hunter, donated or private, print the band' +
+        (bandColour(new Date()) ? ' · today\'s band: ' + bandColour(new Date()) : '')) +
+      big('help', 'Need help', 'Sends a notification to everyone on the team', 'red') +
+      group('Today') +
+      big('preop', 'Pre-op sanitation' + (preop.done && !held ? ' ✓' : ''), preopSub, preopCls) +
+      big('opssop', 'Operational sanitation', 'Every line C, N or N/A. At least once a day') +
+      big('daily', 'Daily log', 'Temperatures, cleaning, waste, complaints') +
+      big('messages', 'Messages' + (h.unread ? ' (' + h.unread + ' new)' : ''), 'Team chat and direct messages') +
+      '<button class="morebtn" id="morebtn"><span id="morearrow">' + (st.moreOpen ? '▾' : '▸') + '</span> Everything else</button>' +
+      '<div id="morebox"' + (st.moreOpen ? '' : ' hidden') + '>' + more + '</div>', true);
+
     $app.querySelectorAll('[data-go]').forEach(b => b.onclick = () => GO[b.dataset.go]());
-    document.getElementById('clock').onclick = async e => {
-      const b = e.target; b.disabled = true;
-      try { const out = await call({ action: 'clock', dir: h.clockedIn ? 'out' : 'in' }); st.home.clockedIn = out.clockedIn; st.home.week = out.week; save(); showHome(); }
-      catch (x) { b.disabled = false; document.getElementById('clock-err').textContent = x.offline ? 'Clocking in or out needs signal. Tell Joe the time if you can\'t get signal.' : x.message; }
+    const mb = document.getElementById('morebtn');
+    mb.onclick = () => { st.moreOpen = !st.moreOpen; save();
+      document.getElementById('morebox').hidden = !st.moreOpen;
+      document.getElementById('morearrow').textContent = st.moreOpen ? '▾' : '▸'; };
+
+    if (lead) {
+      const card = $app.querySelector('.lead'), box = card.querySelector('.form');
+      card.querySelectorAll('[data-la]').forEach(b => b.onclick = () => act(b.dataset.la, lead.d, box, showHome));
+    }
+
+    const clockErr = msg => { const e = document.getElementById('clock-err'); if (e) e.innerHTML = msg; };
+    const sendClock = async (b, body) => {
+      if (b) b.disabled = true;
+      try {
+        const out = await call(body);
+        st.home.clockedIn = out.clockedIn; st.home.week = out.week;
+        st.home.expectedOut = out.expectedOut || ''; st.home.clockKind = out.kind || '';
+        if (out.onSite) st.home.onSite = out.onSite;
+        save(); showHome();
+      } catch (x) {
+        if (b) b.disabled = false;
+        clockErr(esc(x.offline ? 'Clocking in or out needs signal. Tell Joe the time if you can\'t get signal.' : x.message));
+      }
     };
+    // A finish time is asked for on every clock-in: it is the only thing that lets anyone know to check on you.
+    const askFinish = (title, hint, go) => {
+      const guess = (next && next.ends) || h.bookedEnd || fromHM(Math.min(21 * 60, nowMin() + 240));
+      clockErr('<div class="card" style="margin:10px 0 0;text-align:left"><label for="eo">' + esc(title) + '</label>' +
+        '<input id="eo" type="time" value="' + esc(hm2(guess)) + '">' +
+        '<p class="status">' + esc(hint) + '</p><div id="eoerr" class="err"></div>' +
+        '<button class="btn" id="eook">Save</button> <button class="btn ghost" id="eox">Cancel</button></div>');
+      document.getElementById('eox').onclick = () => showHome();
+      document.getElementById('eook').onclick = () => {
+        const t = document.getElementById('eo').value;
+        if (!/^\d{1,2}:\d{2}$/.test(t)) { document.getElementById('eoerr').textContent = 'Give the time you expect to finish.'; return; }
+        go(t, document.getElementById('eook'));
+      };
+    };
+    document.getElementById('clock').onclick = e => {
+      const b = e.target;
+      if (h.clockedIn) return sendClock(b, { action: 'clock', dir: 'out' });
+      askFinish('When do you expect to finish?', 'If you end up on your own, this is the time Joe gets a push about. You can change it any time.',
+        (t, bb) => sendClock(bb, { action: 'clock', dir: 'in', expected: t }));
+    };
+    const still = document.getElementById('still');
+    if (still) still.onclick = () => askFinish('New finish time', 'Clears the overdue alert and starts the clock again from the new time.',
+      async (t, bb) => {
+        bb.disabled = true;
+        try { const out = await call({ action: 'extend', expected: t }); st.home.expectedOut = out.expectedOut; save(); showHome('Finish time changed to ' + t12(out.expectedOut) + '.'); }
+        catch (x) { bb.disabled = false; document.getElementById('eoerr').textContent = x.offline ? 'Needs signal.' : x.message; }
+      });
     wireAlerts();
     renderPush();
   }
@@ -254,7 +378,25 @@
   const group = t => '<div class="grp">' + esc(t) + '</div>';
   (() => { const c = document.createElement('style');
     c.textContent = '.grp{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:20px 2px 4px}' +
-      '.big.view{background:var(--card);color:var(--green-dark);border:2px solid var(--green)}.big.view small{opacity:.8}';
+      '.big.view{background:var(--card);color:var(--green-dark);border:2px solid var(--green)}.big.view small{opacity:.8}' +
+      // the lead card: the one thing to do now, with its own button, so the commonest action is one tap
+      '.lead{background:#fff;border:3px solid var(--green);border-radius:16px;padding:14px 16px 16px;margin:12px 0}' +
+      '.lead.on{border-color:var(--brown)}' +
+      '.lead .lh{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}' +
+      '.lead .lb{font-size:26px;font-weight:800;line-height:1.15;margin:2px 0 2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}' +
+      '.lead .ls{font-size:15px;color:var(--muted);line-height:1.35}' +
+      '.lead .actions button{margin-top:12px;width:100%;padding:16px;font-size:18px}' +
+      '.lead .actions button+button{margin-top:8px}' +
+      '.card.strip{padding:12px 14px}' +
+      // the season line: a piece-rate worker should see their count, but not above the work
+      '.seasonline{display:flex;align-items:center;width:100%;text-align:left;background:none;border:0;' +
+      'padding:10px 2px;margin:2px 0 0;font:inherit;font-size:15px;color:var(--muted);cursor:pointer}' +
+      '.seasonline b{color:var(--green-dark);font-size:17px}' +
+      '.seasonline .ch{margin-left:auto;font-size:20px;color:var(--line)}' +
+      // everything else: one tap down, not a second screen
+      '.morebtn{display:block;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--line);' +
+      'margin:22px 0 0;padding:16px 2px;font:inherit;font-size:16px;font-weight:700;color:var(--green-dark);cursor:pointer}' +
+      '.morebtn span{display:inline-block;width:18px;color:var(--muted)}';
     document.head.appendChild(c); })();
   const big = (go, title, sub, cls) => '<button class="big' + (cls ? ' ' + cls : '') + '" data-go="' + go + '">' + esc(title) + '<small>' + esc(sub) + '</small></button>';
 
@@ -327,7 +469,7 @@
     const h = hoursHung(d), bc = colourOf(d), u = d.Status === 'Hanging' ? urgency(d) : null;
     const cls = d.Status === 'Hanging' ? (h >= s.maxHold ? ' red' : h >= s.startBy ? ' amber' : '') : '';
     const mineOrMgr = d['Processor number'] === st.staff.number || isMgr();
-    const act = isViewer() ? '' : d.Status === 'Hanging' ? '<button class="btn" data-a="start">Start processing</button>'
+    const act = isViewer() ? '' : d.Status === 'Hanging' ? (d['Skinner'] ? '' : '<button class="btn alt" data-a="skin">Skin it</button> ') + '<button class="btn" data-a="start">Start processing</button>'
       : d.Status === 'Processing' ? (mineOrMgr ? (d.Type === 'Donated' && !d['First pack #'] ? '<button class="btn alt" data-a="grind">Get package numbers</button> ' : '') + '<button class="btn" data-a="finish">Finished</button>' : '')
       : d.Status === 'Ready' ? '<button class="btn alt" data-a="release">Release</button>' : '';
     return '<div class="card' + cls + (d.Type === 'Donated' ? ' donated' : '') + '" data-band="' + esc(d.Band) + '">' +
@@ -338,6 +480,7 @@
       (u ? '<span class="pill" style="background:' + u.colour + ';color:#fff;font-weight:700">' + u.level.toUpperCase() + '</span>' : '') +
       '<div class="status">' + (bc ? swatch(bc) + ' · ' : '') +
       'in ' + esc(d.Intake) + ' · ' + esc(d.Deer || '') + (d['Antler points'] ? ' (' + esc(d['Antler points']) + ' pts)' : '') + ' · ' + esc(d['Hunter number'] || d['Hunter name'] || '') +
+      (d['Skinner name'] ? ' · skinned by ' + esc(d['Skinner name']) : '') +
       (d.Butcher ? ' · ' + esc(d.Butcher) + (d['Processor number'] ? ' (' + esc(d['Processor number']) + ')' : '') : '') +
       (d['Carcass weight (lb)'] ? ' · ' + esc(d['Carcass weight (lb)']) + ' lb carcass' : '') +
       (d['Pounds packaged'] ? ' · ' + esc(d['Pounds packaged']) + ' lb packaged' : '') + '</div></div>' +
@@ -356,10 +499,18 @@
     const fatPct = d.Type === 'Donated' ? s.fatDonated : (d['Pork fat added'] === 'Yes' ? s.fatPrivate : 0), fatOn = fatPct > 0, fat = fatPct / 100;
     const v = id => (document.getElementById(id) || {}).value || '';
     const forms = {
+      skin: () => '<p class="status">Records who skinned this deer. The $' + esc(s.skinRate || 25) +
+        ' skinning premium goes to whoever is named here, whether or not they process it.</p>' +
+        (isMgr() ? '<label>Skinned by</label><select id="sk">' + (st.home.staff || []).map(x => '<option value="' + esc(x.number) + '"' + (x.number === st.staff.number ? ' selected' : '') + '>' + esc(x.name + ' (' + x.number + ')') + '</option>').join('') + '</select>'
+          : '<p class="status">Skinned by: <b>' + esc(st.staff.name + ' (' + st.staff.number + ')') + '</b></p>') +
+        '<label class="choice"><input id="k1" type="checkbox"> Skinned and head removed at the station behind MHU #1</label>' +
+        '<label class="choice"><input id="k2" type="checkbox"> Antimicrobial spray applied</label>',
       start: () => '<div class="note warn" style="font-size:17px">Tag confirmation number: <b>' + esc(d['MassWildlife confirmation'] || 'none recorded') + '</b></div>' +
         '<label class="choice"><input id="f0" type="checkbox"> The confirmation number on the deer\'s tag matches</label>' +
-        '<label class="choice"><input id="f8" type="checkbox"> Skinned and head removed at the station behind MHU #1</label>' +
-        '<label class="choice"><input id="f9" type="checkbox"> Antimicrobial spray applied in MHU #1</label>' +
+        (d['Skinner name'] ? '<div class="note ok">Skinned by <b>' + esc(d['Skinner name']) + '</b>' + (d['Skinned at'] ? ' · ' + esc(d['Skinned at']) : '') + '. The skinning premium is theirs.</div><input id="f8" type="checkbox" checked hidden>'
+          : '<label class="choice"><input id="f8" type="checkbox"> Skinned and head removed at the station behind MHU #1 <span class="hint">You get the $' + esc(s.skinRate || 25) + ' skinning premium for it</span></label>') +
+        (d['Antimicrobial spray'] === 'Yes' ? '<input id="f9" type="checkbox" checked hidden>'
+          : '<label class="choice"><input id="f9" type="checkbox"> Antimicrobial spray applied in MHU #1</label>') +
         (isMgr() ? '<label>Processor</label><select id="fp">' + (st.home.staff || []).map(x => '<option value="' + esc(x.number) + '"' + (x.number === st.staff.number ? ' selected' : '') + '>' + esc(x.name + ' (' + x.number + ')') + '</option>').join('') + '</select>'
           : '<p class="status">Processor: ' + esc(st.staff.name + ' (' + st.staff.number + ')') + '</p>') +
         '<label>Carcass weight (lb) <span class="hint">On the hanging scale: field dressed, skin and head off</span></label><input id="f1" type="number" inputmode="decimal" min="0" step="0.1">',
@@ -400,6 +551,13 @@
     document.getElementById('fx').onclick = () => { box.innerHTML = ''; };
     document.getElementById('fok').onclick = () => {
       const err = m => { document.getElementById('ferr').textContent = m; };
+      if (kind === 'skin') {
+        if (!document.getElementById('k1').checked) return err('Skin it and remove the head at the station behind MHU #1, then tick the box.');
+        if (!document.getElementById('k2').checked) return err('Apply the antimicrobial spray, then tick the box.');
+        const who = isMgr() ? v('sk') : st.staff.number;
+        const wn = ((st.home.staff || []).find(x => x.number === who) || st.staff).name;
+        queue('skin', { band: d.Band, skinner: who, skinnerName: wn, antimicrobial: true }, 'Skin ' + d.Band);
+      }
       if (kind === 'start') {
         if (!document.getElementById('f0').checked) return err('Check the confirmation number on the tag first. If it doesn\'t match, stop and tell Joe.');
         if (!document.getElementById('f8').checked) return err('Skin it and remove the head at the station behind MHU #1, then tick the box.');
@@ -638,7 +796,7 @@
   /* ---------- booking your time (start and end, first come first served) ---------- */
   const toMin = hm => { const [h, m] = String(hm).split(':').map(Number); return h * 60 + (m || 0); };
   const fromMin = n => Math.floor(n / 60) + ':' + pad(n % 60);
-  let bookDay = null, bookPick = null;
+  let bookDay = null, bookPick = null, bookKind = 'Processing';
   function bookCss() {
     if (document.getElementById('book-css')) return;
     const st_ = document.createElement('style'); st_.id = 'book-css';
@@ -656,13 +814,18 @@
   }
   const shade = (n, max, past) => past ? '#E4DED2' : n >= max ? '#C0392B' : n === 0 ? '#EEF0E0' : n >= max - 1 ? '#E0A526' : ['#D3D8B0', '#B3BB80', '#8C9652', '#69722F'][Math.min(3, Math.floor((n - 1) * 4 / Math.max(1, max - 2)))];
 
-  async function showShifts(data, msg) {
+  const s2 = S;
+  async function showShifts(data, msg, kind) {
     bookCss();
-    frame('shifts', 'Book your time', '<div id="sched"><p class="status">Loading…</p></div>');
+    if (kind) bookKind = kind === 'Skinning' ? 'Skinning' : 'Processing';
+    const skinning = bookKind === 'Skinning';
+    frame('shifts', skinning ? 'Book skinning time' : 'Book your time', '<div id="sched"><p class="status">Loading…</p></div>');
     const box = document.getElementById('sched');
-    try { if (!data) data = await call({ action: 'shifts' }); }
+    try { if (!data) data = await call({ action: 'shifts', kind: bookKind }); }
     catch (e) { box.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Booking needs signal.' : e.message) + '</div>'; return; }
+    if (data.kind) bookKind = data.kind;
     if (st.home && data.myShifts) { st.home.myShifts = data.myShifts; save(); }   // keep Home's "Next booking" current
+    if (st.home && data.skinRoom) { st.home.skinRoom = data.skinRoom; save(); }
     const o0 = toMin(data.open.start), o1 = toMin(data.open.end), step = data.step, max = data.max, n = Math.round((o1 - o0) / step);
     const now = new Date(), nowMin = now.getHours() * 60 + now.getMinutes(), todayIso = data.days[0].date;
     if (!data.days.some(d => d.date === bookDay)) bookDay = todayIso;
@@ -682,11 +845,23 @@
     const opt = (list, sel) => list.map(t => '<option value="' + fromMin(t) + '"' + (fromMin(t) === sel ? ' selected' : '') + '>' + t12(fromMin(t)) + '</option>').join('');
     const hours = []; for (let t = Math.ceil(o0 / 60) * 60; t <= o1; t += 120) hours.push(t);
 
+    const room = data.skinRoom || { room: 0, cap: 0, hanging: 0 };
     box.innerHTML =
+      '<div class="tabs"><button data-kind="Processing"' + (skinning ? '' : ' class="on"') + '>Processing</button>' +
+      '<button data-kind="Skinning"' + (skinning ? ' class="on"' : '') + '>Skinning</button></div>' +
       (msg ? '<div class="note ' + (msg.bad ? 'bad' : 'ok') + '">' + esc(msg.text) + '</div>' : '') +
-      '<div class="card"><b>Your bookings</b>' + (mine.length ? mine.map(x => '<div class="who"><div>' + esc(dayName(x.date)) + ' · ' + t12(x.starts) + '–' + t12(x.ends) + '</div>' +
+      (skinning ? '<div class="note ' + (room.room <= 0 ? 'bad' : room.room <= 2 ? 'warn' : 'ok') + '">' +
+        (room.room <= 0 ? '<b>MHU #1 is full</b> at ' + room.hanging + ' skinned deer. Nothing more can be skinned ahead until some are processed.'
+          : 'MHU #1 is holding <b>' + room.hanging + ' of ' + room.cap + '</b> skinned deer: room for ' + room.room + ' more.') + '</div>' : '') +
+      '<div class="card"><b>Your bookings</b>' + (mine.length ? mine.map(x => '<div class="who"><div>' + esc(dayName(x.date)) + ' · ' + t12(x.starts) + '–' + t12(x.ends) +
+        (x.kind === 'Skinning' ? ' <span class="tag">SKINNING</span>' : '') + '</div>' +
         '<button class="btn ghost" data-cancel="' + esc(x.id) + '">Cancel</button></div>').join('') : '<div class="status">None booked.</div>') +
-      '<div class="status" style="margin-top:6px">Pick your own start and end time. First come, first served: no more than ' + max + ' processors booked at the same moment. Cancel any time before you start. Clock in when you arrive.</div></div>' +
+      '<div class="status" style="margin-top:6px">Pick your own start and end time. First come, first served: no more than ' + max + ' ' +
+      (skinning ? 'skinners' : 'processors') + ' booked at the same moment' +
+      (skinning ? ', and skinning places are separate from processing places' : '') +
+      '. Cancel any time before you start. Clock in when you arrive.' +
+      (skinning ? ' Skinning is paid at $' + esc(s2().skinRate || 25) + ' a deer, or $' + esc(s2().skinHourly || 25) + ' an hour for the time you book, whichever is more.' : '') +
+      '</div></div>' +
       '<div class="chips">' + data.days.map(d => {
         const peak = Math.max(0, ...d.counts);
         return '<button data-day="' + d.date + '" class="' + (d.date === bookDay ? 'on' : '') + '">' + esc(dayName(d.date).split(',')[0]) + '<small>' + esc(dayName(d.date).split(', ')[1] || '') + '</small>' +
@@ -699,29 +874,31 @@
       (day.people.length ? day.people.map(p => '<div class="who"><div>' + (p.mine ? '<b>You</b>' : esc(p.name)) + ' · ' + t12(p.starts) + '–' + t12(p.ends) + '</div>' +
         ((p.mine || isMgr()) && !(isToday && toMin(p.starts) <= nowMin) ? '<button class="btn ghost" data-cancel="' + esc(p.id) + '">Cancel</button>' : '') + '</div>').join('')
         : '<div class="status" style="margin-top:8px">Nobody booked yet.</div>') + '</div>' +
-      (startOpts.length ? '<div class="card"><b>Book a time on ' + esc(dayName(bookDay)) + '</b>' +
+      (startOpts.length && !(skinning && room.room <= 0) ? '<div class="card"><b>Book ' + (skinning ? 'skinning time' : 'a time') + ' on ' + esc(dayName(bookDay)) + '</b>' +
         '<div class="pickrow"><label>Start<select id="bk-s">' + opt(startOpts, bookPick.start) + '</select></label><label>End<select id="bk-e">' + opt(endOpts, bookPick.end) + '</select></label></div>' +
         '<div id="bk-msg"></div><button class="btn wide" id="bk-go" style="width:100%;margin-top:10px">Book</button>' +
-        (isMgr() ? '<button class="plain" id="bk-cover">Ask for cover for this time</button>' : '') + '<div id="bk-sugg" class="sugg"></div></div>'
+        (isMgr() ? '<button class="plain" id="bk-cover">Ask for ' + (skinning ? 'skinners' : 'cover') + ' for this time</button>' : '') + '<div id="bk-sugg" class="sugg"></div></div>'
+        : skinning && room.room <= 0 ? '<div class="card"><div class="status">Book processing time instead: that is what frees MHU #1 up.</div></div>'
         : '<div class="card"><div class="status">Booking for today has closed. Pick another day above.</div></div>');
+    box.querySelectorAll('[data-kind]').forEach(b => b.onclick = () => { if (b.dataset.kind !== bookKind) { bookKind = b.dataset.kind; bookPick = null; showShifts(); } });
 
     const go = async (b, body, done) => {
       if (b) b.disabled = true;
       try { const out = await call(body); if (done) done(out); }
       catch (e) { if (b) b.disabled = false; toast(e.offline ? 'Needs signal.' : e.message); }
     };
-    const book = (b, pick) => go(b, { action: 'book', date: pick.date, start: pick.start, end: pick.end }, out => {
+    const book = (b, pick) => go(b, { action: 'book', date: pick.date, start: pick.start, end: pick.end, kind: bookKind }, out => {
       if (out.conflict) {   // someone got there first: show the server's view and its alternatives
         bookDay = pick.date; bookPick = pick;
-        showShifts(out, { bad: true, text: out.conflict.message + ' Pick one of the open times below.' });
+        showShifts(out, { bad: true, text: out.conflict.message + ' Pick one of the open times below.' }, bookKind);
         setTimeout(() => sugg(out.conflict.suggestions), 0);
         return;
       }
       bookPick = null;
-      showShifts(out, { text: 'Booked: ' + dayName(out.booked.date) + ', ' + t12(out.booked.start) + '–' + t12(out.booked.end) + '.' });
+      showShifts(out, { text: (bookKind === 'Skinning' ? 'Skinning booked: ' : 'Booked: ') + dayName(out.booked.date) + ', ' + t12(out.booked.start) + '–' + t12(out.booked.end) + '.' }, bookKind);
     });
-    box.querySelectorAll('[data-day]').forEach(b => b.onclick = () => { bookDay = b.dataset.day; showShifts(data); });
-    box.querySelectorAll('[data-cancel]').forEach(b => b.onclick = () => { if (confirmCancel()) go(b, { action: 'cancel', id: b.dataset.cancel }, out => showShifts(out, { text: 'Cancelled.' })); });
+    box.querySelectorAll('[data-day]').forEach(b => b.onclick = () => { bookDay = b.dataset.day; showShifts(data, null, bookKind); });
+    box.querySelectorAll('[data-cancel]').forEach(b => b.onclick = () => { if (confirmCancel()) go(b, { action: 'cancel', id: b.dataset.cancel }, out => showShifts(out, { text: 'Cancelled.' }, out.kind)); });
     const sugg = list => {
       const el = document.getElementById('bk-sugg'); if (!el) return;
       el.innerHTML = list && list.length ? '<div class="status" style="margin-top:8px">Open times the same length:</div>' + list.map((x, i) =>
@@ -776,7 +953,7 @@
     sEl.onchange = eEl.onchange = check; check();
     gEl.onclick = () => book(gEl, bookPick);
     const cov = document.getElementById('bk-cover');
-    if (cov) cov.onclick = () => go(cov, { action: 'cover', date: bookPick.date, start: bookPick.start, end: bookPick.end }, out => { cov.textContent = 'Sent to ' + out.sent + ' phone' + (out.sent === 1 ? '' : 's'); });
+    if (cov) cov.onclick = () => go(cov, { action: 'cover', date: bookPick.date, start: bookPick.start, end: bookPick.end, kind: bookKind }, out => { cov.textContent = 'Sent to ' + out.sent + ' phone' + (out.sent === 1 ? '' : 's'); });
   }
   const confirmCancel = () => true;
   /** Donated deer: reserve the next MassWildlife package number before grinding. */
@@ -858,9 +1035,19 @@
   /* ---------- numbers ---------- */
   function weekHtml(w) {
     const s = S();
+    const row = (label, val, note) => '<div class="trow"><div><b>' + esc(label) + '</b>' + (note ? '<div class="status">' + esc(note) + '</div>' : '') + '</div><div class="tval">' + esc(val) + '</div></div>';
+    const total = w.total === undefined ? w.pay : w.total;
     return '<div class="card"><b>This week</b> <span class="status">(since ' + esc(dayName(w.since)) + ')</span>' +
-      '<div class="tiles">' + tile(w.deer, 'Deer processed') + tile(fmt(w.hours), 'Hours clocked') + tile('$' + fmt(w.pay), 'Piece pay') + tile(w.hours ? '$' + fmt(w.perHour) : '—', 'Per hour') + '</div>' +
-      '<div class="status">$' + esc(s.pieceRate) + ' a deer. All clocked time counts, including cleaning, waiting and training.' +
+      '<div class="tiles">' + tile(w.deer, 'Deer processed') + tile(w.skinned === undefined ? '—' : w.skinned, 'Deer skinned') +
+      tile(fmt(w.hours), 'Hours clocked') + tile(w.hours ? '$' + fmt(w.perHour) : '—', 'Per hour') + '</div>' +
+      row('Processing', '$' + fmt(w.pay), w.deer + ' deer at $' + s.pieceRate) +
+      (w.skinPay ? row('Skinning', '$' + fmt(w.skinPay), (w.skinned || 0) + ' deer at $' + (s.skinRate || 25) +
+        (w.skinHours ? ', or ' + fmt(w.skinHours) + ' h at $' + (s.skinHourly || 25) + ' — whichever is more' : '')) : '') +
+      (w.intakePay ? row('At the door', '$' + fmt(w.intakePay), (w.intakes || 0) + ' deer at $' + (s.intakeFee || 10) +
+        (w.turnedAway ? ', including ' + w.turnedAway + ' turned away' : '')) : '') +
+      (w.otherPay ? row('Other time', '$' + fmt(w.otherPay), fmt(w.otherHours) + ' h at $' + (s.otherHourly || 25) + ' (cleaning, training, no booking)') : '') +
+      row('This week', '$' + fmt(total), '') +
+      '<div class="status" style="margin-top:8px">All clocked time counts, including cleaning, waiting and training.' +
       (w.topUp ? ' Home Ground tops you up to minimum wage: $' + fmt(w.topUp) + ' so far this week.' : '') +
       (w.overtime ? ' Overtime: ' + fmt(w.overtime) + ' hours over 40.' : '') + '</div></div>';
   }
@@ -872,7 +1059,10 @@
     const m = out.mine, s = S();
     box.innerHTML = weekHtml(out.week) +
       '<div class="card"><b>Season so far</b><div class="tiles">' +
-      tile(m.deer, 'Deer processed') + tile(m.donated, 'Donated deer') + tile(fmt(m.packagedLb), 'lb packaged') + tile(fmt(m.groundVenisonLb), 'lb ground venison') +
+      tile(m.deer, 'Deer processed') + tile(m.skinned === undefined ? '—' : m.skinned, 'Deer skinned') +
+      tile(m.checkedIn === undefined ? '—' : m.checkedIn, 'Checked in') + tile(m.turnedAway || 0, 'Turned away') +
+      tile(m.donated, 'Donated deer') + tile(fmt(m.packagedLb), 'lb packaged') +
+      tile(fmt(m.groundVenisonLb), 'lb ground venison') +
       tile(m.groundPackages, s.pkgSize + ' lb packages') + tile(fmt(m.porkFatLb), 'lb pork fat') + tile(fmt(m.intactLb), 'lb intact cuts') + tile(m.avgYield ? m.avgYield + '%' : '—', 'Avg venison yield') +
       '</div><div class="status">Ground venison is calculated: packages × ' + esc(s.pkgSize) + ' lb, less the pork fat (' + esc(s.fatDonated) + '%).' +
       (m.avgMinutes ? ' Average ' + m.avgMinutes + ' minutes a deer.' : '') + '</div></div>';
@@ -884,18 +1074,19 @@
       const out = await call({ action: 'team' }), t = out.totals;
       box.innerHTML = '<div class="card"><b>Facility, season so far</b><div class="tiles">' + tile(t.deer, 'Deer processed') + tile(t.donated, 'Donated deer') +
         tile(fmt(t.packagedLb), 'lb packaged') + tile(fmt(t.groundVenisonLb), 'lb ground venison') + '</div><div class="status">' + fmt(t.porkFatLb) + ' lb pork fat used · ' + fmt(t.carcassLb) + ' lb carcass weight in</div></div>' +
-        '<div class="card scroll"><table><thead><tr><th>Processor</th><th>Deer</th><th>Donated</th><th>lb packaged</th><th>lb ground venison</th><th>Yield</th><th>Week: deer</th><th>Week: hours</th><th>Week: $/hr</th><th>Top-up</th><th>OT</th></tr></thead><tbody>' +
-        out.people.map(p => '<tr><td><b>' + esc(p.name) + '</b><br><span class="status">' + esc(p.number) + '</span></td><td>' + p.season.deer + '</td><td>' + p.season.donated + '</td><td>' + fmt(p.season.packagedLb) +
-          '</td><td>' + fmt(p.season.groundVenisonLb) + '</td><td>' + (p.season.avgYield ? p.season.avgYield + '%' : '—') + '</td><td>' + p.week.deer + '</td><td>' + fmt(p.week.hours) +
+        '<div class="card scroll"><table><thead><tr><th>Processor</th><th>Deer</th><th>Skinned</th><th>At the door</th><th>Turned away</th><th>Donated</th><th>lb packaged</th><th>lb ground venison</th><th>Yield</th><th>Week: deer</th><th>Week: skinned</th><th>Week: door</th><th>Week: hours</th><th>Week: pay</th><th>Week: $/hr</th><th>Top-up</th><th>OT</th></tr></thead><tbody>' +
+        out.people.map(p => '<tr><td><b>' + esc(p.name) + '</b><br><span class="status">' + esc(p.number) + '</span></td><td>' + p.season.deer + '</td><td>' + (p.season.skinned || 0) + '</td><td>' + (p.season.checkedIn || 0) + '</td><td>' + (p.season.turnedAway || 0) + '</td><td>' + p.season.donated + '</td><td>' + fmt(p.season.packagedLb) +
+          '</td><td>' + fmt(p.season.groundVenisonLb) + '</td><td>' + (p.season.avgYield ? p.season.avgYield + '%' : '—') + '</td><td>' + p.week.deer + '</td><td>' + (p.week.skinned || 0) + '</td><td>' + (p.week.intakes || 0) + '</td><td>' + fmt(p.week.hours) +
+          '</td><td>$' + fmt(p.week.total === undefined ? p.week.pay : p.week.total) +
           '</td><td>' + (p.week.hours ? '$' + fmt(p.week.perHour) : '—') + '</td><td' + (p.week.topUp ? ' class="warn"' : '') + '>' + (p.week.topUp ? '$' + fmt(p.week.topUp) : '') +
           '</td><td' + (p.week.overtime ? ' class="warn"' : '') + '>' + (p.week.overtime ? fmt(p.week.overtime) : '') + '</td></tr>').join('') +
-        '</tbody></table></div><p class="status">Top-up: what\'s owed to bring piece pay up to minimum wage for hours clocked this week. OT: hours over 40. Also on the Processor Totals tab.</p>';
+        '</tbody></table></div><p class="status">Week: pay is processing, skinning, the door and other clocked time. Top-up: what\'s owed to bring it up to minimum wage for hours clocked this week. OT: hours over 40. The full split is on the Processor Totals tab.</p>';
     } catch (e) { box.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal.' : e.message) + '</div>'; }
   }
 
   /* ---------- daily log ---------- */
   const LOGS = [['Cooler temp (°F)', 'Reading in °F. Target 33–37, never above 41.'], ['Freezer temp (°F)', 'Reading in °F. 0 or colder, never above 10.'], ['Facility temp (°F)', 'MHU (processing trailer), reading in °F. Never above 42.'],
-    ['Thermometer check', 'Ice-point reading in °F (should be 32). Mondays.'], ['Pre-op check', 'Done / problems found'], ['End-of-day clean', 'Done / problems found'],
+    ['Thermometer check', 'Ice-point reading in °F (should be 32). Mondays.'], ['End-of-day clean', 'Done / problems found'],
     ['Weekly clean', 'Done / problems found'], ['Sanitizer test', 'Test-strip reading (ppm)'], ['Waste pickup', 'Hauler and bins taken'],
     ['Tight tank pumped', 'Company'], ['Complaint', 'Lot number, if known. Details in the note'],
     ['Cash deposit', 'Dollars in the envelope dropped in the safe. Note: number of payments and both sets of initials'],
@@ -906,7 +1097,8 @@
       '<div id="unitbox" hidden><label for="lu">Which one?</label><select id="lu"></select></div>' +
       '<label for="lv">Reading or result <span class="hint" id="lh"></span></label><input id="lv" type="text">' +
       '<label for="ln">Note</label><textarea id="ln"></textarea><div id="err" class="err"></div><button class="submit" id="save">Save to the log</button></div>' +
-      '<p class="status">Log the freezer, hanging cooler, MHU #1 and MHU #2 at opening, midday and close. Freezer over 10°F, cooler over 41°F, or an MHU over 42°F alerts Joe straight away.</p>');
+      '<p class="status">Log the freezer, hanging cooler, MHU #1 and MHU #2 at opening, midday and close. Freezer over 10°F, cooler over 41°F, or an MHU over 42°F alerts Joe straight away.</p>' +
+      '<p class="status">The pre-op check is its own signed record now: Home › <b>Pre-op sanitation</b>.</p>');
     const sel = document.getElementById('lt'), hint = () => {
       document.getElementById('lh').textContent = (LOGS.find(l => l[0] === sel.value) || [])[1] || '';
       const units = ({ 'Cooler temp (°F)': S().coolers, 'Freezer temp (°F)': S().freezers, 'Facility temp (°F)': S().trailers }[sel.value]) || [];
@@ -953,6 +1145,19 @@
     const p = x.people;
     return '<p class="status">As of ' + esc(when(x.at)) + (stale ? ' (last loaded)' : '') + ' · <button class="plain" id="fs-refresh" style="padding:0">Refresh</button></p>' +
       (x.openHelp ? '<div class="note bad"><b>' + x.openHelp + ' open help request' + (x.openHelp > 1 ? 's' : '') + '.</b> See Home.</div>' : '') +
+      (x.ssop ? '<div class="card' + (!x.ssop.preop.done || (x.ssop.preop.held || []).length ? ' red' : '') + '"><b>Sanitation records, today</b>' +
+        (x.ssop.preop.done
+          ? '<div class="status">Pre-op signed ' + esc(x.ssop.preop.time || '') + ' by ' + esc(x.ssop.preop.initials || '') +
+            ((x.ssop.preop.unacceptable || []).length ? ' · ' + x.ssop.preop.unacceptable.length + ' line(s) unacceptable' : ' · all lines acceptable') + '</div>' +
+            ((x.ssop.preop.held || []).length ? '<div class="note bad"><b>Not released: ' + esc(x.ssop.preop.held.join(', ')) + '.</b> Nothing should be using it.</div>' : '')
+          : '<div class="note bad"><b>No pre-op sanitation record today.</b> It is the gate: fill it in before any deer is touched.</div>') +
+        '<div class="status">Operational sanitation walks logged: ' + x.ssop.opForms + ' · corrective action records: ' + x.ssop.corrective + '</div>' +
+        '<button class="plain" data-go2="records">Read today\'s records</button>' +
+        (isViewer() ? '' : ' <button class="plain" data-go2="preop">Fill in the pre-op record</button>') + '</div>' : '') +
+      (x.skinning ? '<div class="card' + (x.skinning.room <= 0 ? ' amber' : '') + '"><b>Skinning</b>' +
+        '<div class="tiles">' + tile(x.skinning.skinnedToday, 'Skinned today') + tile(x.skinning.hanging + ' of ' + x.skinning.cap, 'Skinned, hanging') +
+        tile(x.skinning.bookedNow, 'Skinners booked now') + tile(x.skinning.room, 'Room in MHU #1') + '</div>' +
+        (x.skinning.room <= 0 ? '<div class="note warn">MHU #1 is at its skinned-deer capacity. No more skin-ahead bookings until some are processed.</div>' : '') + '</div>' : '') +
       '<div class="card' + (fill ? ' ' + fill : '') + '"><b>Cooler: ' + c.inCooler + ' of ' + c.capacity + ' (' + c.pctFull + '% full)</b>' +
       '<div class="tiles">' + tile(c.donatedHanging, 'Donated hanging') + tile(c.privateHanging, 'Private hanging') + tile(c.processing, 'Being processed') + tile(x.ready.deer, 'Packaged, waiting') + '</div>' +
       (c.pastMaxHold ? '<div class="note bad">' + c.pastMaxHold + ' over the ' + c.maxHold + '-hour maximum hold. Tell Joe now.</div>' : '') +
@@ -966,13 +1171,15 @@
       (isViewer() ? '' : '<button class="plain" data-go2="daily">Log a reading</button>') + '</div>' +
       '<div class="card"><b>People</b><div class="tiles">' + tile(p.clockedIn.length, 'Clocked in now') + tile(p.onShift ? p.onShift.booked.length + ' of ' + p.max : '—', p.onShift ? 'Booked right now' : 'Nobody booked now') + '</div>' +
       (p.clockedIn.length ? '<div class="status">Clocked in: ' + esc(p.clockedIn.map(w => w.name + ' (since ' + when(w.since).split(' ').slice(-2).join(' ') + ')').join(', ')) + '</div>' : '') +
+      (p.alone ? '<div class="note warn"><b>' + esc(p.alone.name) + ' is on their own.</b>' +
+        (p.alone.expected ? ' Expects to finish by ' + t12(p.alone.expected) + '.' : ' No finish time given.') + '</div>' : '') +
       (p.onShift && p.onShift.booked.length ? '<div class="status">Booked now: ' + esc(p.onShift.booked.join(', ')) + '</div>' : '') +
       (p.nextShift ? '<div class="status">Next in: ' + esc(p.nextShift.slot) + (p.nextShift.people > 1 ? ' and ' + (p.nextShift.people - 1) + ' more' : '') + ' at ' + t12(p.nextShift.starts) + '</div>' : '') + '</div>' +
       '<div class="card"><b>Today</b><div class="tiles">' + tile(x.today.in, 'Deer in') + tile(x.today.processed, 'Processed') + tile(fmt(x.today.lb), 'lb packaged') + tile(x.today.released, 'Released') + '</div>' +
       (x.today.turnedAway ? '<div class="status">' + x.today.turnedAway + ' turned away today.</div>' : '') + '</div>' +
       (x.cash ? cashHtml(x.cash) : '') +
       '<div class="card"><b>Cleaning and upkeep</b> <span class="status">last logged</span>' +
-      up('End-of-day clean', x.upkeep.endOfDayClean) + up('Pre-op check', x.upkeep.preOp) + up('Sanitizer test', x.upkeep.sanitizer) +
+      up('End-of-day clean', x.upkeep.endOfDayClean) + up('Sanitizer test', x.upkeep.sanitizer) +
       up('Thermometer check', x.upkeep.thermometer) + up('Waste pickup', x.upkeep.waste) + up('Tight tank pumped', x.upkeep.tightTank) + '</div>';
   }
 
@@ -1149,7 +1356,262 @@
   }
 
   const GO = { payments: showPayments, status: showStatus, board: showBoard, intake: showIntake, shifts: () => showShifts(), messages: showMessages, help: showHelp,
-    numbers: showNumbers, daily: showDaily, team: showTeam, martin: () => showMartin(), donate: showDonate, scan: () => showScan() };
+    numbers: showNumbers, daily: showDaily, team: showTeam, martin: () => showMartin(), donate: showDonate, scan: () => showScan(),
+    preop: showPreop, opssop: showOpSsop, corrective: () => showCorrective(), records: showRecords,
+    skinning: () => showShifts(null, null, 'Skinning') };
+
+
+  /* ---------- the three sanitation records ----------
+   * Friesla's SSOP (Chris DePalma, 28 Oct; Martin signed off on the language 29 Oct), mirrored from Forms.xlsx
+   * line for line and box for box:
+   *   Pre-Op SSOP   "Pre-Operational Sanitation Record"              — A / U, then Recleaned, Resanitized,
+   *                                                                     Reinspected, Released for anything U.
+   *                 Friesla's master is headed "MVTF Slaughter Pre-Op Sanitation Record". Home Ground
+   *                 takes in deer that were killed and field dressed in the woods, so nothing is
+   *                 slaughtered here and the word is dropped. Every line of the check still applies:
+   *                 pre-operational sanitation is a food-establishment requirement, not a slaughter one.
+   *   Op SSOP       "MVTF Processing Operational Sanitation Record"  — C / N / N-A
+   *   Corrective    "MVTF Sanitation Corrective Action Form"         — Parts I, II and III
+   * The lines come from Settings, so a line can be added or reworded without a new app version.
+   */
+  const PREOP_FALLBACK = ['Trolleys', 'Splitting saw', 'Sinks', 'S-hooks', 'Knives', 'Hand saw', 'Utensils',
+    'Switches and controls', 'Knife sanitizer', 'Aprons', 'Boots', 'Employee clothing', 'Walls', 'Floor and ceiling',
+    'Cooler', 'Sanitizer temp'];
+  const OP_FALLBACK = ['Employee clothing', 'Hand soap and towels', 'Hand washing procedures', 'Equipment',
+    'Condensation', 'Floors', 'Walls', 'Ceilings', 'Knife sanitizer temp', 'Saw sanitizer temp',
+    'Knives', 'Aprons', 'Boots', 'Garbage bins', 'Water pooling', 'Bleeding area', 'Insect control'];
+  const preopItems = () => { const x = S().preopItems; return x && x.length ? x : PREOP_FALLBACK; };
+  const opItems = () => { const x = S().opItems; return x && x.length ? x : OP_FALLBACK; };
+  const nowHM = () => { const d = new Date(); return d.getHours() + ':' + pad(d.getMinutes()); };
+  const myInitials = () => String((st.staff && st.staff.name) || '').trim().split(/\s+/)
+    .map(w => (w[0] || '').toUpperCase()).join('').slice(0, 4);
+  const FIXES = [['recleaned', 'Recleaned'], ['resanitized', 'Resanitized'], ['reinspected', 'Reinspected'], ['released', 'Released']];
+  /* Home Ground operates the establishment and keeps these records, so they carry the Home Ground
+     mark and the form's own title. The symbol alone, not the tagline lockup: a sanitation record an
+     inspector reads is not the place for "Change starts with YES". */
+  const masthead = title => '<div class="mast"><img src="icon-192.png" alt=""><div>' +
+    '<div class="co">Home Ground Inc.</div><div class="ft">' + esc(title) + '</div>' +
+    '<div class="pl">MV Agricultural Society, West Tisbury</div></div></div>';
+
+  function ssopCss() {
+    if (document.getElementById('ssop-css')) return;
+    const c = document.createElement('style'); c.id = 'ssop-css';
+    c.textContent =
+      '.mast{display:flex;align-items:center;gap:12px;padding:0 0 12px;border-bottom:2px solid var(--green);margin-bottom:4px}' +
+      '.mast img{width:46px;height:46px;flex:none}' +
+      '.mast .co{font-size:15px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--green-dark);line-height:1.2}' +
+      '.mast .ft{font-size:16px;font-weight:700;line-height:1.25;margin-top:1px}' +
+      '.mast .pl{font-size:13px;color:var(--muted);margin-top:1px}' +
+      '.line{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--line)}' +
+      '.line .nm{flex:1;font-weight:600;font-size:16px;line-height:1.25}' +
+      '.seg{display:flex;gap:5px;flex:none}' +
+      '.seg button{border:1px solid var(--line);background:#fff;border-radius:9px;min-width:44px;height:42px;' +
+      'font-size:15px;font-weight:800;color:var(--muted);cursor:pointer;padding:0 6px}' +
+      '.seg button.on.good{background:var(--green);color:#fff;border-color:var(--green)}' +
+      '.seg button.on.bad{background:var(--bad);color:#fff;border-color:var(--bad)}' +
+      '.seg button.on.na{background:#8A8372;color:#fff;border-color:#8A8372}' +
+      '.fix{background:var(--bad-bg);border-radius:10px;padding:6px 12px 12px;margin:0 0 8px}' +
+      '.fix .fl{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:6px}' +
+      '.fix .fl label{display:flex;align-items:center;gap:6px;margin:4px 0;font-weight:600;font-size:15px}' +
+      '.fix .fl input{width:22px;height:22px;margin:0}' +
+      '.fix input[type=text]{margin-top:6px}' +
+      '.sign{display:grid;grid-template-columns:1fr 1fr;gap:10px}' +
+      '.tally{font-size:15px;color:var(--muted);margin:10px 0 2px}' +
+      '.part{border:1px solid var(--line);border-radius:12px;padding:0 14px 12px;margin:12px 0;background:#fff}' +
+      '.part>h3{font-size:17px;margin:14px 0 2px}.part>p.why{font-size:14px;color:var(--muted);margin:2px 0 0}' +
+      '.yn{display:flex;gap:8px;margin:8px 0 0}' +
+      '.yn button{border:1px solid var(--line);background:#fff;border-radius:9px;min-width:64px;height:42px;font-size:16px;font-weight:700;color:var(--muted);cursor:pointer}' +
+      '.yn button.on{background:var(--green);color:#fff;border-color:var(--green)}' +
+      '.rec{border-top:1px solid var(--line);padding:10px 0}.rec b{font-size:16px}' +
+      '.rec .ln{font-size:15px;color:var(--muted)}.rec .ln.n{color:var(--bad);font-weight:700}';
+    document.head.appendChild(c);
+  }
+
+  /* One builder for both per-line records: the only differences are the buttons and the follow-up boxes. */
+  function lineRecord(cfg) {
+    ssopCss();
+    const items = cfg.items(), state = {};
+    items.forEach(it => { state[it] = { status: '', note: '' }; FIXES.forEach(f => { state[it][f[0]] = false; }); });
+    const row = (it, i) => '<div class="line" data-it="' + esc(it) + '"><div class="nm">' + esc(it) + '</div>' +
+      '<div class="seg">' + cfg.choices.map(ch => '<button type="button" data-set="' + ch[0] + '" class="' + ch[2] + '">' + esc(ch[1]) + '</button>').join('') + '</div></div>' +
+      '<div class="fix" data-fix="' + esc(it) + '" hidden>' + cfg.fixHtml(it) + '</div>';
+    frame(cfg.name, '',
+      '<div class="card">' + masthead(cfg.formTitle) + '<div class="sign"><div><label for="sd">Date</label><input id="sd" type="text" value="' + esc(stamp().split(' ')[0]) + '" readonly></div>' +
+      '<div><label for="stm">Time</label><input id="stm" type="time" value="' + esc(nowHM().replace(/^(\d):/, '0$1:')) + '"></div></div>' +
+      '<label for="sin">Your initials</label><input id="sin" type="text" maxlength="4" autocapitalize="characters" value="' + esc(myInitials()) + '">' +
+      '<p class="status">' + cfg.intro + '</p></div>' +
+      '<div class="card"><button class="btn ghost" id="allgood" style="width:100%">' + esc(cfg.allLabel) + '</button>' +
+      '<p class="status" style="margin-top:8px">Walk the room first. Your initials go on this record: ' + esc(cfg.allWhy) + '</p>' +
+      '<div style="margin-top:10px">' + items.map(row).join('') + '</div>' +
+      '<div class="tally" id="tally"></div><div class="err" id="serr"></div>' +
+      '<button class="submit" id="ssave">' + esc(cfg.saveLabel) + '</button></div>');
+    const box = $app;
+    const tally = () => {
+      const done = items.filter(it => state[it].status).length;
+      const bad = items.filter(it => state[it].status === cfg.badValue);
+      const held = bad.filter(it => cfg.heldTest(state[it]));
+      document.getElementById('tally').innerHTML = done + ' of ' + items.length + ' marked' +
+        (bad.length ? ' · <b style="color:var(--bad)">' + bad.length + ' ' + esc(cfg.badWord) + '</b>' : '') +
+        (held.length ? ' · <b style="color:var(--bad)">' + held.length + ' ' + esc(cfg.heldWord) + '</b>' : '');
+    };
+    const paint = it => {
+      const line = box.querySelector('[data-it="' + CSS.escape(it) + '"]');
+      line.querySelectorAll('[data-set]').forEach(b => b.classList.toggle('on', b.dataset.set === state[it].status));
+      const fx = box.querySelector('[data-fix="' + CSS.escape(it) + '"]');
+      if (fx) fx.hidden = state[it].status !== cfg.badValue;
+      tally();
+    };
+    items.forEach(it => {
+      box.querySelector('[data-it="' + CSS.escape(it) + '"]').querySelectorAll('[data-set]').forEach(b => {
+        b.onclick = () => { state[it].status = state[it].status === b.dataset.set ? '' : b.dataset.set; paint(it); };
+      });
+      const fx = box.querySelector('[data-fix="' + CSS.escape(it) + '"]');
+      if (!fx) return;
+      fx.querySelectorAll('[data-f]').forEach(cb => { cb.onchange = () => { state[it][cb.dataset.f] = cb.checked; tally(); }; });
+      const nt = fx.querySelector('[data-note]');
+      if (nt) nt.oninput = () => { state[it].note = nt.value; };
+    });
+    document.getElementById('allgood').onclick = () => {
+      items.forEach(it => { if (!state[it].status) { state[it].status = cfg.goodValue; paint(it); } });
+    };
+    items.forEach(paint);
+    document.getElementById('ssave').onclick = () => {
+      const err = m => { document.getElementById('serr').textContent = m; };
+      const initials = document.getElementById('sin').value.trim().toUpperCase();
+      if (!initials) return err('Put your initials on the record.');
+      const blank = items.filter(it => !state[it].status);
+      if (blank.length) return err('Still to mark: ' + blank.slice(0, 4).join(', ') + (blank.length > 4 ? ' and ' + (blank.length - 4) + ' more' : '') + '.');
+      const bad = items.filter(it => state[it].status === cfg.badValue);
+      const held = bad.filter(it => cfg.heldTest(state[it]));
+      queue(cfg.action, { initials, time: document.getElementById('stm').value, items: state }, cfg.title);
+      cfg.done(bad, held);
+    };
+  }
+
+  function showPreop() {
+    lineRecord({
+      name: 'preop', title: 'Pre-op sanitation', formTitle: 'Pre-Operational Sanitation Record', action: 'preop',
+      items: preopItems,
+      choices: [['A', 'A', 'good'], ['U', 'U', 'bad']],
+      goodValue: 'A', badValue: 'U', badWord: 'unacceptable', heldWord: 'not released',
+      heldTest: x => !x.released,
+      intro: 'Before any deer is touched. A = acceptable, U = unacceptable. Anything marked U has to be recleaned, resanitized, reinspected and released before it is used.',
+      allLabel: 'Mark every line A', allWhy: 'change any line you found a problem with.',
+      saveLabel: 'Sign and save the record',
+      fixHtml: () => '<b>Actions for rejected equipment</b><div class="fl">' +
+        FIXES.map(f => '<label><input type="checkbox" data-f="' + f[0] + '"> ' + f[1] + '</label>').join('') + '</div>' +
+        '<input type="text" data-note placeholder="What was wrong?" maxlength="200">',
+      done: (bad, held) => showHome(!bad.length ? 'Pre-op record signed. Nothing unacceptable.'
+        : held.length ? 'Record saved. <b>' + held.length + ' line' + (held.length === 1 ? '' : 's') + ' not released yet: ' + esc(held.join(', ')) +
+          '.</b> Do not use it until it is recleaned, resanitized, reinspected and released, and fill in a corrective action record.'
+        : 'Record saved. ' + bad.length + ' line' + (bad.length === 1 ? '' : 's') + ' recleaned and released. Fill in a corrective action record for it.'),
+    });
+  }
+
+  function showOpSsop() {
+    lineRecord({
+      name: 'opssop', title: 'Operational sanitation', formTitle: 'Processing Operational Sanitation Record', action: 'opssop',
+      items: opItems,
+      choices: [['C', 'C', 'good'], ['N', 'N', 'bad'], ['N/A', 'N/A', 'na']],
+      goodValue: 'C', badValue: 'N', badWord: 'noncompliant', heldWord: 'to write up',
+      heldTest: () => true,
+      intro: 'At least once every day the facility runs, and as often after that as you walk it. C = compliant, N = noncompliant, N/A = does not apply. Each walk is its own record.',
+      allLabel: 'Mark every line C', allWhy: 'change any line you found a problem with.',
+      saveLabel: 'Sign and save the record',
+      fixHtml: () => '<b>Noncompliant</b><p class="status" style="margin:2px 0 0">Say what you found, then fill in a corrective action record.</p>' +
+        '<input type="text" data-note placeholder="What did you find?" maxlength="200">',
+      done: bad => showHome(!bad.length ? 'Operational sanitation record signed. All compliant.'
+        : 'Record saved. <b>' + bad.length + ' noncompliant: ' + esc(bad.join(', ')) + '.</b> Fill in a corrective action record now.'),
+    });
+  }
+
+  /* Sanitation Corrective Action Form: Parts I, II and III, as on the paper. */
+  function showCorrective(linked) {
+    ssopCss();
+    const ta = (id, ph) => '<textarea id="' + id + '" maxlength="1000" placeholder="' + esc(ph || '') + '"></textarea>';
+    const yn = id => '<div class="yn" data-yn="' + id + '"><button type="button" data-v="Yes">Yes</button><button type="button" data-v="No">No</button></div>';
+    frame('corrective', '',
+      '<div class="card">' + masthead('Sanitation Corrective Action Form') + '<div class="sign"><div><label for="cd">Date</label><input id="cd" type="text" value="' + esc(stamp().split(' ')[0]) + '" readonly></div>' +
+      '<div><label for="ct">Time</label><input id="ct" type="time" value="' + esc(nowHM().replace(/^(\d):/, '0$1:')) + '"></div></div>' +
+      '<label for="ci">Your initials</label><input id="ci" type="text" maxlength="4" autocapitalize="characters" value="' + esc(myInitials()) + '">' +
+      '<label>Which part of the form is this?</label>' +
+      '<label class="choice"><input type="checkbox" id="pI"> <span><b>Part I</b> — the building and the site<div class="hint">Walls, floors, ceilings and other surfaces food does not touch</div></span></label>' +
+      '<label class="choice"><input type="checkbox" id="pII"> <span><b>Part II</b> — pre-op sanitation, no product involved<div class="hint">Found before any deer was on the table</div></span></label>' +
+      '<label class="choice"><input type="checkbox" id="pIII"> <span><b>Part III</b> — operational sanitation, or pre-op with product involved<div class="hint">Meat may have been affected</div></span></label>' +
+      (linked ? '<p class="status">Linked to ' + esc(linked) + '.</p>' : '') + '</div>' +
+      '<div class="part" id="bI" hidden><h3>Part I — building and site</h3>' +
+      '<label>Immediate corrective measures</label><p class="why">What did you do to correct it?</p>' + ta('i1') +
+      '<label>Further planned actions</label><p class="why">How do you prevent it happening again?</p>' + ta('i2') + '</div>' +
+      '<div class="part" id="bII" hidden><h3>Part II — pre-op, no product involved</h3>' +
+      '<label>Immediate corrective measures</label><p class="why">What did you do to correct it?</p>' + ta('ii1') +
+      '<label>Further planned actions</label><p class="why">How do you prevent it happening again?</p>' + ta('ii2') + '</div>' +
+      '<div class="part" id="bIII" hidden><h3>Part III — product may be involved</h3>' +
+      '<label>1. What is the final disposition of the product?</label>' + ta('iii1', 'Held, re-worked, condemned, released…') +
+      '<label>2. Were sanitary conditions restored?</label>' + yn('iii2') +
+      '<label>How?</label>' + ta('iii3') +
+      '<label>3. Were measures taken to prevent recurrence?</label>' + yn('iii4') +
+      '<label>What were the measures?</label>' + ta('iii5') +
+      '<label>4. Was the SSOP re-evaluated and modified?</label>' + yn('iii6') +
+      '<label>Explain</label>' + ta('iii7') + '</div>' +
+      '<div class="err" id="cerr"></div><button class="submit" id="csave">Sign and save the record</button>' +
+      '<p class="status">Joe and the other managers get this on their phones as soon as it is saved.</p>');
+    const ynv = {};
+    $app.querySelectorAll('[data-yn]').forEach(g => g.querySelectorAll('[data-v]').forEach(b => {
+      b.onclick = () => { const k = g.dataset.yn; ynv[k] = ynv[k] === b.dataset.v ? '' : b.dataset.v;
+        g.querySelectorAll('[data-v]').forEach(x => x.classList.toggle('on', x.dataset.v === ynv[k])); };
+    }));
+    const show = () => { ['I', 'II', 'III'].forEach(k => { document.getElementById('b' + k).hidden = !document.getElementById('p' + k).checked; }); };
+    ['I', 'II', 'III'].forEach(k => { document.getElementById('p' + k).onchange = show; });
+    show();
+    document.getElementById('csave').onclick = () => {
+      const err = m => { document.getElementById('cerr').textContent = m; };
+      const v = id => (document.getElementById(id).value || '').trim();
+      const initials = v('ci').toUpperCase();
+      if (!initials) return err('Put your initials on the record.');
+      const parts = ['I', 'II', 'III'].filter(k => document.getElementById('p' + k).checked);
+      if (!parts.length) return err('Choose which part of the form this is.');
+      if (parts.indexOf('I') >= 0 && !v('i1')) return err('Part I: say what you did to correct it.');
+      if (parts.indexOf('II') >= 0 && !v('ii1')) return err('Part II: say what you did to correct it.');
+      if (parts.indexOf('III') >= 0) {
+        if (!v('iii1')) return err('Part III: give the final disposition of the product.');
+        if (!ynv.iii2) return err('Part III: were sanitary conditions restored?');
+        if (ynv.iii2 === 'Yes' && !v('iii3')) return err('Part III: say how sanitary conditions were restored.');
+        if (!ynv.iii4) return err('Part III: were measures taken to prevent recurrence?');
+        if (ynv.iii4 === 'Yes' && !v('iii5')) return err('Part III: say what the measures were.');
+        if (!ynv.iii6) return err('Part III: was the SSOP re-evaluated and modified?');
+      }
+      queue('corrective', { initials, time: v('ct'), parts, linked: linked || '',
+        i1: v('i1'), i2: v('i2'), ii1: v('ii1'), ii2: v('ii2'),
+        iii1: v('iii1'), iii2: ynv.iii2 || '', iii3: v('iii3'), iii4: ynv.iii4 || '', iii5: v('iii5'),
+        iii6: ynv.iii6 || '', iii7: v('iii7') }, 'Corrective action');
+      showHome('Corrective action record saved. The managers have it.');
+    };
+  }
+
+  /* Read the day's records back: what an inspector asks to see. */
+  async function showRecords() {
+    ssopCss();
+    frame('records', 'Sanitation records', '<div id="rc"><p class="status">Loading…</p></div>');
+    let out;
+    try { out = await call({ action: 'ssop' }); }
+    catch (e) { document.getElementById('rc').innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal.' : e.message) + '</div>'; return; }
+    const lines = (f, showFix) => f.lines.map(l => '<div class="ln' + (/^(U|N)$/.test(l.status) ? ' n' : '') + '">' +
+      esc(l.status) + ' · ' + esc(l.item) + (l.note ? ' — ' + esc(l.note) : '') +
+      (showFix && /^U$/.test(l.status) ? ' [' + FIXES.filter(x => l[x[0]]).map(x => x[1]).join(', ') + (l.released ? '' : ' — NOT RELEASED') + ']' : '') + '</div>').join('');
+    const form = (f, showFix) => '<div class="rec"><b>' + esc(f.time || '') + ' · ' + esc(f.initials) + '</b>' +
+      '<div class="status">' + esc(f.staff) + '</div>' + lines(f, showFix) + '</div>';
+    const corr = c => '<div class="rec"><b>' + esc(c.time) + ' · Part ' + esc(c.parts) + ' · ' + esc(c.initials) + '</b>' +
+      ['i1', 'i2', 'ii1', 'ii2', 'iii1', 'iii3', 'iii5', 'iii7'].filter(k => c[k]).map(k => '<div class="ln">' + esc(c[k]) + '</div>').join('') +
+      (c.iii2 ? '<div class="ln">Sanitary conditions restored: ' + esc(c.iii2) + ' · Prevent recurrence: ' + esc(c.iii4) + ' · SSOP re-evaluated: ' + esc(c.iii6) + '</div>' : '') + '</div>';
+    document.getElementById('rc').innerHTML =
+      '<p class="status">' + esc(out.date) + '</p>' +
+      '<div class="card">' + masthead('Pre-Operational Sanitation Record') +
+      (out.preop.length ? out.preop.map(f => form(f, true)).join('') : '<div class="note bad">No pre-op record today. Nothing should be on the table until there is one.</div>') + '</div>' +
+      '<div class="card">' + masthead('Processing Operational Sanitation Record') +
+      (out.op.length ? out.op.map(f => form(f, false)).join('') : '<p class="status">No record yet today.</p>') + '</div>' +
+      '<div class="card">' + masthead('Sanitation Corrective Action Form') +
+      (out.corrective.length ? out.corrective.map(corr).join('') : '<p class="status">None today.</p>') + '</div>';
+  }
 
   /* ---------- start ---------- */
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
