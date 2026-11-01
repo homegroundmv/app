@@ -44,6 +44,44 @@
   }
   const colourOf = d => d['Band colour'] || bandColour(d.Intake);
   const swatch = name => name ? '<span class="dot" style="background:' + hexFor(name) + '"></span>' + esc(name) + ' band' : '';
+  /* The roll in the printer changes every day, so on a band a colour IS a date. Standing at the
+     cooler holding a band, the question is the other way round from intake: not "what colour today"
+     but "this one is Aqua — when did it come in, and how long has it hung?" This is that lookup,
+     today first, with the deer actually in the cooler counted against each colour so it reads as
+     the cooler rather than as a reference card. */
+  let bandFilter = '';
+  function bandKey() {
+    const s = S(), list = s.bandColours && s.bandColours.length ? s.bandColours : ['Aqua', 'Yellow', 'Orange', 'Day Glow Green', 'Day Glow Pink'];
+    const inCooler = deerList().filter(d => d.Status === 'Hanging' || d.Status === 'Processing');
+    const out = [];
+    for (let i = 0; i < list.length; i++) {
+      const d = new Date(); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() - i);
+      const name = bandColour(d);
+      const mine = inCooler.filter(x => colourOf(x) === name);
+      const hrs = mine.map(hoursHung);
+      out.push({ name, i, iso: isoDate(d), date: dayName(isoDate(d)),
+        when: i === 0 ? 'today' : i === 1 ? 'yesterday' : '', n: mine.length,
+        oldest: hrs.length ? Math.max.apply(null, hrs) : null,
+        // A deer past the maximum hold has been there a full cycle, so its band is the same colour
+        // as today's roll. Say so on the row rather than letting two days look like one.
+        stale: mine.filter(x => hoursHung(x) >= list.length * 24).length });
+    }
+    return out;
+  }
+  function bandKeyHtml() {
+    const s = S(), rows = bandKey();
+    return '<div class="card"><b>Band colours</b> <span class="status">what is on the roll each day \u00b7 tap one to show just those deer</span>' +
+      rows.map(r => {
+        const cls = r.oldest === null ? '' : r.oldest >= s.maxHold ? ' bad' : r.oldest >= s.startBy ? ' warnrow' : '';
+        const on = bandFilter === r.name;
+        return '<div class="trow' + cls + '" data-bandkey="' + esc(r.name) + '" style="cursor:pointer' + (on ? ';background:var(--ok-bg)' : '') + '">' +
+          '<div><b>' + swatch(r.name) + (on ? ' \u2713' : '') + '</b><div class="status">' +
+          esc(r.when ? r.when + ' \u00b7 ' + r.date : r.date) +
+          (r.n ? ' \u00b7 oldest ' + Math.floor(r.oldest) + ' h' + (r.oldest >= s.maxHold ? ' \u00b7 OVER THE MAXIMUM HOLD' : r.oldest >= s.startBy ? ' \u00b7 start next' : '') : ' \u00b7 none in the cooler') +
+          (r.stale ? ' \u00b7 ' + r.stale + ' of these is a full cycle old, so it carries today\'s colour' : '') +
+          '</div></div><div class="tval">' + (r.n || '\u2014') + '</div></div>';
+      }).join('') + '</div>';
+  }
   // Processing urgency from hours hung (Joe, 25 Oct): Low, Medium, High, Urgent at the start-by time, Overdue at the
   // maximum hold. Donated deer move up one level (they go first), but never to Overdue on that alone.
   const LEVELS = [['Low', '#5B7F3A'], ['Medium', '#C9A100'], ['High', '#E07000'], ['Urgent', '#C0392B'], ['Overdue', '#5A0F0F']];
@@ -445,8 +483,9 @@
   function showBoard() {
     const s = S();
     const all = deerList();
-    const hanging = all.filter(d => d.Status === 'Hanging').sort((a, b) => (a.Type === 'Donated' ? 0 : 1) - (b.Type === 'Donated' ? 0 : 1) || hoursHung(b) - hoursHung(a));
-    const proc = all.filter(d => d.Status === 'Processing');
+    const keep = list => bandFilter ? list.filter(d => colourOf(d) === bandFilter) : list;
+    const hanging = keep(all.filter(d => d.Status === 'Hanging')).sort((a, b) => (a.Type === 'Donated' ? 0 : 1) - (b.Type === 'Donated' ? 0 : 1) || hoursHung(b) - hoursHung(a));
+    const proc = keep(all.filter(d => d.Status === 'Processing'));
     const ready = all.filter(d => d.Status === 'Ready');
     const released = all.filter(d => d.Status === 'Released').slice(-10).reverse();
     const n = hanging.length + proc.length, full = n >= s.coolerCap;
@@ -458,11 +497,18 @@
         : n >= Math.ceil(s.coolerCap * s.coolerAlert / 100) ? '<div class="note warn">Getting full. Process the oldest deer first.</div>' : '') +
       '<div class="status">Donated deer first, then oldest first. Amber: ' + s.startBy + ' hours hung, start processing. Red: ' + s.maxHold + ' hours, over the maximum hold: tell Joe.</div>' +
       '<button class="plain" id="reload">Refresh now</button></div>' +
-      section('Hanging', hanging, 'Nothing hanging.') +
+      bandKeyHtml() +
+      (bandFilter ? '<div class="note ok">Showing ' + esc(bandFilter) + ' bands only. <button class="plain" id="clearband" style="padding:0">Show them all</button></div>' : '') +
+      section('Hanging', hanging, bandFilter ? 'No ' + bandFilter + ' bands hanging.' : 'Nothing hanging.') +
       section('Being processed', proc, 'Nothing on the table.') +
       section('Ready for pickup or delivery', ready, 'Nothing waiting.') +
       (released.length ? section('Released this week', released, '') : ''));
     document.getElementById('reload').onclick = () => refresh();
+    $app.querySelectorAll('[data-bandkey]').forEach(r => r.onclick = () => {
+      bandFilter = bandFilter === r.dataset.bandkey ? '' : r.dataset.bandkey; showBoard();
+    });
+    const cb = document.getElementById('clearband');
+    if (cb) cb.onclick = () => { bandFilter = ''; showBoard(); };
     $app.querySelectorAll('[data-band]').forEach(c => c.querySelectorAll('[data-a]').forEach(b => b.onclick = () => act(b.dataset.a, all.find(d => d.Band === c.dataset.band), c.querySelector('.form'))));
   }
 
