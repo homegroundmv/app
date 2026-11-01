@@ -2,10 +2,11 @@
  * Sign in with your staff number (P-001) and PIN.
  * Screens: Home (help alerts, clock in/out, your numbers), Cooler board, Check in a deer, Book your time
  * (processing or skinning), Messages (team chat and direct), Need help, My numbers, Team numbers (managers),
- * Daily log, Donation report, and the three Friesla sanitation records:
+ * Log book, Donation report, and the three Friesla sanitation records:
  * Pre-op SSOP, Operational SSOP and Sanitation corrective action.
  * Deer actions and log entries are saved on the device first and sent when there's signal.
- * The deer's field band number is its ID all the way through.
+ * Every deer gets a Home Ground ID at intake, printed on the intake band, and that is its ID all
+ * the way through. Nothing is on the deer before it reaches the building (hunter bands dropped 27 Oct).
  */
 (function () {
   'use strict';
@@ -298,6 +299,7 @@
       big('records', 'Today\'s records', 'Read back what has been signed today', 'view') +
       big('status', 'Facility status', 'Temperatures, who\'s here, the oldest deer', 'view') +
       big('numbers', 'My numbers', 'Deer, pounds, hours and pay this week', 'view') +
+      (isMgr() ? big('sensors', 'Sensors', 'Cold storage and both MHUs · live temperatures and the record', 'view') : '') +
       (isMgr() ? big('team', 'Team numbers', 'Every processor, this week and the season', 'view') : '') +
       (isMgr() || /intake/i.test((st.staff && st.staff.role) || '') ? big('martin', 'Donation report', 'Rows for Martin\'s sheet', 'alt') : '') +
       (isMgr() ? big('payments', 'Hunter payments', 'Checks owed and sent', 'alt') : '');
@@ -314,7 +316,7 @@
       group('Today') +
       big('preop', 'Pre-op sanitation' + (preop.done && !held ? ' ✓' : ''), preopSub, preopCls) +
       big('opssop', 'Operational sanitation', 'Every line C, N or N/A. At least once a day') +
-      big('daily', 'Daily log', 'Temperatures, cleaning, waste, complaints') +
+      big('daily', 'Log book', 'Sanitizer, thermometer, complaints, tight tank, cash') +
       big('messages', 'Messages' + (h.unread ? ' (' + h.unread + ' new)' : ''), 'Team chat and direct messages') +
       '<button class="morebtn" id="morebtn"><span id="morearrow">' + (st.moreOpen ? '▾' : '▸') + '</span> Everything else</button>' +
       '<div id="morebox"' + (st.moreOpen ? '' : ' hidden') + '>' + more + '</div>', true);
@@ -524,7 +526,7 @@
         '<div class="note ' + (fatOn ? 'warn">Grind with <b>' + esc(fatPct) + '% pork fat</b>.' : 'ok">All-venison grind: <b>no pork fat</b>.') + '</div>' +
         (fatOn && d.Type !== 'Donated' ? '<label class="choice"><input id="f7" type="checkbox"> Out of pork fat: grind all venison and take the $' + esc(s.porkAddOn || 20) + ' off the hunter\'s price</label>' : '') +
         (d.Type === 'Private' ? '<label class="choice"><input id="f6" type="checkbox"> Grinder cleared before the next hunter\'s deer, so no meat is mixed</label>' : '') +
-        '<p class="status">Same food-safety steps for every deer. Full clean-down of the grinder and equipment at least once a day (Daily log › End-of-day clean).</p>',
+        '<p class="status">Same food-safety steps for every deer. Full clean-down of the grinder and equipment at least once a day, signed off on the next morning\'s pre-op record.</p>',
       release: () => '<label>Released to</label><select id="f1"><option value="">Choose…</option><option>Hunter pickup</option>' +
         (s.pantries || []).map(p => '<option>' + esc(p) + '</option>').join('') + '<option value="other">Other…</option></select>' +
         '<input id="f3" type="text" placeholder="Who?" hidden style="margin-top:8px">' +
@@ -610,11 +612,10 @@
     frame('intake', 'Check in a deer',
       (todayBand ? '<div class="note ok" style="font-size:17px">' + swatch(todayBand) + ' today. Make sure the <b>' + esc(todayBand) + '</b> roll is in the band printer.</div>' : '') +
       '<div class="card">' +
-      '<label>Is this an Island Access Program (IAP) deer?</label>' +
-      '<label class="choice"><input type="radio" name="iap" value="Yes"> <span><b>Yes</b>: it has an IAP field band from the harvest</span></label>' +
-      '<label class="choice"><input type="radio" name="iap" value="No"> <span><b>No</b>: the app gives it a Home Ground ID from the date of the shot</span></label>' +
-      '<div id="bandbox" hidden><label for="band">IAP field band number <span class="hint">On the hock</span></label><input id="band" type="text" autocapitalize="characters"></div>' +
-      '<div id="genbox" class="note ok" hidden>Home Ground ID: <b id="genid">enter the date of the shot below</b><br><span class="status">Printed on the intake band; it stays with the deer from intake to release.</span></div>' +
+      '<label>Did this deer come through the Island Access Program?</label>' +
+      '<label class="choice"><input type="radio" name="iap" value="Yes"> <span><b>Yes</b>: the hunter is enrolled and took it on an enrolled property</span></label>' +
+      '<label class="choice"><input type="radio" name="iap" value="No"> <span><b>No</b>: any other hunter</span></label>' +
+      '<div class="note ok">Home Ground ID: <b id="genid">enter the date of the shot below</b><br><span class="status">Every deer gets one here, printed on the intake band. It stays with the deer from intake to release.</span></div>' +
       '<label>Donated or private?</label>' +
       '<label class="choice"><input type="radio" name="type" value="Donated"> <span><b>Donated</b> (Share the Harvest). TFMV mails the hunter a check: $' + esc(s.payDoe || 150) + ' a doe, $' + esc(s.payBuck || 100) + ' a buck (any male deer).</span></label>' +
       '<label class="choice"><input type="radio" name="type" value="Private"> <span><b>Private</b>: processed for the hunter, $' + esc(s.privatePrice || 250) + '.</span></label>' +
@@ -628,7 +629,7 @@
       '<div><label for="lic">MassWildlife customer ID <span class="hint">5 to 8 digits</span></label><input id="lic" type="text" inputmode="numeric" maxlength="8" pattern="[0-9]*"></div>' +
       '<div><label for="ph">Hunter phone</label><input id="ph" type="tel"></div>' +
       '<div><label for="cf">MassWildlife confirmation number</label><input id="cf" type="text"></div>' +
-      '<div id="sdbox" hidden><label for="sd">Date of the shot <span class="hint">for the Home Ground ID</span></label><input id="sd" type="date" value="' + isoDate(now) + '" max="' + isoDate(now) + '"></div>' +
+      '<div><label for="sd">Date of the shot <span class="hint">the Home Ground ID is built from it</span></label><input id="sd" type="date" value="' + isoDate(now) + '" max="' + isoDate(now) + '"></div>' +
       '</div>' +
       '<div id="addrbox" hidden><label for="ad1">Hunter mailing address <span class="hint">TFMV mails the donation check here</span></label><input id="ad1" type="text" autocomplete="street-address" placeholder="Street or PO box">' +
       '<div class="grid2"><div><label for="adt">Town</label><input id="adt" type="text"></div><div><label for="ads">State</label><input id="ads" type="text" value="MA" maxlength="2" autocapitalize="characters"></div>' +
@@ -641,7 +642,7 @@
       '<div class="err" id="err"></div><button class="submit" id="save">Check in and print band</button>' +
       '<button class="btn ghost" id="away" style="width:100%">Turn this deer away instead</button><div id="awaybox"></div></div>');
     const v = id => document.getElementById(id).value.trim();
-    // Non-IAP deer: ID = date of the shot (MMDDYYYY) + a two-digit count for that day, e.g. 0908202601
+    // Every deer: ID = date of the shot (MMDDYYYY) + a two-digit count for that day, e.g. 0908202601
     const genId = () => {
       const sd = v('sd'); if (!sd) return '';
       const [y, m, d] = sd.split('-'), pre = m + d + y;
@@ -654,10 +655,8 @@
       c.textContent = '.mrow{width:100%;table-layout:fixed;border-collapse:collapse;margin:10px 0;font-size:15px}.mrow th{text-align:left;font-weight:600;font-size:14px;color:var(--muted);padding:7px 8px 7px 0;width:45%;vertical-align:top;white-space:normal}.mrow td{padding:7px 0;border-bottom:1px solid var(--line);text-align:left;white-space:normal;overflow-wrap:anywhere}.mrow th{border-bottom:1px solid var(--line)}';
       document.head.appendChild(c); }
     const iapNow = () => (document.querySelector('input[name=iap]:checked') || {}).value;
-    const showId = () => { const g = document.getElementById('genid'); if (iapNow() === 'No') g.textContent = genId() || 'enter the date of the shot below'; };
-    document.querySelectorAll('input[name=iap]').forEach(r => r.onchange = () => {
-      document.getElementById('bandbox').hidden = iapNow() !== 'Yes'; document.getElementById('genbox').hidden = iapNow() !== 'No';
-      document.getElementById('sdbox').hidden = iapNow() !== 'No'; showId(); });
+    const showId = () => { document.getElementById('genid').textContent = genId() || 'enter the date of the shot below'; };
+    document.querySelectorAll('input[name=iap]').forEach(r => r.onchange = showId);
     document.getElementById('sd').onchange = showId;
     document.querySelectorAll('input[name=type]').forEach(r => r.onchange = () => { document.getElementById('porkbox').hidden = r.value !== 'Private' || !r.checked; document.getElementById('addrbox').hidden = r.value !== 'Donated' || !r.checked; document.getElementById('cutbox').hidden = r.value !== 'Private' || !r.checked; });
     const err = m => { document.getElementById('err').textContent = m; };
@@ -665,9 +664,9 @@
       const type = (document.querySelector('input[name=type]:checked') || {}).value;
       const iap = iapNow();
       if (!iap) return err('Say whether it\'s an Island Access Program (IAP) deer.');
-      if (iap === 'No' && !v('sd')) return err('Enter the date of the shot: the Home Ground ID comes from it.');
-      const b = iap === 'Yes' ? band(v('band')) : genId();
-      if (!b) return err('Enter the IAP field band number from the hock.');
+      if (!v('sd')) return err('Enter the date of the shot: the Home Ground ID is built from it.');
+      const b = genId();
+      if (!b) return err('Enter the date of the shot: the Home Ground ID is built from it.');
       if (deerList().some(d => band(d.Band) === b && d.Status !== 'Released')) return err('Band ' + b + ' is already in the cooler.');
       if (!type) return err('Choose donated or private.');
       if (!v('deer')) return err('Choose doe, button buck, sub-legal adult male or antlered buck.');
@@ -1085,22 +1084,28 @@
   }
 
   /* ---------- daily log ---------- */
-  const LOGS = [['Cooler temp (°F)', 'Reading in °F. Target 33–37, never above 41.'], ['Freezer temp (°F)', 'Reading in °F. 0 or colder, never above 10.'], ['Facility temp (°F)', 'MHU (processing trailer), reading in °F. Never above 42.'],
-    ['Thermometer check', 'Ice-point reading in °F (should be 32). Mondays.'], ['End-of-day clean', 'Done / problems found'],
-    ['Weekly clean', 'Done / problems found'], ['Sanitizer test', 'Test-strip reading (ppm)'], ['Waste pickup', 'Hauler and bins taken'],
-    ['Tight tank pumped', 'Company'], ['Complaint', 'Lot number, if known. Details in the note'],
+  /* What is left after the sanitation records took the cleaning checks and the sensors took the
+     temperatures (Joe, 1 Nov). Two of these are here because nothing else captures them: the
+     sanitizer CONCENTRATION, which the SSOP requires in writing but its forms only record as a
+     temperature, and complaints. Bank deposit is managers only — the cash chain is
+     taken at release → into the safe → safe to bank, and Facility Status reconciles all three. */
+  const LOGS = [
+    ['Sanitizer test', 'Test-strip reading (ppm). The SSOP requires the concentration, not just the temperature'],
+    ['Thermometer check', 'Ice-point reading in °F (should be 32). Check the sensors against it too'],
+    ['Complaint', 'Lot number, if known. Details in the note'],
+    ['Tight tank pumped', 'Company'],
     ['Cash deposit', 'Dollars in the envelope dropped in the safe. Note: number of payments and both sets of initials'],
     ['Bank deposit', 'Managers only. Dollars taken from the safe to the bank. Note: deposit slip number']];
+  const myLogs = () => LOGS.filter(l => l[0] !== 'Bank deposit' || isMgr());
   function showDaily() {
-    frame('daily', 'Daily log',
-      '<div class="card"><label for="lt">What are you logging?</label><select id="lt">' + LOGS.map(l => '<option value="' + esc(l[0]) + '">' + esc(l[0].replace('Facility temp', 'MHU temp')) + '</option>').join('') + '</select>' +
+    frame('daily', 'Log book',
+      '<div class="card"><label for="lt">What are you logging?</label><select id="lt">' + myLogs().map(l => '<option value="' + esc(l[0]) + '">' + esc(l[0]) + '</option>').join('') + '</select>' +
       '<div id="unitbox" hidden><label for="lu">Which one?</label><select id="lu"></select></div>' +
       '<label for="lv">Reading or result <span class="hint" id="lh"></span></label><input id="lv" type="text">' +
       '<label for="ln">Note</label><textarea id="ln"></textarea><div id="err" class="err"></div><button class="submit" id="save">Save to the log</button></div>' +
-      '<p class="status">Log the freezer, hanging cooler, MHU #1 and MHU #2 at opening, midday and close. Freezer over 10°F, cooler over 41°F, or an MHU over 42°F alerts Joe straight away.</p>' +
-      '<p class="status">The pre-op check is its own signed record now: Home › <b>Pre-op sanitation</b>.</p>');
+      '<p class="status">Cleaning and the pre-op check have their own signed records: Home › <b>Pre-op sanitation</b> and <b>Operational sanitation</b>. Cooler, freezer and MHU temperatures are monitored continuously by the sensors.</p>');
     const sel = document.getElementById('lt'), hint = () => {
-      document.getElementById('lh').textContent = (LOGS.find(l => l[0] === sel.value) || [])[1] || '';
+      document.getElementById('lh').textContent = (myLogs().find(l => l[0] === sel.value) || [])[1] || '';
       const units = ({ 'Cooler temp (°F)': S().coolers, 'Freezer temp (°F)': S().freezers, 'Facility temp (°F)': S().trailers }[sel.value]) || [];
       document.getElementById('unitbox').hidden = !units.length;
       document.getElementById('lu').innerHTML = units.map(u => '<option>' + esc(u) + '</option>').join('');
@@ -1138,9 +1143,22 @@
   function statusHtml(x, stale) {
     const c = x.cooler, ago = h => h == null ? '' : h < 1 ? Math.round(h * 60) + ' min ago' : Math.floor(h) + ' h ago';
     const fill = c.inCooler >= c.capacity ? 'red' : c.pctFull >= c.alertPct ? 'amber' : '';
-    const temp = (t, limit) => '<div class="trow' + (t.over ? ' bad' : t.overdue ? ' warnrow' : '') + '"><div><b>' + esc(t.unit) + '</b><div class="status">' +
-      (t.at ? esc(when(t.at)) + ' · ' + ago(t.hoursAgo) + (t.by ? ' · ' + esc(t.by) : '') : 'No reading logged') +
-      (t.over ? ' · OVER ' + limit + '°F' : t.overdue && t.at ? ' · reading overdue' : '') + '</div></div><div class="tval">' + (t.value !== '' ? esc(t.value) + '°' : '—') + '</div></div>';
+    // Two kinds of row: one a sensor is reporting, and one somebody wrote down. A sensor row says
+    // how long ago it last spoke, because a stale sensor reading looks exactly like a good one.
+    const sago = m => (m === null || m === undefined) ? '' : m < 2 ? 'just now' : m < 90 ? m + ' min ago' : ago(m / 60);
+    const temp = (t, limit) => {
+      const bad = t.over || t.silent || t.offline;
+      if (t.sensor) return '<div class="trow' + (t.over ? ' bad' : bad ? ' warnrow' : '') + '"><div><b>' + esc(t.unit) + '</b><div class="status">' +
+        esc(sago(t.minsAgo === undefined ? null : t.minsAgo)) + ' · ' + esc(t.reads === 'Probe' ? 'probe' : 'sensor body') +
+        (t.humidity !== null && t.humidity !== undefined ? ' · ' + t.humidity + '% RH' : '') +
+        (t.over ? ' · OVER ' + limit + '°F' : '') +
+        (t.offline ? ' · SENSOR OFFLINE' : t.silent ? ' · SENSOR QUIET' : '') +
+        (t.lowBattery ? ' · battery ' + t.battery + '%' : '') + '</div></div>' +
+        '<div class="tval">' + (t.value !== '' && t.value !== null ? esc(t.value) + '°' : '—') + '</div></div>';
+      return '<div class="trow' + (t.over ? ' bad' : t.overdue ? ' warnrow' : '') + '"><div><b>' + esc(t.unit) + '</b><div class="status">' +
+        (t.at ? esc(when(t.at)) + ' · ' + ago(t.hoursAgo) + (t.by ? ' · ' + esc(t.by) : '') : 'No reading logged') +
+        (t.over ? ' · OVER ' + limit + '°F' : t.overdue && t.at ? ' · reading overdue' : '') + '</div></div><div class="tval">' + (t.value !== '' ? esc(t.value) + '°' : '—') + '</div></div>';
+    };
     const up = (label, u) => '<div class="status">' + label + ': ' + (u ? esc(when(u.at)) + (u.by ? ' · ' + esc(u.by) : '') + (u.value && !/^done$/i.test(u.value) ? ' · ' + esc(u.value) : '') : 'not logged yet') + '</div>';
     const p = x.people;
     return '<p class="status">As of ' + esc(when(x.at)) + (stale ? ' (last loaded)' : '') + ' · <button class="plain" id="fs-refresh" style="padding:0">Refresh</button></p>' +
@@ -1166,9 +1184,21 @@
       '<div class="card' + (x.oldest && x.oldest.hours >= c.maxHold ? ' red' : x.oldest && x.oldest.hours >= c.startBy ? ' amber' : '') + '"><b>Longest hanging</b>' +
       (x.oldest ? '<div class="deer"><div><span class="band">' + esc(x.oldest.band) + '</span> <span class="tag ' + (x.oldest.type === 'Donated' ? 'don">DONATED' : 'prv">PRIVATE') + '</span>' +
         '<div class="status">In ' + esc(when(x.oldest.intake)) + (x.oldest.deer ? ' · ' + esc(x.oldest.deer) : '') + '</div></div><div class="hrs">' + x.oldest.hours + ' h</div></div>' : '<div class="status">Nothing hanging.</div>') + '</div>' +
-      '<div class="card"><b>Last logged temperatures</b> <span class="status">freezer 0°F or colder, never above 10 · hanging cooler 33–37°F, never above 41</span>' +
-      (x.temps.list || []).map(t => temp(t, t.limit)).join('') +
-      (isViewer() ? '' : '<button class="plain" data-go2="daily">Log a reading</button>') + '</div>' +
+      (() => {
+        const list = (x.temps.list || []), sn = x.temps.sensors || {};
+        // A space with a Temp Stick on it always shows, because the sensor is always reporting.
+        // A space without one shows only once somebody has written a reading down, so the freezers
+        // stay out of the way until they exist (Joe, 1 Nov: three Pro units, no freezer sensors yet).
+        const show = list.filter(t => t.sensor || t.at);
+        return '<div class="card"><b>Temperatures</b> <span class="status">cold storage 33–37°F, never above 41 · MHUs never above 42 · freezer 0°F or colder, never above 10</span>' +
+          (show.length ? show.map(t => temp(t, t.limit)).join('') : '') +
+          (!sn.on ? '<div class="note warn" style="margin-top:8px"><b>The sensors are not connected.</b> Temperatures have to be logged by hand in the Log book until they are.</div>'
+            : sn.unassigned ? '<div class="note warn" style="margin-top:8px"><b>' + sn.unassigned + ' sensor' + (sn.unassigned > 1 ? 's are' : ' is') + ' reporting but not placed.</b>' +
+              (isMgr() ? ' <button class="plain" data-go2="sensors">Say where ' + (sn.unassigned > 1 ? 'they are' : 'it is') + '</button>' : ' A manager needs to say where in Sensors.') + '</div>'
+            : !show.length ? '<div class="status" style="margin-top:8px">No readings yet.</div>' : '') +
+          (sn.on && sn.reporting ? '<div class="status" style="margin-top:8px">' + sn.reporting + ' space' + (sn.reporting > 1 ? 's' : '') + ' monitored continuously · ' +
+            '<button class="plain" data-go2="temprecord" style="padding:0">the temperature record</button></div>' : '') + '</div>';
+      })() +
       '<div class="card"><b>People</b><div class="tiles">' + tile(p.clockedIn.length, 'Clocked in now') + tile(p.onShift ? p.onShift.booked.length + ' of ' + p.max : '—', p.onShift ? 'Booked right now' : 'Nobody booked now') + '</div>' +
       (p.clockedIn.length ? '<div class="status">Clocked in: ' + esc(p.clockedIn.map(w => w.name + ' (since ' + when(w.since).split(' ').slice(-2).join(' ') + ')').join(', ')) + '</div>' : '') +
       (p.alone ? '<div class="note warn"><b>' + esc(p.alone.name) + ' is on their own.</b>' +
@@ -1179,8 +1209,8 @@
       (x.today.turnedAway ? '<div class="status">' + x.today.turnedAway + ' turned away today.</div>' : '') + '</div>' +
       (x.cash ? cashHtml(x.cash) : '') +
       '<div class="card"><b>Cleaning and upkeep</b> <span class="status">last logged</span>' +
-      up('End-of-day clean', x.upkeep.endOfDayClean) + up('Sanitizer test', x.upkeep.sanitizer) +
-      up('Thermometer check', x.upkeep.thermometer) + up('Waste pickup', x.upkeep.waste) + up('Tight tank pumped', x.upkeep.tightTank) + '</div>';
+      up('Sanitizer test', x.upkeep.sanitizer) + up('Thermometer check', x.upkeep.thermometer) +
+      up('Tight tank pumped', x.upkeep.tightTank) + '</div>';
   }
 
   function cashHtml(m) {
@@ -1358,7 +1388,8 @@
   const GO = { payments: showPayments, status: showStatus, board: showBoard, intake: showIntake, shifts: () => showShifts(), messages: showMessages, help: showHelp,
     numbers: showNumbers, daily: showDaily, team: showTeam, martin: () => showMartin(), donate: showDonate, scan: () => showScan(),
     preop: showPreop, opssop: showOpSsop, corrective: () => showCorrective(), records: showRecords,
-    skinning: () => showShifts(null, null, 'Skinning') };
+    skinning: () => showShifts(null, null, 'Skinning'),
+    sensors: showSensors, temprecord: () => showTempRecord() };
 
 
   /* ---------- the three sanitation records ----------
@@ -1611,6 +1642,86 @@
       (out.op.length ? out.op.map(f => form(f, false)).join('') : '<p class="status">No record yet today.</p>') + '</div>' +
       '<div class="card">' + masthead('Sanitation Corrective Action Form') +
       (out.corrective.length ? out.corrective.map(corr).join('') : '<p class="status">None today.</p>') + '</div>';
+  }
+
+
+  /* ---------- Temp Stick sensors ----------
+   * Three Temp Stick Pro units with external probes (Joe ordered them 1 Nov 2026): one in cold
+   * storage and one in each MHU. No freezer sensors — the freezers are not sited yet, so freezer
+   * temperatures stay hand-logged in the Log book until they are.
+   *
+   * The sensors send their own texts and emails, and those stay on: they are the fast path. This
+   * screen exists for the three things the sensors cannot do for themselves — say which physical
+   * space each one is in, show whether each is actually still talking, and prove it was cold.
+   */
+  async function showSensors() {
+    frame('sensors', 'Sensors', '<div id="sn"><p class="status">Loading…</p></div>');
+    let out;
+    try { out = await call({ action: 'sensors' }); }
+    catch (e) { document.getElementById('sn').innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal.' : e.message) + '</div>'; return; }
+    const box = document.getElementById('sn');
+    const chip = (s) => s.offline ? '<span class="tag prv">OFFLINE</span>' : s.silent ? '<span class="tag prv">QUIET</span>'
+      : s.over ? '<span class="tag prv">OVER LIMIT</span>' : '<span class="tag don">OK</span>';
+    const mins = m => m === null ? 'never' : m < 2 ? 'just now' : m < 90 ? m + ' min ago' : Math.round(m / 60) + ' h ago';
+    const one = s => '<div class="card' + (s.over || s.offline || s.silent ? ' red' : '') + '">' +
+      '<b>' + esc(s.space || s.name) + '</b> ' + chip(s) +
+      '<div class="status">' + esc(s.name) + ' · ' + esc(s.id) + (s.space ? '' : ' · <b>not placed yet</b>') + '</div>' +
+      '<div class="tiles">' + tile(s.f === null ? '—' : s.f + '°', 'Now' + (s.limit !== null ? ' (max ' + s.limit + '°)' : '')) +
+      tile(s.humidity === null ? '—' : s.humidity + '%', 'Humidity') +
+      tile(s.battery === null ? '—' : s.battery + '%', 'Battery') +
+      tile(mins(s.minsAgo), 'Last heard') + '</div>' +
+      (s.reads === 'Body' ? '<div class="note warn"><b>No probe reading.</b> This is reporting the air around the sensor body, not inside the unit. Check the probe is plugged in and switched on in the Temp Stick app.</div>' : '') +
+      (s.lowBattery ? '<div class="note warn">Battery at ' + s.battery + '%. Change it before the sensor stops reporting.</div>' : '') +
+      (s.silent && !s.offline ? '<div class="note bad">Nothing heard for ' + mins(s.minsAgo) + '. Log temperatures by hand until it is back.</div>' : '') +
+      (out.manager ? '<div style="margin-top:8px"><label>Where is it?</label>' +
+        '<select data-sid="' + esc(s.id) + '"><option value="">— not placed —</option>' +
+        out.spaces.map(sp => '<option value="' + esc(sp.space) + '"' + (sp.space === s.space ? ' selected' : '') + (sp.covered && sp.space !== s.space ? ' disabled' : '') + '>' +
+          esc(sp.space) + ' (never above ' + sp.limit + '°F)' + (sp.covered && sp.space !== s.space ? ' — taken' : '') + '</option>').join('') +
+        '</select></div>' : (s.space ? '' : '<div class="status">A manager needs to say where this one is.</div>'));
+    const waiting = out.spaces.filter(sp => !sp.covered);
+    box.innerHTML =
+      (!out.keySet ? '<div class="note bad"><b>No API key set.</b> Put the Temp Stick key in the script\'s properties as TEMPSTICK_KEY. Until then nothing is read automatically and temperatures have to be logged by hand.</div>'
+        : !out.on ? '<div class="note warn"><b>Monitoring is switched off</b> in Settings (Temp Stick monitoring). Nothing is being recorded.</div>' : '') +
+      (out.sensors.length ? out.sensors.map(one).join('')
+        : '<div class="card"><p class="status">No sensor has reported yet. A new Temp Stick shows up here within about 15 minutes of being set up on WiFi — there is nothing to type in, it finds itself.</p></div>') +
+      (waiting.length ? '<div class="card"><b>No sensor yet</b><div class="status">' + esc(waiting.map(sp => sp.space).join(', ')) +
+        '. These still need a temperature written down in the Log book.</div></div>' : '') +
+      '<div class="card"><b>The record</b><div class="status">Every reading is summarised into one row a day for each space — low, high, average, and how long it was above the limit. That is the record an inspector asks for, and it lives in the Facility Log, not in the Temp Stick account.</div>' +
+      '<button class="btn" id="sn-rec">The temperature record</button></div>';
+    box.querySelectorAll('select[data-sid]').forEach(sel => sel.onchange = async () => {
+      const id = sel.dataset.sid, space = sel.value;
+      sel.disabled = true;
+      try { await call({ action: 'assignsensor', id: id, space: space }); showSensors(); }
+      catch (e) { sel.disabled = false; toast(e.message, false); }
+    });
+    const rb = document.getElementById('sn-rec'); if (rb) rb.onclick = () => showTempRecord();
+  }
+
+  /** The permanent temperature record: one row a day per space. Printable, and it is the answer to
+      "show me it was cold", which a live dashboard cannot give. */
+  async function showTempRecord(days) {
+    const n = days || 30;
+    frame('temprecord', 'Temperature record', '<div id="tr"><p class="status">Loading…</p></div>');
+    let out;
+    try { out = await call({ action: 'temprecord', days: n }); }
+    catch (e) { document.getElementById('tr').innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal.' : e.message) + '</div>'; return; }
+    const byDate = {};
+    (out.rows || []).forEach(r => { (byDate[r.date] = byDate[r.date] || []).push(r); });
+    const dates = Object.keys(byDate).sort().reverse();
+    const row = r => '<div class="trow' + (r.runOver >= 240 ? ' bad' : r.minsOver ? ' warnrow' : '') + '">' +
+      '<div><b>' + esc(r.space) + '</b><div class="status">' +
+      r.readings + ' readings · low ' + r.low + '° · average ' + r.avg + '°' +
+      (r.minsOver ? ' · <b>' + r.minsOver + ' min above ' + r.limit + '°</b>' + (r.runOver ? ' (longest run ' + (r.runOver >= 60 ? Math.round(r.runOver / 60 * 10) / 10 + ' h' : r.runOver + ' min') + ')' : '') : ' · never above ' + r.limit + '°') +
+      (r.offline ? ' · ' + r.offline + ' uploaded late' : '') + '</div></div>' +
+      '<div class="tval">' + r.high + '°</div></div>';
+    document.getElementById('tr').innerHTML =
+      '<div class="card">' + masthead('Temperature Record') +
+      '<div class="status">The high of each day is the number on the right. A day is flagged when any reading went above the space\'s limit, and flagged red when it stayed above it for four hours or more, which is the point the procedure says a manager decides what is kept.</div></div>' +
+      (dates.length ? dates.map(d => '<div class="card"><b>' + esc(d) + '</b>' + byDate[d].map(row).join('') + '</div>').join('')
+        : '<div class="card"><p class="status">Nothing recorded yet. A day appears here once a sensor has been placed and has reported for it.</p></div>') +
+      (dates.length >= 1 ? '<div class="card"><button class="btn alt" id="tr-more">Show the last ' + (n >= 365 ? 400 : n >= 90 ? 365 : 90) + ' days</button></div>' : '');
+    const mb = document.getElementById('tr-more');
+    if (mb) mb.onclick = () => showTempRecord(n >= 365 ? 400 : n >= 90 ? 365 : 90);
   }
 
   /* ---------- start ---------- */
