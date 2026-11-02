@@ -1160,7 +1160,7 @@
         (!claimed ? '<button class="btn" data-claim="' + esc(x.id) + '">I\'ll take it</button>' : '') +
         (x.mine || d.manager ? '<button class="btn ghost" data-dropcancel="' + esc(x.id) + '">Cancel</button>' : '') +
         '</div>' +
-        (!claimed && !d.onSite ? '<div class="status">Not clocked in, so this would be a call-out: $' + d.calloutFee + ' plus the $' + d.intakeFee + ' intake fee.</div>' : '') +
+        (!claimed && !d.onSite ? '<div class="status">Not clocked in, so this would be a call-out: $' + d.calloutFee + ' flat.</div>' : '') +
         '</div>';
     }).join('');
   }
@@ -1211,6 +1211,32 @@
     };
   }
 
+  /* What the last 30 days say about whether any of this is working. Each share gets the reading
+     that matters, because a number on its own invites the wrong fix: a high call-out share is
+     answered by booking shifts, not by paying more per trip. */
+  function last30Html(d) {
+    const n = d.last30;
+    if (!n || !n.drops) return '';
+    const pc = a => Math.round((a / n.drops) * 100);
+    const co = pc(n.callouts), es = pc(n.escalated);
+    return '<div class="note ' + (co >= 34 || es >= 25 ? 'warn' : 'ok') + '" style="margin:8px 0">' +
+      '<b>Last 30 days: ' + n.drops + ' drop-off' + (n.drops === 1 ? '' : 's') + '.</b>' +
+      '<div class="status">' + n.callouts + ' were call-outs (' + co + '%)' +
+      (co >= 34 ? ' \u2014 most deer are arriving when nobody is booked. Shift cover fixes that, not a bigger call-out fee.' : '.') + '</div>' +
+      '<div class="status">' + n.escalated + ' went unclaimed and escalated (' + es + '%)' +
+      (es >= 25 ? ' \u2014 nobody is getting in the truck. That is what the $' + d.calloutFee + ' is meant to buy.' : '.') + '</div></div>';
+  }
+
+  /* Whether the posted windows on a day already have somebody booked. A day rostered for standby
+     that is also fully covered is being paid for twice. */
+  function coverHtml(x) {
+    if (!x.cover) return '';
+    const gap = (x.uncovered || []).map(u => t12(u.start) + '\u2013' + t12(u.end)).join(', ');
+    if (x.cover === 'full') return '<div class="status">Covered by booked shifts' + (x.rostered ? ' \u2014 standby not needed' : '') + '.</div>';
+    if (x.cover === 'part') return '<div class="status">Part-covered \u2014 no shifts booked ' + esc(gap) + '.</div>';
+    return '<div class="status">No shifts booked' + (gap ? ' ' + esc(gap) : '') + '.</div>';
+  }
+
   /** The on-call rota: a name against every day, so "nobody clicked" cannot happen. */
   async function showOnCall() {
     frame('oncall', 'On call', '<div id="oc"><p class="status">Loading…</p></div>');
@@ -1221,7 +1247,7 @@
     const gaps = d.gaps === undefined ? d.days.filter(x => !x.number).length : d.gaps;
     box.innerHTML =
       '<div class="card"><b>What on call means</b><div class="status">If a deer needs checking in and nobody else takes it within a few minutes, it is yours. Standby is $' + d.standby +
-      ' for the day whether or not a deer comes, and if you do go out it is the $' + d.calloutFee + ' call-out fee on top of the intake fee.' +
+      ' for the day whether or not a deer comes, and if you do go out it is the $' + d.calloutFee + ' call-out fee instead of the intake fee.' +
       (d.windows.length ? ' Posted drop-off hours are ' + esc(d.windows.map(w => t12(w.start) + '–' + t12(w.end)).join(', ')) + '.' : '') + '</div></div>' +
       (d.backstop
         ? '<div class="note ' + (d.backstop.firedLast30 > 3 ? 'warn' : 'ok') + '"><b>Backstop: ' + esc(d.backstop.name) + '.</b> ' +
@@ -1232,8 +1258,10 @@
             : 'It has not had to happen in the last 30 days.') + '</div>'
         : gaps ? '<div class="note ' + (d.days[0].number ? 'warn' : 'bad') + '"><b>' + gaps + ' of the next 14 days ' + (gaps === 1 ? 'has' : 'have') + ' nobody on call.</b> An unclaimed deer on those days falls to the managers.</div>' : '') +
       (gaps && d.backstop ? '<div class="status" style="margin:8px 0">' + gaps + ' of the next 14 days ' + (gaps === 1 ? 'has' : 'have') + ' nobody rostered.</div>' : '') +
+      last30Html(d) +
       '<div class="card">' + d.days.map(x =>
         '<div class="trow"><div><b>' + esc(dayName(x.date)) + '</b>' +
+        coverHtml(x) +
         (x.name ? '' : '<div class="status">' + (d.backstop ? esc(first(d.backstop.name)) + ' by default' : 'nobody') + '</div>') + '</div>' +
         (d.manager ? '<select data-oc="' + esc(x.date) + '"><option value="">— nobody —</option>' +
           d.staff.map(p => '<option value="' + esc(p.number) + '"' + (p.number === x.number ? ' selected' : '') + '>' + esc(p.name) + '</option>').join('') + '</select>'
@@ -1308,7 +1336,7 @@
       row('Processing', '$' + fmt(w.pay), w.deer + ' deer at $' + s.pieceRate) +
       (w.skinPay ? row('Skinning', '$' + fmt(w.skinPay), (w.skinned || 0) + ' deer at $' + (s.skinRate || 25) +
         (w.skinHours ? ', or ' + fmt(w.skinHours) + ' h at $' + (s.skinHourly || 25) + ' — whichever is more' : '')) : '') +
-      (w.intakePay ? row('At the door', '$' + fmt(w.intakePay), (w.intakes || 0) + ' deer at $' + (s.intakeFee || 10) +
+      (w.intakePay ? row('At the door', '$' + fmt(w.intakePay), (w.paidIntakes === undefined ? (w.intakes || 0) : w.paidIntakes) + ' deer at $' + (s.intakeFee || 10) +
         (w.turnedAway ? ', including ' + w.turnedAway + ' turned away' : '')) : '') +
       (w.otherPay ? row('Other time', '$' + fmt(w.otherPay), fmt(w.otherHours) + ' h at $' + (s.otherHourly || 25) + ' (cleaning, training, no booking)') : '') +
       row('This week', '$' + fmt(total), '') +
