@@ -191,7 +191,7 @@
       if (['preop', 'opssop', 'corrective', 'log', 'reject'].indexOf(x.action) >= 0) return;
       if (!b) return;
       const d = by(b);
-      if (x.action === 'intake' && !d) list.push({ Band: b, Intake: x.at, 'Hunter number': f.hunterNumber, 'Hunter name': f.hunterName || ((f.firstName || '') + ' ' + (f.lastName || '')).trim(), 'MassWildlife confirmation': f.confirmation, Deer: f.deer, Type: f.type, 'Pork fat added': f.porkFat ? 'Yes' : (f.type === 'Donated' ? 'Yes' : 'No'), Status: 'Hanging', pending: true });
+      if (x.action === 'intake' && !d) list.push({ Band: b, Intake: x.at, 'Hunter number': f.hunterNumber, 'Hunter name': f.hunterName || ((f.firstName || '') + ' ' + (f.lastName || '')).trim(), 'MassWildlife confirmation': f.confirmation, Deer: f.deer, Type: f.type, 'Intake weight (lb)': f.intakeWeight, 'Weighed as': f.weighedAs, 'Pork fat added': f.porkFat ? 'Yes' : (f.type === 'Donated' ? 'Yes' : 'No'), Status: 'Hanging', pending: true });
       if (!d) return;
       d.pending = true;
       if (x.action === 'skin') { d['Skinner'] = f.skinner || st.staff.number; d['Skinner name'] = f.skinnerName || st.staff.name; d['Skinned at'] = x.at; d['Skinned at station'] = 'Yes'; }
@@ -276,7 +276,8 @@
       '<div class="ls">' + esc(d.Deer || 'Deer') + ' · ' + Math.floor(hoursHung(d)) + ' hours hung' +
       (lead.kind === 'mine'
         ? (d['Processing started'] ? ' · started ' + esc(when(d['Processing started'])) : '') +
-          (d['Carcass weight (lb)'] ? ' · ' + esc(d['Carcass weight (lb)']) + ' lb carcass' : '') +
+          (d['Intake weight (lb)'] ? ' · ' + esc(d['Intake weight (lb)']) + ' lb in' + (d['Weighed as'] === 'Not dressed' ? ' (not dressed)' : '') : '') +
+        (d['Carcass weight (lb)'] ? ' · ' + esc(d['Carcass weight (lb)']) + ' lb carcass' : '') +
           (d['First pack #'] ? ' · packages from ' + esc(d['First pack #']) : '')
         : ' · in ' + esc(when(d.Intake))) + '</div>' +
       (lead.kind === 'mine' && donatedNoPack ? '<div class="note bad" style="margin:8px 0 0">Get package numbers before the grinder, so every label runs in order.</div>' : '') +
@@ -328,9 +329,13 @@
 
     // Pre-op is a gate, so it says what to do. It only turns red once a deer is on the table without it.
     const preopCls = held ? 'red' : preop.done ? 'view' : processing ? 'red' : '';
+    // Unsigned pre-op moves to the top of Now and out of Today, so it is never below the work it
+    // has to come before. A held line is a different problem and stays where it is, in red.
+    const preopFirst = !preop.done && !held;
     const preopSub = preop.done
       ? (held ? held + ' line' + (held === 1 ? '' : 's') + ' still not released — do not use it' : 'Signed ' + esc(preop.time || '') + ' by ' + esc(preop.initials || ''))
-      : processing ? 'A deer is on the table — sign this now' : 'Sign it before the first deer. Sixteen lines, A or U';
+      : processing ? 'A deer is on the table — sign this now'
+      : 'Start here — sign it before the first deer. Sixteen lines, A or U';
 
     const more =
       big('shifts', 'Book your time', 'Processing · up to ' + s.maxAtOnce + ' at once') +
@@ -353,13 +358,16 @@
       '<div id="alerts">' + alertsHtml() + dropCardsHtml() + '</div><div id="push"></div>' +
       (lead ? leadCard(lead) : '') + clockStrip + mine +
       group('Now') +
-      big('board', 'Cooler', inC + ' of ' + s.coolerCap + ' in the cooler' + (inC >= s.coolerCap ? ' · FULL' : '') + ' · start, finish and release here') +
+      // The first tile should be the next thing to do, not a fixed label that is wrong every
+      // morning. Pre-op has to be signed before the line opens, so until it is, it IS the start.
+      (preopFirst ? big('preop', 'Pre-op sanitation', preopSub, preopCls) : '') +
+      big('board', 'Cooler', (preopFirst ? '' : 'Start here after clocking in · ') + inC + ' of ' + s.coolerCap + ' in the cooler' + (inC >= s.coolerCap ? ' · FULL' : '') + ' · start, finish and release') +
       big('intake', 'Check in a deer', 'The front door: tag, hunter, donated or private, print the band' +
         (bandColour(new Date()) ? ' · today\'s band: ' + bandColour(new Date()) : '')) +
       (atDoor() ? big('raisedrop', 'A deer is coming in', 'A hunter texted or rang \u00b7 tell the team so someone meets them', 'alt') : '') +
       big('help', 'Need help', 'Sends a notification to everyone on the team', 'red') +
       group('Today') +
-      big('preop', 'Pre-op sanitation' + (preop.done && !held ? ' ✓' : ''), preopSub, preopCls) +
+      (preopFirst ? '' : big('preop', 'Pre-op sanitation' + (preop.done && !held ? ' ✓' : ''), preopSub, preopCls)) +
       big('opssop', 'Operational sanitation', 'Every line C, N or N/A. At least once a day') +
       big('daily', 'Log book', 'Sanitizer, thermometer, complaints, tight tank, cash') +
       big('messages', 'Messages' + (h.unread ? ' (' + h.unread + ' new)' : ''), 'Team chat and direct messages') +
@@ -543,6 +551,7 @@
       'in ' + esc(d.Intake) + ' · ' + esc(d.Deer || '') + (d['Antler points'] ? ' (' + esc(d['Antler points']) + ' pts)' : '') + ' · ' + esc(d['Hunter number'] || d['Hunter name'] || '') +
       (d['Skinner name'] ? ' · skinned by ' + esc(d['Skinner name']) : '') +
       (d.Butcher ? ' · ' + esc(d.Butcher) + (d['Processor number'] ? ' (' + esc(d['Processor number']) + ')' : '') : '') +
+      (d['Intake weight (lb)'] ? ' · ' + esc(d['Intake weight (lb)']) + ' lb in' + (d['Weighed as'] === 'Not dressed' ? ' (not dressed)' : '') : '') +
       (d['Carcass weight (lb)'] ? ' · ' + esc(d['Carcass weight (lb)']) + ' lb carcass' : '') +
       (d['Pounds packaged'] ? ' · ' + esc(d['Pounds packaged']) + ' lb packaged' : '') + '</div></div>' +
       '<div class="hrs">' + (d.Status === 'Released' ? '' : Math.floor(h) + ' h') + '</div></div>' +
@@ -696,6 +705,11 @@
       '<div class="grid2"><div><label for="adt">Town</label><input id="adt" type="text"></div><div><label for="ads">State</label><input id="ads" type="text" value="MA" maxlength="2" autocapitalize="characters"></div>' +
       '<div><label for="adz">ZIP</label><input id="adz" type="text" inputmode="numeric" maxlength="10"></div></div></div>' +
       cutsHtml() +
+      // Weighed at the door, hide and head on. Not the carcass weight, which is taken at the
+      // hanging scale after skinning: two different numbers that must never be mistaken for each
+      // other, so each says on its own label what it is.
+      '<div class="grid2"><div><label for="iw">Weight (lb) <span class="hint">as it came in, hide and head on</span></label><input id="iw" type="number" inputmode="decimal" min="0" max="500" step="0.1"></div>' +
+      '<div><label for="wa">Weighed as</label><select id="wa"><option value="Field dressed">Field dressed</option><option value="Not dressed">Not dressed</option></select></div></div>' +
       '<label class="choice"><input id="fd" type="checkbox"> Field dressed within 4 hours of the shot (or the air stayed below 37°F)</label>' +
       '<label class="choice"><input id="ddp" type="checkbox"> Taken under a deer damage permit (DDP)</label>' +
       '<p class="status">The deer hangs in the receiving cooler skin-on, head-on. It\'s skinned and the head removed at the station behind MHU #1 when processing starts.</p>' +
@@ -777,6 +791,7 @@
         cuts: type === 'Private' ? readCuts() : '',
         address: type === 'Donated' ? v('ad1') + ', ' + v('adt') + ', ' + (v('ads') || 'MA').toUpperCase() + ' ' + v('adz') : '',
         dressed4h: document.getElementById('fd').checked, ddp: document.getElementById('ddp').checked, skinned: false, notes: v('nt'),
+        intakeWeight: v('iw'), weighedAs: document.getElementById('wa').value,
         porkFat: type === 'Private' && !!document.getElementById('pork') && document.getElementById('pork').checked };
       queue('intake', f, 'Check-in ' + b);
       // The fee is a separate transaction from the deer, because it is a different organisation's
