@@ -299,7 +299,7 @@
     if (isViewer()) {
       frame('home', '', '<div class="note ok">View-only sign-in: you can look at everything below, but nothing can be changed from this sign-in.</div>' +
         group('Check on things') +
-        big('board', 'Cooler', inC + ' of ' + s.coolerCap + ' in the cooler' + (inC >= s.coolerCap ? ' · FULL' : ''), 'view') +
+        big('board', 'Deer Board', inC + ' of ' + s.coolerCap + ' in the cooler' + (inC >= s.coolerCap ? ' · FULL' : ''), 'view') +
         big('status', 'Facility status', 'Cooler, oldest deer, temperatures, who\'s here', 'view') +
         big('records', 'Sanitation records', 'Pre-op, operational and corrective actions signed today', 'view') +
         group('Office') +
@@ -361,7 +361,7 @@
       // The first tile should be the next thing to do, not a fixed label that is wrong every
       // morning. Pre-op has to be signed before the line opens, so until it is, it IS the start.
       (preopFirst ? big('preop', 'Pre-op sanitation', preopSub, preopCls) : '') +
-      big('board', 'Cooler', (preopFirst ? '' : 'Start here after clocking in · ') + inC + ' of ' + s.coolerCap + ' in the cooler' + (inC >= s.coolerCap ? ' · FULL' : '') + ' · start, finish and release') +
+      big('board', 'Deer Board', 'Start here after pre-op sanitation · ' + inC + ' of ' + s.coolerCap + ' in the cooler' + (inC >= s.coolerCap ? ' · FULL' : '') + ' · start, finish and release') +
       big('intake', 'Check in a deer', 'The front door: tag, hunter, donated or private, print the band' +
         (bandColour(new Date()) ? ' · today\'s band: ' + bandColour(new Date()) : '')) +
       (atDoor() ? big('raisedrop', 'A deer is coming in', 'A hunter texted or rang \u00b7 tell the team so someone meets them', 'alt') : '') +
@@ -507,7 +507,7 @@
     const n = hanging.length + proc.length, full = n >= s.coolerCap;
     const card = deerCard;
     const section = (title, list, empty) => '<h2>' + title + ' (' + list.length + ')</h2>' + (list.length ? list.map(card).join('') : '<p class="status">' + empty + '</p>');
-    frame('board', 'Cooler',
+    frame('board', 'Deer Board',
       '<div class="card"><b>In the cooler: ' + n + ' of ' + s.coolerCap + '</b>' +
       (full ? '<div class="note bad">Cooler is full. Hold private intakes until a deer is processed.</div>'
         : n >= Math.ceil(s.coolerCap * s.coolerAlert / 100) ? '<div class="note warn">Getting full. Process the oldest deer first.</div>' : '') +
@@ -567,6 +567,10 @@
     if (kind === 'grind') return grind(d, box, after);
     const s = S();
     const fatPct = d.Type === 'Donated' ? s.fatDonated : (d['Pork fat added'] === 'Yes' ? s.fatPrivate : 0), fatOn = fatPct > 0, fat = fatPct / 100;
+    // Donated deer have their package numbers reserved before grinding, so the last label written
+    // is known and the count follows from it. Everything else is still counted.
+    const firstPack = parseInt(d['First pack #'], 10) || 0;
+    const byLast = d.Type === 'Donated' && firstPack > 0;
     const v = id => (document.getElementById(id) || {}).value || '';
     const forms = {
       skin: () => '<p class="status">Records who skinned this deer. The $' + esc(s.skinRate || 25) +
@@ -584,8 +588,16 @@
         (isMgr() ? '<label>Processor</label><select id="fp">' + (st.home.staff || []).map(x => '<option value="' + esc(x.number) + '"' + (x.number === st.staff.number ? ' selected' : '') + '>' + esc(x.name + ' (' + x.number + ')') + '</option>').join('') + '</select>'
           : '<p class="status">Processor: ' + esc(st.staff.name + ' (' + st.staff.number + ')') + '</p>') +
         '<label>Carcass weight (lb) <span class="hint">On the hanging scale: field dressed, skin and head off</span></label><input id="f1" type="number" inputmode="decimal" min="0" step="0.1">',
+      // Donated deer get their numbers before grinding, so by the time this form opens the first
+      // number is known and the last one is on the bench in front of them.
       finish: () => '<p class="status">Started ' + esc(d['Processing started'] || '') + ' · carcass ' + esc(d['Carcass weight (lb)'] || '?') + ' lb</p>' +
-        '<div class="grid2"><div><label>Ground packages (' + esc(s.pkgSize) + ' lb)</label><input id="f1" type="number" inputmode="numeric" min="0" step="1"></div>' +
+        // A processor at the end of a donated deer knows the number on the last label they wrote.
+        // Counting the packages back is a second, avoidable chance to get it wrong, so ask for the
+        // thing they are holding and work the count out from it. Private deer have no package
+        // numbers, so they are still counted.
+        '<div class="grid2"><div>' + (byLast
+          ? '<label>Last package number <span class="hint">the number on the last label you wrote</span></label><input id="f1" type="number" inputmode="numeric" min="0" step="1" placeholder="' + esc(d['First pack #']) + '\u2026">'
+          : '<label>Ground packages (' + esc(s.pkgSize) + ' lb)</label><input id="f1" type="number" inputmode="numeric" min="0" step="1">') + '</div>' +
         (d.Type === 'Donated' ? '<input id="f2" type="hidden" value="0"><input id="f3" type="hidden" value="0"></div><p class="status">Donated deer: all grind, to the state standard, on the MassWildlife label.</p>'
           : '<div><label>Intact cut packages</label><input id="f2" type="number" inputmode="numeric" min="0" step="1" value="0"></div>' +
           '<div><label>Intact cuts total (lb)</label><input id="f3" type="number" inputmode="decimal" min="0" step="0.1" value="0"></div></div>') +
@@ -609,12 +621,16 @@
     if (kind === 'release') document.getElementById('f1').onchange = e => { document.getElementById('f3').hidden = e.target.value !== 'other'; };
     const calc = () => {
       const drop = !!(document.getElementById('f7') || {}).checked, fr = drop ? 0 : fat;
-      const pk = Math.round(num(v('f1'))), il = num(v('f3')), groundLb = pk * s.pkgSize;
+      const entered = Math.round(num(v('f1')));
+      // With the last number entered, the count is the span including both ends.
+      const pk = byLast ? (entered >= firstPack ? entered - firstPack + 1 : 0) : entered;
+      const il = num(v('f3')), groundLb = pk * s.pkgSize;
       const ven = r1(groundLb * (1 - fr)), pork = r1(groundLb * fr), total = r1(groundLb + il), carcass = num(d['Carcass weight (lb)']);
       const el = document.getElementById('calc');
-      if (el) el.innerHTML = 'Ground: <b>' + fmt(groundLb) + ' lb</b> (' + fmt(ven) + ' lb venison + ' + fmt(pork) + ' lb pork fat) · Intact: <b>' + fmt(il) + ' lb</b><br>' +
+      if (el) el.innerHTML = (byLast ? '<b>' + pk + ' package' + (pk === 1 ? '' : 's') + '</b> · ' : '') +
+        'Ground: <b>' + fmt(groundLb) + ' lb</b> (' + fmt(ven) + ' lb venison + ' + fmt(pork) + ' lb pork fat) · Intact: <b>' + fmt(il) + ' lb</b><br>' +
         'Total packaged: <b>' + fmt(total) + ' lb</b>' + (carcass ? ' · Venison yield: <b>' + Math.round((ven + il) / carcass * 100) + '%</b> of ' + fmt(carcass) + ' lb carcass' : '') +
-        (d['First pack #'] && pk + num(v('f2')) > 0 ? '<br>Package numbers: <b>' + esc(d['First pack #']) + '–' + ('000' + (parseInt(d['First pack #'], 10) + pk + Math.round(num(v('f2'))) - 1)).slice(-4) + '</b>' : '');
+        (d['First pack #'] && pk + num(v('f2')) > 0 ? '<br>Package numbers: <b>' + esc(d['First pack #']) + '–' + ('000' + (firstPack + pk + Math.round(num(v('f2'))) - 1)).slice(-4) + '</b>' : '');
       return { pk, il, total };
     };
     if (kind === 'finish') { ['f1', 'f2', 'f3'].forEach(id => { document.getElementById(id).oninput = calc; }); const f7 = document.getElementById('f7'); if (f7) f7.onchange = calc; calc(); }
@@ -639,11 +655,14 @@
       }
       if (kind === 'finish') {
         const c = calc(), ip = Math.round(num(v('f2')));
-        if (!(c.pk + ip > 0)) return err('Enter the packages.');
+        if (byLast && Math.round(num(v('f1'))) > 0 && Math.round(num(v('f1'))) < firstPack) {
+          return err('The last package number can\'t be below ' + d['First pack #'] + ', which is where this deer started.');
+        }
+        if (!(c.pk + ip > 0)) return err(byLast ? 'Enter the number on the last label.' : 'Enter the packages.');
         if (d.Type === 'Donated' && !d['First pack #']) return err('Get package numbers first (needs signal), so every label carries its MassWildlife number.');
         if (ip && !(c.il > 0)) return err('Weigh the intact cuts and enter the total.');
         if (d.Type === 'Private' && !document.getElementById('f6').checked) return err('Clear the grinder before the next hunter\'s deer goes through, then tick the box.');
-        queue('finish', { band: d.Band, groundPackages: c.pk, intactPackages: ip, intactLb: c.il, total: c.total, grinderCleared: d.Type === 'Private', noPork: !!(document.getElementById('f7') || {}).checked }, 'Finish ' + d.Band);
+        queue('finish', { band: d.Band, groundPackages: c.pk, lastPack: byLast ? Math.round(num(v('f1'))) : '', intactPackages: ip, intactLb: c.il, total: c.total, grinderCleared: d.Type === 'Private', noPork: !!(document.getElementById('f7') || {}).checked }, 'Finish ' + d.Band);
       }
       if (kind === 'release') {
         const to = v('f1') === 'other' ? v('f3').trim() : v('f1');
