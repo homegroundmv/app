@@ -98,6 +98,7 @@
   st.outbox = st.outbox || [];
   st.device = st.device || uid();
   st.home = st.home || {};
+  st.hunters = st.hunters || { at: 0, list: [] };
   function save() { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { /* keep in memory */ } }
   save();
   const S = () => st.home.settings || { coolerCap: 30, coolerAlert: 80, startBy: 72, maxHold: 120, maxAtOnce: 6, slots: [], pieceRate: 125, minWage: 15, pkgSize: 2, fatDonated: 10, fatPrivate: 10, privatePrice: 250, porkAddOn: 20, porkInStock: true, pantries: [], helpHours: 4, skinRate: 25, skinHourly: 25, otherHourly: 25, intakeFee: 10, maxSkinners: 5, mhu1Cap: 12, loneGrace: 30, preopItems: [], opItems: [] };
@@ -155,6 +156,34 @@
       if (!quiet) toast(e.message);
     }
   }
+  /* The hunter roster: name, MassWildlife customer ID, phone and mailing address for everyone the
+     log has seen. Fetched rarely and cached, so the counter still gets suggestions with no signal.
+     It never fills a field on its own — a wrong ID filled quietly is worse than typing one. */
+  async function loadHunters(force) {
+    const age = Date.now() - (st.hunters.at || 0);
+    if (!force && st.hunters.list.length && age < 6 * 36e5) return st.hunters.list;
+    try {
+      const out = await call({ action: 'hunters' });
+      st.hunters = { at: Date.now(), list: out.hunters || [] };
+      save();
+    } catch (e) { /* offline or refused: the cache is still better than nothing */ }
+    return st.hunters.list;
+  }
+  function hunterMatches(first, last) {
+    const f = String(first || '').trim().toLowerCase(), l = String(last || '').trim().toLowerCase();
+    if (f.length + l.length < 2) return [];
+    return (st.hunters.list || []).filter(h => {
+      const hf = String(h.first || '').toLowerCase(), hl = String(h.last || '').toLowerCase();
+      const okL = !l || hl.indexOf(l) === 0, okF = !f || hf.indexOf(f) === 0;
+      return okL && okF;
+    }).slice(0, 6);
+  }
+  // '1 Main St, Vineyard Haven, MA 02568' back into the four fields it was built from.
+  function splitAddress(a) {
+    const m = String(a || '').trim().match(/^(.*),\s*([^,]+),\s*([A-Za-z]{2})\s+([\d-]+)$/);
+    return m ? { street: m[1].trim(), town: m[2].trim(), state: m[3].toUpperCase(), zip: m[4] } : null;
+  }
+
   // Redraw only screens that just show data, never one with a form being filled in.
   function redraw() {
     if (current === 'home') showHome();
@@ -541,6 +570,9 @@
       : (d['Skinner'] ? '' : '<button class="btn alt" data-a="skin">Skin it</button> ') + '<button class="btn" data-a="start">Start processing</button>')
       : d.Status === 'Processing' ? (mineOrMgr ? (d.Type === 'Donated' && !d['First pack #'] ? '<button class="btn alt" data-a="grind">Get package numbers</button> ' : '') + '<button class="btn" data-a="finish">Finished</button>' : '')
       : d.Status === 'Ready' ? '<button class="btn alt" data-a="release">Release</button>' : '';
+    // A duplicate or a mistaken entry is not deleted, it is voided: the row stays and says so.
+    const voidBtn = !isViewer() && isMgr() && d.Status !== 'Voided'
+      ? ' <button class="btn ghost" data-a="void">Void this check-in</button>' : '';
     return '<div class="card' + cls + (d.Type === 'Donated' ? ' donated' : '') + '" data-band="' + esc(d.Band) + '">' +
       '<div class="deer"><div><span class="band">' + esc(d.Band) + '</span> ' +
       '<span class="tag ' + (d.Type === 'Donated' ? 'don">DONATED' : 'prv">' + (isCold ? 'COLD STORAGE' : 'PRIVATE')) + '</span>' + (d['DDP deer'] === 'Yes' ? '<span class="tag">DDP</span>' : '') +
@@ -555,11 +587,13 @@
       (d['Carcass weight (lb)'] ? ' · ' + esc(d['Carcass weight (lb)']) + ' lb carcass' : '') +
       (d['Pounds packaged'] ? ' · ' + esc(d['Pounds packaged']) + ' lb packaged' : '') + '</div></div>' +
       '<div class="hrs">' + (d.Status === 'Released' ? '' : Math.floor(h) + ' h') + '</div></div>' +
+      (d.Status === 'Voided' ? '<div class="note bad"><b>Voided</b>' + (d['Void reason'] ? ': ' + esc(d['Void reason']) : '') +
+        (d['Voided by'] ? ' · ' + esc(d['Voided by']) : '') + '</div>' : '') +
       (d.Cuts && d.Status !== 'Released' ? '<div class="note ok"><b>Cuts:</b> ' + esc(d.Cuts) + '</div>' : '') +
       (d['First pack #'] && d['Last pack #'] ? '<div class="note ok"><b>Package numbers ' + esc(d['First pack #']) + '–' + esc(d['Last pack #']) + '</b> (MassWildlife)</div>'
         : d['First pack #'] ? '<div class="note warn" style="font-size:17px">Label the 2 lb packages in order from <b>' + esc(d['First pack #']) + '</b>: ' + esc(d['First pack #']) + ', ' + esc(('000' + (parseInt(d['First pack #'], 10) + 1)).slice(-4)) + ', …</div>' : '') +
       (d.Status === 'Released' ? '<div class="status">Released ' + esc(d.Released) + ' to ' + esc(d['Released to']) + '</div>' : '') +
-      '<div class="actions">' + act + (d.Status !== 'Released' && !isViewer() ? '<button class="btn ghost" data-a="print">Print band</button>' : '') + '</div><div class="form"></div></div>';
+      '<div class="actions">' + act + (d.Status !== 'Released' && d.Status !== 'Voided' && !isViewer() ? '<button class="btn ghost" data-a="print">Print band</button>' : '') + voidBtn + '</div><div class="form"></div></div>';
   }
 
   function act(kind, d, box, after) {
@@ -573,6 +607,9 @@
     const byLast = d.Type === 'Donated' && firstPack > 0;
     const v = id => (document.getElementById(id) || {}).value || '';
     const forms = {
+      void: () => '<p class="status">The row stays on the record and is marked voided, with your name and the reason on it. It stops counting in the cooler, on this board, in the totals and on the Donation report. Nothing is deleted.</p>' +
+        (d['First pack #'] && d['Last pack #'] ? '<p class="note bad">This deer was packaged: <b>' + esc(d['First pack #']) + ' to ' + esc(d['Last pack #']) + '</b>. Voiding it frees those package numbers, and nothing renumbers the deer that came after. Fix the numbering by hand before the next drop-off.</p>' : '') +
+        '<label for="vr">Why</label><input id="vr" type="text" placeholder="Duplicate of 1017202601, checked in twice">',
       skin: () => '<p class="status">Records who skinned this deer. The $' + esc(s.skinRate || 25) +
         ' skinning premium goes to whoever is named here, whether or not they process it.</p>' +
         (isMgr() ? '<label>Skinned by</label><select id="sk">' + (st.home.staff || []).map(x => '<option value="' + esc(x.number) + '"' + (x.number === st.staff.number ? ' selected' : '') + '>' + esc(x.name + ' (' + x.number + ')') + '</option>').join('') + '</select>'
@@ -617,7 +654,8 @@
           '<label for="pn">Receipt, check number or note <span class="hint">optional</span></label><input id="pn" type="text" maxlength="100">' +
           '<p class="status">Cash goes in an envelope for the safe at close-out. Never in a pocket or the truck.</p>' : ''),
     };
-    box.innerHTML = forms[kind]() + '<div class="err" id="ferr"></div><button class="btn" id="fok" style="margin-top:12px">Save</button> <button class="btn ghost" id="fx">Cancel</button>';
+    box.innerHTML = forms[kind]() + '<div class="err" id="ferr"></div><button class="btn" id="fok" style="margin-top:12px">' +
+      (kind === 'void' ? 'Void it' : 'Save') + '</button> <button class="btn ghost" id="fx">Cancel</button>';
     if (kind === 'release') document.getElementById('f1').onchange = e => { document.getElementById('f3').hidden = e.target.value !== 'other'; };
     const calc = () => {
       const drop = !!(document.getElementById('f7') || {}).checked, fr = drop ? 0 : fat;
@@ -637,6 +675,18 @@
     document.getElementById('fx').onclick = () => { box.innerHTML = ''; };
     document.getElementById('fok').onclick = () => {
       const err = m => { document.getElementById('ferr').textContent = m; };
+      if (kind === 'void') {
+        const why = v('vr').trim();
+        if (!why) return err('Say why. The row stays, so the reason is the record.');
+        // Not queued: voiding needs a manager and a live check, and it is rare enough to wait for
+        // signal rather than replay blind from a phone that was offline.
+        const btn = document.getElementById('fok');
+        btn.disabled = true;
+        call({ action: 'voiddeer', band: d.Band, reason: why })
+          .then(() => { box.innerHTML = ''; toast('Voided ' + d.Band); refresh(); if (after) after(); })
+          .catch(e => { btn.disabled = false; err(e.offline ? 'Needs signal to void a check-in.' : e.message); });
+        return;
+      }
       if (kind === 'skin') {
         if (!document.getElementById('k1').checked) return err('Skin it and remove the head at the station behind MHU #1, then tick the box.');
         if (!document.getElementById('k2').checked) return err('Apply the antimicrobial spray, then tick the box.');
@@ -720,6 +770,18 @@
       '<div><label for="cf">MassWildlife confirmation number</label><input id="cf" type="text"></div>' +
       '<div><label for="sd">Date of the shot <span class="hint">the Home Ground ID is built from it</span></label><input id="sd" type="date" value="' + isoDate(now) + '" max="' + isoDate(now) + '"></div>' +
       '</div>' +
+      // Filled in as the name is typed, from hunters the log has already seen. Nothing is entered
+      // until it is tapped.
+      '<div id="hbox"></div>' +
+      // Shown only when the number entered is already on another deer. A seal number belongs to one
+      // animal, so this is a mistake nearly every time, but not always: a hunter's lines on somebody
+      // else's sheet can repeat, and a backfill has to be able to go through on purpose.
+      '<div id="cfdupbox" hidden><label class="choice"><input id="cfdup" type="checkbox"> Use this confirmation number anyway. I have checked the sheet.</label></div>' +
+      // Normal check-in is a deer at the door, so this stays out of the way. A deer carried over
+      // from an existing cooler arrived days ago, and hours hung has to run from then.
+      '<label class="choice"><input id="earlier" type="checkbox"> This deer was already in the cooler before today</label>' +
+      '<div id="arrbox" hidden><label for="arr">Arrived at the cooler <span class="hint">hours hung is counted from here</span></label>' +
+      '<input id="arr" type="datetime-local"></div>' +
       '<div id="addrbox" hidden><label for="ad1">Hunter mailing address <span class="hint">TFMV mails the donation check here</span></label><input id="ad1" type="text" autocomplete="street-address" placeholder="Street or PO box">' +
       '<div class="grid2"><div><label for="adt">Town</label><input id="adt" type="text"></div><div><label for="ads">State</label><input id="ads" type="text" value="MA" maxlength="2" autocapitalize="characters"></div>' +
       '<div><label for="adz">ZIP</label><input id="adz" type="text" inputmode="numeric" maxlength="10"></div></div></div>' +
@@ -750,8 +812,54 @@
       document.head.appendChild(c); }
     const iapNow = () => (document.querySelector('input[name=iap]:checked') || {}).value;
     const showId = () => { document.getElementById('genid').textContent = genId() || 'enter the date of the shot below'; };
+
+    /* Suggest hunters the log has seen as the name is typed, and fill the customer ID, phone and
+       mailing address on a tap. The ID is 8 digits read off a phone screen in a cold trailer, so
+       typing it twice in a season is twice the chance of a wrong digit reaching Martin's sheet.
+       Nothing is filled without the tap, and a field already filled in is never overwritten. */
+    loadHunters().then(() => suggestHunters());
+    function suggestHunters() {
+      const box = document.getElementById('hbox');
+      if (!box) return;
+      const hits = hunterMatches(v('fn'), v('ln'));
+      const typedLic = v('lic').replace(/\D/g, '');
+      if (!hits.length) { box.innerHTML = ''; return; }
+      box.innerHTML = '<p class="status">' + (hits.length === 1 ? 'Checked in here before:' : 'Checked in here before \u2014 tap the right one:') + '</p>' +
+        hits.map((h, i) =>
+          '<button class="btn ghost" data-h="' + i + '" style="width:100%;text-align:left">' +
+          '<b>' + esc(h.name) + '</b>' + (h.id ? ' \u00b7 ' + esc(h.id) : ' \u00b7 no customer ID on file') +
+          '<br><span class="status">' + h.deer + (h.deer === 1 ? ' deer' : ' deer') +
+          (h.lastSeen ? ', last on ' + esc(h.lastSeen) : '') +
+          (h.address ? ' \u00b7 ' + esc(h.address) : '') + '</span></button>').join('') +
+        hits.filter(h => (h.otherIds || []).length).map(h =>
+          '<div class="note bad">' + esc(h.name) + ' has more than one customer ID in the log: <b>' +
+          esc([h.id].concat(h.otherIds).join('</b> and <b>')) + '</b>. One is a typo. Ask them which, and fix the other rows.</div>').join('');
+      box.querySelectorAll('[data-h]').forEach(b => b.onclick = () => {
+        const h = hits[+b.dataset.h];
+        if (h.first) document.getElementById('fn').value = h.first;
+        if (h.last) document.getElementById('ln').value = h.last;
+        if (h.id && !typedLic) document.getElementById('lic').value = h.id;
+        if (h.phone && !v('ph')) document.getElementById('ph').value = h.phone;
+        const a = splitAddress(h.address);
+        if (a && !v('ad1')) {
+          document.getElementById('ad1').value = a.street;
+          document.getElementById('adt').value = a.town;
+          document.getElementById('ads').value = a.state;
+          document.getElementById('adz').value = a.zip;
+        }
+        box.innerHTML = '<div class="note ok">Filled in from ' + esc(h.name) + '\u2019s last check-in. Check the customer ID against their licence before you save.</div>';
+      });
+    }
+    ['fn', 'ln'].forEach(id => { const el = document.getElementById(id); if (el) el.oninput = suggestHunters; });
     document.querySelectorAll('input[name=iap]').forEach(r => r.onchange = showId);
     document.getElementById('sd').onchange = showId;
+    // Revealed only when asked for, and pre-filled with the shot date so a backfill is one tap and
+    // a time rather than a whole date typed in again.
+    document.getElementById('earlier').onchange = e => {
+      const box = document.getElementById('arrbox'), arr = document.getElementById('arr');
+      box.hidden = !e.target.checked;
+      if (e.target.checked && !arr.value) arr.value = (v('sd') || isoDate(now)) + 'T12:00';
+    };
     document.querySelectorAll('input[name=type]').forEach(r => r.onchange = () => {
       const t = (document.querySelector('input[name=type]:checked') || {}).value;
       document.getElementById('porkbox').hidden = t !== 'Private';
@@ -804,12 +912,29 @@
       if (type === 'Donated' && !lic) return err('Enter the hunter\'s MassWildlife customer ID. Martin needs it for donated deer.');
       if (type === 'Donated' && (!v('ad1') || !v('adt') || !v('adz'))) return err('Enter the hunter\'s mailing address (street, town and ZIP). TFMV mails the donation check there.');
       if (!v('cf')) return err('Enter the MassWildlife confirmation number. No confirmation number, no intake.');
+      /* The confirmation number is the state's seal for one animal. Backfilling a season off another
+         processor's sheet is where this goes wrong: a hunter's name appears several times, the first
+         number under it gets used twice, and nobody finds out until packages have shipped under a
+         duplicated seal. Caught here it costs five seconds. Caught later it costs a phone call to
+         MassWildlife. The list includes check-ins still queued offline, so it holds without signal. */
+      const cfv = v('cf').trim().toUpperCase();
+      const cfdup = document.getElementById('cfdup'), cfbox = document.getElementById('cfdupbox');
+      const clash = deerList().find(d => String(d['MassWildlife confirmation'] || '').trim().toUpperCase() === cfv);
+      if (clash && !(cfdup && cfdup.checked)) {
+        if (cfbox) cfbox.hidden = false;
+        return err('Confirmation ' + v('cf') + ' is already on band ' + band(clash.Band) + ' (' +
+          (clash['Hunter name'] || 'no name recorded') + '). A seal number belongs to one deer. Check the sheet \u2014 ' +
+          'if this hunter brought in more than one, each has its own number.');
+      }
       if (type === 'Donated' && !document.getElementById('fd').checked) return err('Donated deer must be field dressed within 4 hours of the shot.');
       if (type !== 'Donated' && coolerCount() >= S().coolerCap) return err('The cooler is full. Hold private and cold-storage deer until there\'s room.');
       const f = { band: b, iap: iap === 'Yes', type, deer: v('deer'), points: v('deer') === 'Antlered buck' ? pts : '', firstName: v('fn'), lastName: v('ln'), customerId: lic, hunterPhone: v('ph'), confirmation: v('cf'),
         cuts: type === 'Private' ? readCuts() : '',
         address: type === 'Donated' ? v('ad1') + ', ' + v('adt') + ', ' + (v('ads') || 'MA').toUpperCase() + ' ' + v('adz') : '',
-        dressed4h: document.getElementById('fd').checked, ddp: document.getElementById('ddp').checked, skinned: false, notes: v('nt'),
+        shotDate: v('sd'),
+        arrived: document.getElementById('earlier').checked ? v('arr') : '',
+        dressed4h: document.getElementById('fd').checked, ddp: document.getElementById('ddp').checked, skinned: false,
+        notes: (v('nt') + (clash ? ' [confirmation also on band ' + band(clash.Band) + ', entered on purpose]' : '')).trim(),
         intakeWeight: v('iw'), weighedAs: document.getElementById('wa').value,
         porkFat: type === 'Private' && !!document.getElementById('pork') && document.getElementById('pork').checked };
       queue('intake', f, 'Check-in ' + b);
