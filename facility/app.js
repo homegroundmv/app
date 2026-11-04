@@ -642,6 +642,19 @@
         (d.Type === 'Donated' && !d['First pack #'] ? '<div class="note bad">Tap <b>Get package numbers</b> before grinding, so the labels run in order.</div>' : '') +
         '<div class="note ' + (fatOn ? 'warn">Grind with <b>' + esc(fatPct) + '% pork fat</b>.' : 'ok">All-venison grind: <b>no pork fat</b>.') + '</div>' +
         (fatOn && d.Type !== 'Donated' ? '<label class="choice"><input id="f7" type="checkbox"> Out of pork fat: grind all venison and take the $' + esc(s.porkAddOn || 20) + ' off the hunter\'s price</label>' : '') +
+        // The one hazard in this process that reaches a food pantry as an undeclared allergen. It is
+        // asked here, at the bench, by the person who applied the stickers — not assumed afterwards.
+        // CCP 4. The wording follows how the deer was taken, because a broadhead and a lead slug
+        // are not the same hazard and asking the same question about both teaches people to tick
+        // without reading.
+        '<label for="f4">Trim discarded (lb)</label><input id="f4" type="number" inputmode="decimal" min="0" step="0.1">' +
+        '<label class="choice"><input id="fw" type="checkbox"> ' +
+        (/archery/i.test(d['Taken with'] || '')
+          ? 'Wound channel trimmed out, and no broadhead fragments in the meat'
+          : 'No meat within 6 inches of the wound channel went into the grind' +
+            (/^lead$/i.test(d['Ammunition'] || '') ? ', and this was a <b>lead</b> projectile' : '')) + '</label>' +
+        '<label class="choice"><input id="f5" type="checkbox"> Allergen sticker on every package' +
+        (fatOn ? ', and \u201cContains pork\u201d where pork fat was added' : '') + '</label>' +
         (d.Type === 'Private' ? '<label class="choice"><input id="f6" type="checkbox"> Grinder cleared before the next hunter\'s deer, so no meat is mixed</label>' : '') +
         '<p class="status">Same food-safety steps for every deer. Full clean-down of the grinder and equipment at least once a day, signed off on the next morning\'s pre-op record.</p>',
       release: () => '<label>Released to</label><select id="f1"><option value="">Choose…</option><option>Hunter pickup</option>' +
@@ -711,8 +724,11 @@
         if (!(c.pk + ip > 0)) return err(byLast ? 'Enter the number on the last label.' : 'Enter the packages.');
         if (d.Type === 'Donated' && !d['First pack #']) return err('Get package numbers first (needs signal), so every label carries its MassWildlife number.');
         if (ip && !(c.il > 0)) return err('Weigh the intact cuts and enter the total.');
+        if (!document.getElementById('fw').checked) return err(/archery/i.test(d['Taken with'] || '') ? 'Trim the wound channel out and check for broadhead fragments, then tick the box.' : 'Trim 6 inches around the wound channel out of the grind, then tick the box. Fragments travel further than the damage you can see.');
+        if (!(Number(v('f4')) >= 0) || v('f4') === '') return err('Weigh the trim you discarded and enter it.');
+        if (!document.getElementById('f5').checked) return err('Put the allergen sticker on every package, then tick the box. No package leaves without one.');
         if (d.Type === 'Private' && !document.getElementById('f6').checked) return err('Clear the grinder before the next hunter\'s deer goes through, then tick the box.');
-        queue('finish', { band: d.Band, groundPackages: c.pk, lastPack: byLast ? Math.round(num(v('f1'))) : '', intactPackages: ip, intactLb: c.il, total: c.total, grinderCleared: d.Type === 'Private', noPork: !!(document.getElementById('f7') || {}).checked }, 'Finish ' + d.Band);
+        queue('finish', { band: d.Band, groundPackages: c.pk, lastPack: byLast ? Math.round(num(v('f1'))) : '', intactPackages: ip, intactLb: c.il, total: c.total, allergen: true, woundTrim: true, trim: num(v('f4')), grinderCleared: d.Type === 'Private', noPork: !!(document.getElementById('f7') || {}).checked }, 'Finish ' + d.Band);
       }
       if (kind === 'release') {
         const to = v('f1') === 'other' ? v('f3').trim() : v('f1');
@@ -762,6 +778,10 @@
         : '<label class="choice" id="porkbox" hidden><input id="pork" type="checkbox"> <span>Add pork fat to the ground (' + esc(s.fatPrivate || 10) + '%), <b>+$' + esc(s.porkAddOn || 20) + '</b>. Local-farm pork fat, as available. Without it, the grind is all venison.</span></label>') +
       '<label for="deer">Deer</label><select id="deer"><option value="">Choose…</option><option>Doe</option><option>Button buck</option><option>Sub-legal adult male</option><option>Antlered buck</option></select>' +
       '<div id="ptsbox" hidden><label for="pts">Points <span class="hint">count every point 1 inch and longer</span></label><input id="pts" type="number" inputmode="numeric" min="1" max="40" step="1" style="max-width:140px"></div>' +
+      // Only the hunter knows this, so it is asked at the door. It decides how hard the wound
+      // channel is trimmed later, and it is the one thing that makes the lead question answerable.
+      '<div class="grid2"><div><label for="tw">Taken with</label><select id="tw"><option value="">Choose\u2026</option><option>Archery</option><option>Shotgun slug</option><option>Muzzleloader</option><option>Not known</option></select></div>' +
+      '<div id="ammobox" hidden><label for="am">Ammunition <span class="hint">lead or copper/solid</span></label><select id="am"><option value="">Choose\u2026</option><option>Lead</option><option>Non-lead</option><option>Not known</option></select></div></div>' +
       '<div class="grid2">' +
       '<div><label for="fn">Hunter first name</label><input id="fn" type="text" autocomplete="off"></div>' +
       '<div><label for="ln">Hunter last name</label><input id="ln" type="text" autocomplete="off"></div>' +
@@ -853,6 +873,11 @@
     ['fn', 'ln'].forEach(id => { const el = document.getElementById(id); if (el) el.oninput = suggestHunters; });
     document.querySelectorAll('input[name=iap]').forEach(r => r.onchange = showId);
     document.getElementById('sd').onchange = showId;
+    document.getElementById('tw').onchange = e => {
+      const fire = e.target.value === 'Shotgun slug' || e.target.value === 'Muzzleloader';
+      document.getElementById('ammobox').hidden = !fire;
+      if (!fire) document.getElementById('am').value = '';
+    };
     // Revealed only when asked for, and pre-filled with the shot date so a backfill is one tap and
     // a time rather than a whole date typed in again.
     document.getElementById('earlier').onchange = e => {
@@ -911,6 +936,8 @@
       if (lic && (lic.length < 5 || lic.length > 8)) return err('The MassWildlife customer ID is 5 to 8 digits.');
       if (type === 'Donated' && !lic) return err('Enter the hunter\'s MassWildlife customer ID. Martin needs it for donated deer.');
       if (type === 'Donated' && (!v('ad1') || !v('adt') || !v('adz'))) return err('Enter the hunter\'s mailing address (street, town and ZIP). TFMV mails the donation check there.');
+      if (!v('tw')) return err('Say how the deer was taken. It decides how hard the wound channel is trimmed.');
+      if ((v('tw') === 'Shotgun slug' || v('tw') === 'Muzzleloader') && !v('am')) return err('Lead or non-lead? Ask the hunter \u2014 it changes how the meat is trimmed.');
       if (!v('cf')) return err('Enter the MassWildlife confirmation number. No confirmation number, no intake.');
       /* The confirmation number is the state's seal for one animal. Backfilling a season off another
          processor's sheet is where this goes wrong: a hunter's name appears several times, the first
@@ -928,7 +955,7 @@
       }
       if (type === 'Donated' && !document.getElementById('fd').checked) return err('Donated deer must be field dressed within 4 hours of the shot.');
       if (type !== 'Donated' && coolerCount() >= S().coolerCap) return err('The cooler is full. Hold private and cold-storage deer until there\'s room.');
-      const f = { band: b, iap: iap === 'Yes', type, deer: v('deer'), points: v('deer') === 'Antlered buck' ? pts : '', firstName: v('fn'), lastName: v('ln'), customerId: lic, hunterPhone: v('ph'), confirmation: v('cf'),
+      const f = { band: b, iap: iap === 'Yes', type, deer: v('deer'), points: v('deer') === 'Antlered buck' ? pts : '', firstName: v('fn'), lastName: v('ln'), customerId: lic, hunterPhone: v('ph'), confirmation: v('cf'), takenWith: v('tw'), ammunition: v('am'),
         cuts: type === 'Private' ? readCuts() : '',
         address: type === 'Donated' ? v('ad1') + ', ' + v('adt') + ', ' + (v('ads') || 'MA').toUpperCase() + ' ' + v('adz') : '',
         shotDate: v('sd'),
