@@ -31,6 +31,13 @@
   const hm2 = hm => { const [h, m] = String(hm).split(':').map(Number); return pad(h) + ':' + pad(m || 0); };
   const t12 = hm => { const [h, m] = String(hm).split(':').map(Number); const ap = h >= 12 ? 'pm' : 'am'; const hh = h % 12 || 12; return hh + (m ? ':' + pad(m) : '') + ' ' + ap; };
   const when = t => { const d = parse(t); return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : esc(t); };
+  // "11/3/2026 17:05" to "17:05", the half of a stamp the clock screens care about.
+  const hhmm = s => { const m = String(s || '').match(/\b(\d{1,2}):(\d{2})\b/); return m ? m[1] + ':' + m[2] : ''; };
+  /* Rows checked in before the name was split in two carry only the one "Hunter name". The
+     correction form has to open on those as well, or the deer that most need correcting are the
+     ones that cannot be.
+     Last word is the surname, matching how the backend splits the same string. */
+  const splitName = n => { const p = String(n || '').trim().split(/\s+/); return p.length < 2 ? { first: p[0] || '', last: '' } : { first: p.slice(0, -1).join(' '), last: p[p.length - 1] }; };
   const first = n => String(n || '').trim().split(/\s+/)[0] || '';
   // Intake band colour: the roll in the printer changes every day through a 5-colour cycle (Settings), so no two deer
   // in the cooler share a colour (a deer hangs at most 5 days).
@@ -345,13 +352,16 @@
         (next ? ' · next booking ' + esc(dayName(next.date).split(',')[0]) + ' ' + t12(next.starts) : '') + '</div>' +
         (here.length ? '<div class="status">Also here: ' + esc(here.map(x => x.name).join(', ')) + '</div>' : '') +
         '</div><button class="btn alt" id="clock">Clock out</button></div>' +
-        (alone ? '<div class="note warn"><b>You are the only one clocked in.</b> Keep your phone on you. Joe gets a push if you have not clocked out ' +
-          esc(s.loneGrace || 30) + ' minutes after ' + esc(h.expectedOut ? t12(h.expectedOut) : 'the time you gave') + '.</div>' : '') +
-        '<button class="plain" id="still">Still here: change my finish time</button><div id="clock-err" class="err"></div></div>'
+        (alone ? '<div class="note warn"><b>You are the only one clocked in.</b> Keep your phone on you.</div>' : '') +
+        (h.expectedOut ? '<div class="status">You get a nudge ' + esc(s.loneGrace || 30) + ' minutes after ' + t12(h.expectedOut) +
+          ' if you have not clocked out, and the managers hear at ' + esc(s.mgrGrace || 60) + ' minutes.</div>' : '') +
+        '<button class="plain" id="still">Still here: change my finish time</button>' +
+        '<button class="plain" id="fixclock">Correct a clock-out time</button><div id="clock-err" class="err"></div></div>'
       : '<div class="card"><div class="deer"><div><b>Not clocked in</b>' +
         '<div class="status">Clock in when you start work, including cleaning and training time.</div>' +
         (next ? '<div class="status">Next booking: ' + esc(dayName(next.date)) + ', ' + t12(next.starts) + '–' + t12(next.ends) + (next.kind === 'Skinning' ? ' (skinning)' : '') + '</div>' : '') +
-        '</div><button class="btn" id="clock">Clock in</button></div><div id="clock-err" class="err"></div></div>';
+        '</div><button class="btn" id="clock">Clock in</button></div>' +
+        '<button class="plain" id="fixclock">Correct a clock-out time</button><div id="clock-err" class="err"></div></div>';
 
     const mine = '<button class="seasonline" data-go="numbers"><span>Your season: <b>' + esc(m.deer || 0) + '</b> deer · <b>' +
       esc(m.skinned || 0) + '</b> skinned · <b>' + esc(fmt(m.packagedLb || 0)) + '</b> lb</span><span class="ch">›</span></button>';
@@ -450,6 +460,40 @@
         (t, bb) => sendClock(bb, { action: 'clock', dir: 'in', expected: t }));
     };
     const still = document.getElementById('still');
+    /* Forgetting to clock out is the normal failure, not the rare one, and the honest fix is to
+       let people say when they actually left. It is pay data, so nothing is silent: the row keeps
+       what the clock recorded, and the managers get told about every correction. */
+    const fixc = document.getElementById('fixclock');
+    if (fixc) fixc.onclick = async () => {
+      fixc.disabled = true;
+      let shifts = [];
+      try { shifts = (await call({ action: 'shiftlog', days: 14 })).shifts || []; }
+      catch (e) { fixc.disabled = false; return clockErr('<div class="err">' + esc(e.offline ? 'Needs signal.' : e.message) + '</div>'); }
+      fixc.disabled = false;
+      const done = shifts.filter(x => x.clockOut);
+      if (!done.length) return clockErr('<div class="status">No finished shifts in the last fortnight to correct.</div>');
+      clockErr('<div class="card" style="margin:10px 0 0;text-align:left"><label for="cs">Which shift</label><select id="cs">' +
+        done.map((x, i) => '<option value="' + i + '">' + esc(x.clockIn) + ' – ' + esc(hhmm(x.clockOut)) +
+          ' (' + esc(x.hours || '0') + ' h)' + (x.autoClosed ? ' — closed automatically' : '') +
+          (x.corrected ? ' — already corrected' : '') + '</option>').join('') + '</select>' +
+        '<label for="co">What time did you actually leave?</label><input id="co" type="time">' +
+        '<label for="cwhy">Why <span class="hint">goes on the record beside the change</span></label><input id="cwhy" type="text" placeholder="Forgot to clock out, left after the last deer">' +
+        '<p class="status">The time the clock recorded is kept alongside this, and the managers are told.</p>' +
+        '<div id="coerr" class="err"></div><button class="btn" id="cook">Save the correction</button> <button class="btn ghost" id="cox">Cancel</button></div>');
+      document.getElementById('cox').onclick = () => showHome();
+      document.getElementById('cook').onclick = async () => {
+        const pick = done[+document.getElementById('cs').value], t = document.getElementById('co').value;
+        const why = (document.getElementById('cwhy').value || '').trim();
+        const e2 = m => { document.getElementById('coerr').textContent = m; };
+        if (!/^\d{1,2}:\d{2}$/.test(t)) return e2('Give the time you actually left.');
+        if (!why) return e2('Say why it is being changed. The reason is the record.');
+        const b2 = document.getElementById('cook'); b2.disabled = true;
+        try {
+          const out = await call({ action: 'correctclock', clockIn: pick.clockIn, out: t, reason: why });
+          showHome('Clock-out changed to ' + t12(hhmm(out.clockOut)) + ' — ' + out.hours + ' h.');
+        } catch (x) { b2.disabled = false; e2(x.offline ? 'Needs signal.' : x.message); }
+      };
+    };
     if (still) still.onclick = () => askFinish('New finish time', 'Clears the overdue alert and starts the clock again from the new time.',
       async (t, bb) => {
         bb.disabled = true;
@@ -573,6 +617,12 @@
     // A duplicate or a mistaken entry is not deleted, it is voided: the row stays and says so.
     const voidBtn = !isViewer() && isMgr() && d.Status !== 'Voided'
       ? ' <button class="btn ghost" data-a="void">Void this check-in</button>' : '';
+    /* A typo in what the hunter said at the door is a typo, not a different deer. Correcting it is
+       an amendment — the Edits tab keeps what it was, what it became, who changed it and why — so
+       people fix the record instead of working around it. */
+    const canEdit = !isViewer() && (isMgr() || /intake/i.test((st.staff || {}).role || ''));
+    const editBtn = canEdit && d.Status !== 'Voided'
+      ? ' <button class="btn ghost" data-a="edit">Correct the record</button>' : '';
     return '<div class="card' + cls + (d.Type === 'Donated' ? ' donated' : '') + '" data-band="' + esc(d.Band) + '">' +
       '<div class="deer"><div><span class="band">' + esc(d.Band) + '</span> ' +
       '<span class="tag ' + (d.Type === 'Donated' ? 'don">DONATED' : 'prv">' + (isCold ? 'COLD STORAGE' : 'PRIVATE')) + '</span>' + (d['DDP deer'] === 'Yes' ? '<span class="tag">DDP</span>' : '') +
@@ -593,7 +643,7 @@
       (d['First pack #'] && d['Last pack #'] ? '<div class="note ok"><b>Package numbers ' + esc(d['First pack #']) + '–' + esc(d['Last pack #']) + '</b> (MassWildlife)</div>'
         : d['First pack #'] ? '<div class="note warn" style="font-size:17px">Label the 2 lb packages in order from <b>' + esc(d['First pack #']) + '</b>: ' + esc(d['First pack #']) + ', ' + esc(('000' + (parseInt(d['First pack #'], 10) + 1)).slice(-4)) + ', …</div>' : '') +
       (d.Status === 'Released' ? '<div class="status">Released ' + esc(d.Released) + ' to ' + esc(d['Released to']) + '</div>' : '') +
-      '<div class="actions">' + act + (d.Status !== 'Released' && d.Status !== 'Voided' && !isViewer() ? '<button class="btn ghost" data-a="print">Print band</button>' : '') + voidBtn + '</div><div class="form"></div></div>';
+      '<div class="actions">' + act + (d.Status !== 'Released' && d.Status !== 'Voided' && !isViewer() ? '<button class="btn ghost" data-a="print">Print band</button>' : '') + editBtn + voidBtn + '</div><div class="form"></div></div>';
   }
 
   function act(kind, d, box, after) {
@@ -606,7 +656,27 @@
     const firstPack = parseInt(d['First pack #'], 10) || 0;
     const byLast = d.Type === 'Donated' && firstPack > 0;
     const v = id => (document.getElementById(id) || {}).value || '';
+    const opts = (list, cur) => ['<option value=""></option>'].concat(list.map(x =>
+      '<option' + (String(cur) === x ? ' selected' : '') + '>' + esc(x) + '</option>')).join('');
     const forms = {
+      /* Only what was said at the door. The band is absent on purpose: it is printed on the
+         carcass and every lot number is built from it, so a wrong band is a void and a fresh
+         check-in. The weights, times, packages and tickboxes are absent too — those are
+         measurements made by doing the work, not answers that can be mistyped. */
+      edit: () => '<p class="status">Corrects what was taken down at check-in. Every change is kept with what it was before, your name and the reason. The band cannot be changed here — a wrong band is a void and a new check-in.</p>' +
+        '<div class="grid2"><div><label for="e_firstName">First name</label><input id="e_firstName" type="text" value="' + esc(d['Hunter first name'] || splitName(d['Hunter name']).first) + '"></div>' +
+        '<div><label for="e_lastName">Last name</label><input id="e_lastName" type="text" value="' + esc(d['Hunter last name'] || splitName(d['Hunter name']).last) + '"></div></div>' +
+        '<div class="grid2"><div><label for="e_customerId">Licence number</label><input id="e_customerId" type="text" inputmode="numeric" value="' + esc(d['Customer ID'] || '') + '"></div>' +
+        '<div><label for="e_phone">Phone</label><input id="e_phone" type="text" inputmode="tel" value="' + esc(d['Hunter phone'] || '') + '"></div></div>' +
+        '<label for="e_confirmation">MassWildlife confirmation</label><input id="e_confirmation" type="text" autocapitalize="characters" value="' + esc(d['MassWildlife confirmation'] || '') + '">' +
+        (d['Sent to Martin'] ? '<p class="note warn">This deer is already on MassWildlife’s sheet. Changing the licence, the name or the confirmation number makes his copy wrong, so it gets flagged for correcting rather than pasted again.</p>' : '') +
+        '<label for="e_address">Mailing address</label><input id="e_address" type="text" value="' + esc(d['Hunter mailing address'] || '') + '">' +
+        '<div class="grid2"><div><label for="e_deer">Deer</label><select id="e_deer">' + opts(['Doe', 'Button buck', 'Sub-legal adult male', 'Antlered buck'], d['Deer']) + '</select></div>' +
+        '<div><label for="e_points">Antler points</label><input id="e_points" type="number" inputmode="numeric" min="0" step="1" value="' + esc(d['Antler points'] || '') + '"></div></div>' +
+        '<div class="grid2"><div><label for="e_takenWith">Taken with</label><select id="e_takenWith">' + opts(['Archery', 'Shotgun slug', 'Muzzleloader', 'Not known'], d['Taken with']) + '</select></div>' +
+        '<div><label for="e_ammunition">Ammunition</label><select id="e_ammunition">' + opts(['Lead', 'Non-lead', 'Not known'], d['Ammunition']) + '</select></div></div>' +
+        '<label for="e_notes">Notes</label><input id="e_notes" type="text" value="' + esc(d['Notes'] || '') + '">' +
+        '<label for="er">Why <span class="hint">goes on the record beside the change</span></label><input id="er" type="text" placeholder="Licence read back off the hunter’s card">',
       void: () => '<p class="status">The row stays on the record and is marked voided, with your name and the reason on it. It stops counting in the cooler, on this board, in the totals and on the Donation report. Nothing is deleted.</p>' +
         (d['First pack #'] && d['Last pack #'] ? '<p class="note bad">This deer was packaged: <b>' + esc(d['First pack #']) + ' to ' + esc(d['Last pack #']) + '</b>. Voiding it frees those package numbers, and nothing renumbers the deer that came after. Fix the numbering by hand before the next drop-off.</p>' : '') +
         '<label for="vr">Why</label><input id="vr" type="text" placeholder="Duplicate of 1017202601, checked in twice">',
@@ -624,7 +694,10 @@
           : '<label class="choice"><input id="f9" type="checkbox"> Antimicrobial spray applied in MHU #1</label>') +
         (isMgr() ? '<label>Processor</label><select id="fp">' + (st.home.staff || []).map(x => '<option value="' + esc(x.number) + '"' + (x.number === st.staff.number ? ' selected' : '') + '>' + esc(x.name + ' (' + x.number + ')') + '</option>').join('') + '</select>'
           : '<p class="status">Processor: ' + esc(st.staff.name + ' (' + st.staff.number + ')') + '</p>') +
-        '<label>Carcass weight (lb) <span class="hint">On the hanging scale: field dressed, skin and head off</span></label><input id="f1" type="number" inputmode="decimal" min="0" step="0.1">',
+        '<label>Carcass weight (lb) <span class="hint">On the hanging scale: field dressed, skin and head off</span></label><input id="f1" type="number" inputmode="decimal" min="0" step="0.1">' +
+        // Somewhere to say "we didn't weigh it". Without one, a number gets invented, and an
+        // invented number is worse than a blank because the yield figure is built on it.
+        '<label class="choice"><input id="f1na" type="checkbox"> Not weighed <span class="hint">No scale reading for this deer. Leaves the weight and the yield blank rather than guessing.</span></label>',
       // Donated deer get their numbers before grinding, so by the time this form opens the first
       // number is known and the last one is on the bench in front of them.
       finish: () => '<p class="status">Started ' + esc(d['Processing started'] || '') + ' · carcass ' + esc(d['Carcass weight (lb)'] || '?') + ' lb</p>' +
@@ -668,7 +741,7 @@
           '<p class="status">Cash goes in an envelope for the safe at close-out. Never in a pocket or the truck.</p>' : ''),
     };
     box.innerHTML = forms[kind]() + '<div class="err" id="ferr"></div><button class="btn" id="fok" style="margin-top:12px">' +
-      (kind === 'void' ? 'Void it' : 'Save') + '</button> <button class="btn ghost" id="fx">Cancel</button>';
+      (kind === 'void' ? 'Void it' : kind === 'edit' ? 'Save the correction' : 'Save') + '</button> <button class="btn ghost" id="fx">Cancel</button>';
     if (kind === 'release') document.getElementById('f1').onchange = e => { document.getElementById('f3').hidden = e.target.value !== 'other'; };
     const calc = () => {
       const drop = !!(document.getElementById('f7') || {}).checked, fr = drop ? 0 : fat;
@@ -688,6 +761,28 @@
     document.getElementById('fx').onclick = () => { box.innerHTML = ''; };
     document.getElementById('fok').onclick = () => {
       const err = m => { document.getElementById('ferr').textContent = m; };
+      if (kind === 'edit') {
+        const why = v('er').trim();
+        if (!why) return err('Say why it is being corrected. The reason goes on the record.');
+        const fields = ['firstName', 'lastName', 'customerId', 'phone', 'address', 'confirmation', 'deer', 'points', 'takenWith', 'ammunition', 'notes'];
+        const changes = {};
+        fields.forEach(k => { changes[k] = v('e_' + k).trim(); });
+        if (!changes.firstName && !changes.lastName) return err('A deer needs a hunter’s name on it.');
+        // Live, like a void: the duplicate check and the Martin flag both need the whole log, and
+        // replaying a blind correction from a phone that was offline is how records get worse.
+        const btn = document.getElementById('fok');
+        btn.disabled = true;
+        call({ action: 'editdeer', band: d.Band, changes: changes, reason: why, clientId: 'edit-' + d.Band + '-' + Date.now() })
+          .then(out => {
+            box.innerHTML = '';
+            if (!out.changed) { toast('Nothing changed.'); return; }
+            toast(out.changed + (out.changed === 1 ? ' change saved' : ' changes saved') + ' on ' + d.Band);
+            if (out.martin) toast('Flagged: MassWildlife’s copy of this row needs correcting.', true);
+            refresh(); if (after) after();
+          })
+          .catch(e => { btn.disabled = false; err(e.offline ? 'Needs signal to correct a record.' : e.message); });
+        return;
+      }
       if (kind === 'void') {
         const why = v('vr').trim();
         if (!why) return err('Say why. The row stays, so the reason is the record.');
@@ -711,10 +806,15 @@
         if (!document.getElementById('f0').checked) return err('Check the confirmation number on the tag first. If it doesn\'t match, stop and tell Joe.');
         if (!document.getElementById('f8').checked) return err('Skin it and remove the head at the station behind MHU #1, then tick the box.');
         if (!document.getElementById('f9').checked) return err('Apply the antimicrobial spray in MHU #1, then tick the box.');
-        if (!(num(v('f1')) > 0)) return err('Weigh the carcass and enter the weight.');
+        const naW = document.getElementById('f1na').checked, wv = num(v('f1'));
+        if (!naW) {
+          if (!(wv > 0)) return err('Weigh the carcass and enter the weight, or tick Not weighed.');
+          // 1 lb and 880 lb both reached the log on 4 November. One slipped finger either way.
+          if (wv < 15 || wv > 250) return err(v('f1') + ' lb is outside the range a deer carcass falls in (15–250 lb). Check the scale, or tick Not weighed.');
+        }
         const p = isMgr() ? v('fp') : st.staff.number;
         const pn = ((st.home.staff || []).find(x => x.number === p) || st.staff).name;
-        queue('start', { band: d.Band, processor: p, processorName: pn, weight: v('f1'), confirmationChecked: true, skinned: true, antimicrobial: true }, 'Start ' + d.Band);
+        queue('start', { band: d.Band, processor: p, processorName: pn, weight: naW ? 'N/A' : v('f1'), notWeighed: naW, confirmationChecked: true, skinned: true, antimicrobial: true }, 'Start ' + d.Band);
       }
       if (kind === 'finish') {
         const c = calc(), ip = Math.round(num(v('f2')));
@@ -804,7 +904,11 @@
       '<input id="arr" type="datetime-local"></div>' +
       '<div id="addrbox" hidden><label for="ad1">Hunter mailing address <span class="hint">TFMV mails the donation check here</span></label><input id="ad1" type="text" autocomplete="street-address" placeholder="Street or PO box">' +
       '<div class="grid2"><div><label for="adt">Town</label><input id="adt" type="text"></div><div><label for="ads">State</label><input id="ads" type="text" value="MA" maxlength="2" autocapitalize="characters"></div>' +
-      '<div><label for="adz">ZIP</label><input id="adz" type="text" inputmode="numeric" maxlength="10"></div></div></div>' +
+      '<div><label for="adz">ZIP</label><input id="adz" type="text" inputmode="numeric" maxlength="10"></div></div>' +
+      /* A required field nobody can satisfy gets defeated, not obeyed: every donated row checked in
+         before 4 November carries "Na, Na, MA 555555". A deer dropped off out of hours arrives
+         without its hunter, so this will keep happening. Record the absence as a fact instead. */
+      '<label class="choice"><input id="adna" type="checkbox"> No address to hand <span class="hint">Held on Patrick’s sheet or coming later. Leaves it blank and flags it on the payment list, rather than putting something made up on a cheque.</span></label></div>' +
       cutsHtml() +
       // Weighed at the door, hide and head on. Not the carcass weight, which is taken at the
       // hanging scale after skinning: two different numbers that must never be mistaken for each
@@ -935,7 +1039,8 @@
       const lic = v('lic').replace(/\D/g, '');
       if (lic && (lic.length < 5 || lic.length > 8)) return err('The MassWildlife customer ID is 5 to 8 digits.');
       if (type === 'Donated' && !lic) return err('Enter the hunter\'s MassWildlife customer ID. Martin needs it for donated deer.');
-      if (type === 'Donated' && (!v('ad1') || !v('adt') || !v('adz'))) return err('Enter the hunter\'s mailing address (street, town and ZIP). TFMV mails the donation check there.');
+      const noAddr = (document.getElementById('adna') || {}).checked;
+      if (type === 'Donated' && !noAddr && (!v('ad1') || !v('adt') || !v('adz'))) return err('Enter the hunter\'s mailing address (street, town and ZIP), or tick "No address to hand". TFMV mails the donation check there.');
       if (!v('tw')) return err('Say how the deer was taken. It decides how hard the wound channel is trimmed.');
       if ((v('tw') === 'Shotgun slug' || v('tw') === 'Muzzleloader') && !v('am')) return err('Lead or non-lead? Ask the hunter \u2014 it changes how the meat is trimmed.');
       if (!v('cf')) return err('Enter the MassWildlife confirmation number. No confirmation number, no intake.');
@@ -957,7 +1062,7 @@
       if (type !== 'Donated' && coolerCount() >= S().coolerCap) return err('The cooler is full. Hold private and cold-storage deer until there\'s room.');
       const f = { band: b, iap: iap === 'Yes', type, deer: v('deer'), points: v('deer') === 'Antlered buck' ? pts : '', firstName: v('fn'), lastName: v('ln'), customerId: lic, hunterPhone: v('ph'), confirmation: v('cf'), takenWith: v('tw'), ammunition: v('am'),
         cuts: type === 'Private' ? readCuts() : '',
-        address: type === 'Donated' ? v('ad1') + ', ' + v('adt') + ', ' + (v('ads') || 'MA').toUpperCase() + ' ' + v('adz') : '',
+        address: (type === 'Donated' && !noAddr) ? v('ad1') + ', ' + v('adt') + ', ' + (v('ads') || 'MA').toUpperCase() + ' ' + v('adz') : '',
         shotDate: v('sd'),
         arrived: document.getElementById('earlier').checked ? v('arr') : '',
         dressed4h: document.getElementById('fd').checked, ddp: document.getElementById('ddp').checked, skinned: false,
@@ -965,6 +1070,10 @@
         intakeWeight: v('iw'), weighedAs: document.getElementById('wa').value,
         porkFat: type === 'Private' && !!document.getElementById('pork') && document.getElementById('pork').checked };
       queue('intake', f, 'Check-in ' + b);
+      /* The hunter roster is cached for six hours, which is fine for a hunter who was here last
+         week and useless for the one standing in front of you with a second deer. A check-in is
+         exactly the event that makes the cache wrong, so refresh it on the spot. */
+      loadHunters(true).catch(() => {});
       // The fee is a separate transaction from the deer, because it is a different organisation's
       // money. It is never a condition of taking the deer in.
       const mem = document.getElementById('feemem'), meth = document.getElementById('feemethod');
