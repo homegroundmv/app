@@ -394,7 +394,7 @@
       big('numbers', 'My numbers', 'Deer, pounds, hours and pay this week', 'view') +
       (atDoor() ? '' : big('raisedrop', 'A deer is coming in', 'A hunter texted or rang · tell the team so someone meets them', 'alt')) +
       big('oncall', 'On call', (h.drops && h.drops.onCall ? first(h.drops.onCall.name) + ' today' : 'Nobody on call today') + ' · who covers an unclaimed drop-off', (h.drops && h.drops.onCall) ? 'view' : 'red') +
-      big('fees', 'Cooler fees', 'The Ag Society\'s season fee · who owes, and what we are holding for them', 'alt') +
+      big('fees', 'Cold storage', 'Hang-only deer · what is owed, what is past collection', 'alt') +
       /* Everybody, not just managers. The person who sees the last box of bags is the one at the
          bench, and if flagging it is three screens into a manager menu it never gets flagged. */
       big('supplies', 'Running low on something?', h.openSupplies
@@ -904,7 +904,7 @@
       '<label>What is happening to this deer?</label>' +
       '<label class="choice"><input type="radio" name="type" value="Donated"> <span><b>Donated</b> (Share the Harvest). TFMV mails the hunter a check: $' + esc(s.payDoe || 150) + ' a doe, $' + esc(s.payBuck || 100) + ' a buck (any male deer).</span></label>' +
       '<label class="choice"><input type="radio" name="type" value="Private"> <span><b>Private</b>: processed for the hunter, $' + esc(s.privatePrice || 250) + '.</span></label>' +
-      '<label class="choice"><input type="radio" name="type" value="Cold storage"> <span><b>Cold storage only</b>: the hunter hangs it and collects it. Not processed. The Agricultural Society charges a season fee of $' + esc(s.feeMember || 20) + ' for members, $' + esc(s.feeNonMember || 50) + ' otherwise \u2014 once a season, not per deer, and waived if they have donated one.</span></label>' +
+      '<label class="choice"><input type="radio" name="type" value="Cold storage"> <span><b>Cold storage only</b>: the hunter hangs it and collects it. Not processed. <b>$' + esc(s.coldFee || 35) + '</b>, covering ' + esc(s.coldDays || 7) + ' days \u2014 then $' + esc(s.coldWeekFee || 50) + ' a week. Free if they donate a deer this season.</span></label>' +
       '<div id="feebox" hidden></div>' +
       (s.porkInStock === false ? '<p class="status" id="porkbox" hidden>Pork fat add-on: not available right now. The grind will be all venison.</p>'
         : '<label class="choice" id="porkbox" hidden><input id="pork" type="checkbox"> <span>Add pork fat to the ground (' + esc(s.fatPrivate || 10) + '%), <b>+$' + esc(s.porkAddOn || 20) + '</b>. Local-farm pork fat, as available. Without it, the grind is all venison.</span></label>') +
@@ -1035,27 +1035,43 @@
       fb.hidden = t !== 'Cold storage';
       if (t === 'Cold storage') checkFee();
     });
-    // The fee is the Society's and seasonal, so the only question at the door is whether this
-    // hunter has already settled for the year. Checked live, because a hunter who donated last
-    // month owes nothing.
+    /* Two things to settle at the counter before a hang-only deer is taken, and they are separate
+       questions. Is there room for it at all — donated and private deer come first, and above the
+       squeeze this one does not come in at all. And what does the hunter owe, which is nothing if
+       they have donated this season. Both are checked live, so whoever is on the door says a
+       number rather than a guess. */
     let feeState = null;
     async function checkFee() {
       const fb = document.getElementById('feebox');
-      const nm = (v('fn') + ' ' + v('ln')).trim(), lic = v('lic').replace(/\D/g, '');
-      if (!nm && !lic) { fb.innerHTML = '<p class="status">Enter the hunter\'s name to check the cooler fee.</p>'; return; }
-      fb.innerHTML = '<p class="status">Checking the cooler fee…</p>';
+      const s = S();
+      fb.innerHTML = '<p class="status">Checking the cooler…</p>';
       try {
-        const out = await call({ action: 'feestatus', hunterNumber: lic, hunterName: nm });
+        const out = await call({ action: 'coldgate' });
         feeState = out;
-        fb.innerHTML = out.waived
-          ? '<div class="note ok"><b>No cooler fee due.</b> They have donated a deer this season, which waives it.</div>'
-          : out.paid
-            ? '<div class="note ok"><b>Cooler fee paid</b> for the season on ' + esc(dateOnly(out.paidOn)) + '.</div>'
-            : '<div class="note warn"><b>Cooler fee not paid this season.</b> $' + out.memberFee + ' for Agricultural Society members, $' + out.nonMemberFee + ' otherwise. It is the Society\'s money, kept separate from ours.</div>' +
-              '<label class="choice"><input type="checkbox" id="feemem"> <span>They are an Agricultural Society member ($' + out.memberFee + ' instead of $' + out.nonMemberFee + ')</span></label>' +
-              '<label for="feemethod">How are they paying?</label><select id="feemethod"><option value="">Not now \u2014 log it and chase them</option>' +
-              (S().payMethods || ['Cash', 'Card (Square)', 'Check']).map(x => '<option>' + esc(x) + '</option>').join('') + '</select>';
-      } catch (e) { fb.innerHTML = '<p class="status">Couldn\'t check the cooler fee' + (e.offline ? ' (no signal)' : '') + '. Check it in Cooler fees afterwards.</p>'; feeState = null; }
+        const gate = !out.ok
+          ? '<div class="note bad"><b>The cooler is ' + out.pct + '% full and is not taking hang-only deer.</b> ' +
+            'Donated and privately processed deer still come in. Offer them donation or private processing, ' +
+            'or ask them to come back. If they say no, log it as turned away.</div>'
+          : out.gated
+            ? '<div class="note warn"><b>The cooler is ' + out.pct + '% full.</b> A manager has to approve a hang-only deer at this point.</div>'
+            : '';
+        const forfeitAt = (s.coldDays || 7) + (s.coldForfeitDays || 7);
+        fb.innerHTML = gate +
+          '<div class="note"><b>$' + (s.coldFee || 35) + '</b> covers ' + (s.coldDays || 7) + ' days, then $' +
+          (s.coldWeekFee || 50) + ' a week. They get a text on day ' + (s.coldRemindDays || 5) +
+          ' to collect within 48 hours. <b>Free if they donate a deer this season.</b></div>' +
+          '<label for="feemethod">How are they paying?</label><select id="feemethod">' +
+          '<option value="">Not now — bill it and chase them</option>' +
+          (s.payMethods || ['Cash', 'Card (Square)', 'Check']).map(x => '<option>' + esc(x) + '</option>').join('') +
+          '</select>' +
+          '<p class="status">Say it out loud at the counter: uncollected after ' + forfeitAt +
+          ' days and the deer is donated. It is on the drop-off slip and they have to agree to it, ' +
+          'or it does not bind.</p>';
+      } catch (e) {
+        fb.innerHTML = '<p class="status">Couldn\'t check the cooler' + (e.offline ? ' (no signal)' : '') +
+          '. Take the deer — the charge is raised automatically and Cold storage will show it.</p>';
+        feeState = null;
+      }
     }
     ['fn', 'ln', 'lic'].forEach(id => { const el = document.getElementById(id); if (el) el.onblur = () => {
       if (((document.querySelector('input[name=type]:checked') || {}).value) === 'Cold storage') checkFee(); }; });
@@ -1114,12 +1130,13 @@
          week and useless for the one standing in front of you with a second deer. A check-in is
          exactly the event that makes the cache wrong, so refresh it on the spot. */
       loadHunters(true).catch(() => {});
-      // The fee is a separate transaction from the deer, because it is a different organisation's
-      // money. It is never a condition of taking the deer in.
-      const mem = document.getElementById('feemem'), meth = document.getElementById('feemethod');
-      if (type === 'Cold storage' && feeState && !feeState.settled && mem && meth && meth.value) {
-        queue('payfee', { hunterNumber: lic, hunterName: (v('fn') + ' ' + v('ln')).trim(), hunterPhone: v('ph'),
-          member: mem.checked, method: meth.value }, 'Cooler fee');
+      /* Paying is a separate transaction from the deer and is never a condition of taking it in.
+         The charge is raised by the check-in itself, so an unpaid deer is a row on the Cold
+         storage screen rather than an argument at the counter. This only fires when they paid
+         there and then, and it is queued like everything else so a dead signal doesn't lose it. */
+      const meth = document.getElementById('feemethod');
+      if (type === 'Cold storage' && meth && meth.value) {
+        queue('payfee', { band: b, method: meth.value }, 'Storage charge ' + b);
       }
       printBand({ Band: b, Intake: stamp(), Type: type, Deer: f.deer, 'MassWildlife confirmation': f.confirmation });
       showBoard();
@@ -1615,49 +1632,93 @@
    * the Society's money, not Home Ground's, so it is counted and handed over on its own and never
    * appears in the Home Ground cash figures.
    */
+  /* Cold storage, as money rather than as deer. One row per hanging hang-only deer: how long it
+     has been here, what the hunter owes today, and how close it is to being forfeited. Replaced
+     the Agricultural Society's season-fee screen on 6 Nov — their fee was for their cooler; this
+     is Home Ground's cooler, insured and staffed by Home Ground, so the charge is Home Ground's. */
   async function showFees() {
-    frame('fees', 'Cooler fees', '<div id="fb"><p class="status">Loading…</p></div>');
+    frame('fees', 'Cold storage', '<div id="fb"><p class="status">Loading…</p></div>');
     let d;
     try { d = await call({ action: 'fees' }); }
     catch (e) { document.getElementById('fb').innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal.' : e.message) + '</div>'; return; }
     const box = document.getElementById('fb');
     const money = n => '$' + (Math.round(n * 100) / 100);
-    box.innerHTML =
-      '<div class="card"><b>This is the Agricultural Society\'s money</b><div class="status">A season fee for the cooler: ' +
-      money(d.memberFee) + ' for Society members, ' + money(d.nonMemberFee) + ' otherwise, once a season and not per deer. Donating a deer waives it. ' +
-      'It is kept apart from Home Ground\'s cash from the moment it is taken, and handed over as its own transaction.</div>' +
-      '<div class="tiles">' + tile(money(d.heldTotal), 'Held for MVAS') + tile(d.heldCount, 'Fees held') +
-      tile(money(d.seasonTotal), 'Season total') + tile(d.waivedCount, 'Waived by donating') + '</div>' +
-      (d.heldCash ? '<div class="note warn">' + money(d.heldCash) + ' of that is cash (' + d.heldCashCount + ' fee' + (d.heldCashCount === 1 ? '' : 's') + '). Keep it in its own envelope, not with Home Ground\'s takings.</div>' : '') +
-      (d.lastHandover ? '<div class="status">Last handed over ' + esc(when(d.lastHandover.when)) + '.</div>' : '<div class="status">Nothing has been handed over yet.</div>') +
-      (d.manager && d.heldTotal ? '<button class="btn" id="hand">Hand ' + money(d.heldTotal) + ' to the Ag Society</button><div id="handbox"></div>'
-        : d.heldTotal ? '<p class="status">A manager hands it over.</p>' : '') + '</div>' +
-      (d.owing.length ? '<div class="card"><b>Not paid this season (' + d.owing.length + ')</b>' +
-        '<div class="status">Hunters with a deer in cold storage who have not settled. Chase them — never hold a deer over it.</div>' +
-        d.owing.map(o => '<div class="trow"><div><b>' + esc(o.hunter || o.hunterNumber) + '</b><div class="status">cold storage since ' + esc(o.since) +
-          (o.phone ? ' · <a href="tel:' + esc(String(o.phone).replace(/[^\d+]/g, '')) + '">' + esc(o.phone) + '</a>' : '') + '</div></div>' +
-          '<div class="tval" style="font-size:17px">' + money(o.memberFee) + '/' + money(o.nonMemberFee) + '</div></div>').join('') + '</div>' : '') +
-      '<div class="card"><b>Fees this season</b>' +
-      (d.rows.length ? d.rows.map(r => '<div class="trow"><div><b>' + esc(r.hunter) + '</b><div class="status">' +
-        esc(when(r.paid)) + ' · ' + (r.waived ? 'waived (donated)' : esc(r.method || 'logged, not paid')) +
-        (r.member ? ' · member' : '') + ' · ' + esc(r.takenBy) +
-        (r.handedOver ? ' · handed over ' + esc(String(r.handedOver).split(' ')[0]) : '') + '</div></div>' +
-        '<div class="tval" style="font-size:17px">' + (r.waived ? '—' : money(r.amount)) + '</div></div>').join('')
-        : '<p class="status">None yet.</p>') + '</div>';
-    const hb = document.getElementById('hand');
-    if (hb) hb.onclick = () => {
-      document.getElementById('handbox').innerHTML =
-        '<label for="hto">Who at the Agricultural Society took it?</label><input id="hto" type="text" autocomplete="off">' +
-        '<label for="hnote">Note <span class="hint">Optional — receipt number, how it was handed over</span></label><input id="hnote" type="text">' +
-        '<div class="err" id="herr"></div><button class="submit" id="hok">Record the handover</button>';
-      document.getElementById('hok').onclick = async () => {
-        const to = document.getElementById('hto').value.trim();
-        if (!to) { document.getElementById('herr').textContent = 'Say who took it. This is somebody else\'s money, so the record has to name a person.'; return; }
-        const b = document.getElementById('hok'); b.disabled = true; b.textContent = 'Recording…';
-        try { await call({ action: 'handoverfees', fields: { to: to, note: document.getElementById('hnote').value.trim() } }); showFees(); }
-        catch (e) { b.disabled = false; b.textContent = 'Record the handover'; document.getElementById('herr').textContent = e.offline ? 'Needs signal.' : e.message; }
-      };
+    const row = x => {
+      const tone = x.forfeitDue ? 'bad' : x.overdue ? 'warn' : '';
+      const state = x.waived ? 'free — donated this season'
+        : x.settled ? 'paid'
+        : x.overdue ? Math.floor(x.overdueDays) + ' day' + (Math.floor(x.overdueDays) === 1 ? '' : 's') + ' past collection'
+        : 'collect by ' + x.collectBy;
+      return '<div class="trow' + (tone ? ' ' + tone : '') + '" data-band="' + esc(x.band) + '">' +
+        '<div><b>' + esc(x.band) + '</b> · ' + esc(x.hunter || 'no name') +
+        '<div class="status">in ' + x.daysHeld + ' day' + (x.daysHeld === 1 ? '' : 's') + ' · ' + esc(state) +
+        (x.phone ? ' · <a href="tel:' + esc(String(x.phone).replace(/[^\d+]/g, '')) + '">' + esc(x.phone) + '</a>' : ' · no phone on file') +
+        (x.attempts ? ' · ' + x.attempts + ' attempt' + (x.attempts === 1 ? '' : 's') + ' logged' : '') +
+        '</div></div>' +
+        '<div class="tval" style="font-size:17px">' + (x.waived ? '—' : money(x.owing)) + '</div></div>';
     };
+    box.innerHTML =
+      '<div class="card"><b>What cold storage costs</b><div class="status">' +
+      money(d.fee) + ' a deer, covering ' + d.coldDays + ' days. ' + money(d.weekFee) +
+      ' for each week after that, or part of one. The hunter is texted on day ' + d.remindDays +
+      ' to collect within 48 hours. Donating a deer this season makes it free; private processing includes it.</div>' +
+      '<div class="tiles">' + tile(d.deer.length, 'Hanging now') + tile(money(d.owingTotal), 'Owing') +
+      tile(d.overdueCount, 'Past collection') + tile(money(d.takenThisSeason), 'Taken this season') + '</div>' +
+      (d.gate && !d.gate.ok
+        ? '<div class="note bad">The cooler is ' + d.gate.pct + '% full. <b>No more hang-only deer</b> until it comes down. Donated and private still come in.</div>'
+        : d.gate && d.gate.gated
+          ? '<div class="note warn">The cooler is ' + d.gate.pct + '% full. A manager has to approve each hang-only deer.</div>'
+          : '') + '</div>' +
+      (d.deer.length
+        ? '<div class="card"><b>In the cooler now (' + d.deer.length + ')</b>' +
+          '<div class="status">Longest first. Tap one to log a call, take payment or forfeit it.</div>' +
+          d.deer.map(row).join('') + '</div>'
+        : '<div class="card"><b>In the cooler now</b><p class="status">No hang-only deer hanging.</p></div>') +
+      (d.forfeitReady
+        ? '<div class="note bad"><b>' + d.forfeitReady + ' deer can be forfeited.</b> Three logged attempts to reach the hunter are needed first, ' +
+          'and it only binds because the drop-off slip says so.</div>'
+        : '') +
+      '<div id="actbox"></div>';
+
+    // One row open at a time: the actions need the band and there is no sense in several forms.
+    box.querySelectorAll('.trow[data-band]').forEach(el => { el.onclick = () => openStorage(el.dataset.band, d); });
+  }
+
+  function openStorage(band, d) {
+    const x = d.deer.filter(r => r.band === band)[0];
+    if (!x) return;
+    const ab = document.getElementById('actbox');
+    const money = n => '$' + (Math.round(n * 100) / 100);
+    ab.innerHTML = '<div class="card"><b>' + esc(band) + '</b> · ' + esc(x.hunter || 'no name') +
+      '<div class="status">In ' + x.daysHeld + ' days. ' +
+      (x.waived ? 'Free: they donated this season.' : money(x.owing) + ' owing of ' + money(x.due) + '.') +
+      ' Forfeiture at ' + x.forfeitAt + ' days.</div>' +
+      '<button class="btn" id="sc">Log an attempt to reach them</button>' +
+      (!x.waived && x.owing > 0 ? '<label for="smeth">Take payment</label><select id="smeth">' +
+        '<option value="">How did they pay?</option>' +
+        (d.methods || ['Cash', 'Card (Square)', 'Check']).map(m => '<option>' + esc(m) + '</option>').join('') +
+        '</select><button class="btn" id="sp">Mark ' + money(x.owing) + ' paid</button>' : '') +
+      (d.manager && x.forfeitDue
+        ? '<label for="fwhy">Forfeit this deer <span class="hint">It becomes a donated deer and what is owed is written off</span></label>' +
+          '<input id="fwhy" type="text" placeholder="What happened">' +
+          '<button class="submit" id="ff">Forfeit ' + esc(band) + ' to donation</button>'
+        : x.forfeitDue ? '<p class="status">A manager forfeits a deer.</p>' : '') +
+      '<div class="err" id="serr"></div></div>';
+    const go = async (fields, action) => {
+      const e = document.getElementById('serr'); e.textContent = '';
+      try { await call({ action: action, fields: fields }); showFees(); }
+      catch (err) { e.textContent = err.offline ? 'Needs signal.' : err.message; }
+    };
+    document.getElementById('sc').onclick = () => go({ band: band, how: 'called' }, 'storagecontact');
+    const sp = document.getElementById('sp');
+    if (sp) sp.onclick = () => {
+      const m = document.getElementById('smeth').value;
+      if (!m) { document.getElementById('serr').textContent = 'Say how they paid.'; return; }
+      queue('payfee', { band: band, method: m }, 'Storage charge ' + band);
+      showFees();
+    };
+    const ff = document.getElementById('ff');
+    if (ff) ff.onclick = () => go({ band: band, note: document.getElementById('fwhy').value.trim() }, 'forfeit');
   }
 
   /* ---------- numbers ---------- */
@@ -1846,11 +1907,12 @@
       '<div class="card"><b>Today</b><div class="tiles">' + tile(x.today.in, 'Deer in') + tile(x.today.processed, 'Processed') + tile(fmt(x.today.lb), 'lb packaged') + tile(x.today.released, 'Released') + '</div>' +
       (x.today.turnedAway ? '<div class="status">' + x.today.turnedAway + ' turned away today.</div>' : '') + '</div>' +
       (x.cash ? cashHtml(x.cash) : '') +
-      (x.mvas && (x.mvas.heldTotal || x.mvas.seasonTotal) ?
-        '<div class="card"><b>Ag Society cooler fees</b> <span class="status">their money, not ours</span>' +
-        '<div class="tiles">' + tile('$' + x.mvas.heldTotal, 'Held for MVAS') + tile('$' + x.mvas.seasonTotal, 'Season total') + '</div>' +
-        (x.mvas.heldCash ? '<div class="status">$' + x.mvas.heldCash + ' of it is cash, in its own envelope.</div>' : '') +
-        '<div class="status"><button class="plain" data-go2="fees" style="padding:0">Cooler fees</button></div></div>' : '') +
+      (x.storage && x.storage.hanging ?
+        '<div class="card"><b>Cold storage</b> <span class="status">hang-only deer</span>' +
+        '<div class="tiles">' + tile(x.storage.hanging, 'Hanging') + tile('$' + x.storage.owing, 'Owing') + '</div>' +
+        (x.storage.overdue ? '<div class="note warn">' + x.storage.overdue + ' past collection' +
+          (x.storage.forfeitReady ? ', ' + x.storage.forfeitReady + ' can be forfeited' : '') + '.</div>' : '') +
+        '<div class="status"><button class="plain" data-go2="fees" style="padding:0">Cold storage</button></div></div>' : '') +
       '<div class="card"><b>Cleaning and upkeep</b> <span class="status">last logged</span>' +
       up('Sanitizer test', x.upkeep.sanitizer) + up('Thermometer check', x.upkeep.thermometer) +
       // Nightly, and the one on this card that is a food safety step rather than housekeeping.
