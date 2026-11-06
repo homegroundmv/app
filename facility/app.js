@@ -605,11 +605,32 @@
   }
 
   /* ---------- cooler board ---------- */
+  const RANK = { 'Donated': 1, 'Private': 2, 'Cold storage': 3 };
+  const rankOf = d => RANK[d && d.Type] || 9;
+  const rankName = r => ({ 1: 'donated', 2: 'custom processing', 3: 'cold storage' })[r] || 'other';
+  // Within 24 hours of the maximum hold, rank stops mattering: this one is next either way.
+  const urgentDeer = d => d.Type !== 'Cold storage' && hoursHung(d) >= (S().maxHold || 120) - 24;
+  const sortKey = d => (urgentDeer(d) ? 0 : rankOf(d)) * 1e6 - hoursHung(d);
+  /* Deer of a higher priority than this one that are still waiting. Computed here rather than
+     asked of the server, because the warning has to land before the action is queued \u2014 a
+     queued start that bounces off the server tells the processor nothing until much later. */
+  function aheadOf(d, all) {
+    if (!d || d.Type === 'Cold storage' || urgentDeer(d)) return [];
+    /* Two reasons a deer is ahead of this one, and an early version of this got the first
+       backwards: a carcass near the maximum hold goes first WHATEVER its rank \u2014 being urgent
+       makes it more entitled, not less \u2014 and a higher-rank deer goes first among the rest. */
+    return (all || []).filter(x => x.Status === 'Hanging' && x.Band !== d.Band &&
+      x.Type !== 'Cold storage' && (urgentDeer(x) || rankOf(x) < rankOf(d)))
+      .sort((a, b) => sortKey(a) - sortKey(b));
+  }
+
   function showBoard() {
     const s = S();
     const all = deerList();
     const keep = list => bandFilter ? list.filter(d => colourOf(d) === bandFilter) : list;
-    const hanging = keep(all.filter(d => d.Status === 'Hanging')).sort((a, b) => (a.Type === 'Donated' ? 0 : 1) - (b.Type === 'Donated' ? 0 : 1) || hoursHung(b) - hoursHung(a));
+    /* Donated, then custom processing, then cold storage \u2014 except that a carcass near the
+       maximum hold jumps the lot, because spoilage is not a preference to be traded off. */
+    const hanging = keep(all.filter(d => d.Status === 'Hanging')).sort((a, b) => sortKey(a) - sortKey(b));
     const proc = keep(all.filter(d => d.Status === 'Processing'));
     const ready = all.filter(d => d.Status === 'Ready');
     const released = all.filter(d => d.Status === 'Released').slice(-10).reverse();
@@ -620,7 +641,15 @@
       '<div class="card"><b>In the cooler: ' + n + ' of ' + s.coolerCap + '</b>' +
       (full ? '<div class="note bad">Cooler is full. Hold private intakes until a deer is processed.</div>'
         : n >= Math.ceil(s.coolerCap * s.coolerAlert / 100) ? '<div class="note warn">Getting full. Process the oldest deer first.</div>' : '') +
-      '<div class="status">Donated deer first, then oldest first. Amber: ' + s.startBy + ' hours hung, start processing. Red: ' + s.maxHold + ' hours, over the maximum hold: tell Joe.</div>' +
+      (() => {
+        const up = hanging.filter(d => d.Type !== 'Cold storage')[0];
+        if (!up) return '<div class="status">Nothing waiting to be processed.</div>';
+        return '<div class="note' + (urgentDeer(up) ? ' bad' : ' ok') + '"><b>Next up: ' + esc(up.Band) + '</b> \u00b7 ' +
+          esc(rankName(rankOf(up))) + ' \u00b7 ' + Math.round(hoursHung(up)) + ' h hung' +
+          (urgentDeer(up) ? ' \u2014 <b>near the maximum hold, so it goes first whatever its priority</b>' : '') +
+          '</div>';
+      })() +
+      '<div class="status"><b>Donated first, then custom processing, then cold storage</b> \u2014 oldest first within each. A deer within 24 h of the ' + s.maxHold + '-hour maximum hold jumps the queue. Amber: ' + s.startBy + ' hours hung, start processing. Red: over the maximum hold, tell Joe.</div>' +
       '<button class="plain" id="reload">Refresh now</button></div>' +
       bandKeyHtml() +
       (bandFilter ? '<div class="note ok">Showing ' + esc(bandFilter) + ' bands only. <button class="plain" id="clearband" style="padding:0">Show them all</button></div>' : '') +
@@ -851,7 +880,20 @@
         }
         const p = isMgr() ? v('fp') : st.staff.number;
         const pn = ((st.home.staff || []).find(x => x.number === p) || st.staff).name;
-        queue('start', { band: d.Band, processor: p, processorName: pn, weight: naW ? 'N/A' : v('f1'), notWeighed: naW, confirmationChecked: true, skinned: true, antimicrobial: true }, 'Start ' + d.Band);
+        /* Priority, asked once and recorded if overridden. Not a block: a processor at six in the
+           morning with a good reason and no manager on site should not be stuck. But an override
+           nobody can see is the same as no rule at all, so going ahead writes it to the Log. */
+        const ahead = aheadOf(d, deerList());
+        if (ahead.length && !window.confirm(
+          ahead.length + ' deer ' + (ahead.length === 1 ? 'is' : 'are') + ' ahead of ' + d.Band +
+          ' in the queue:\n\n' + ahead.slice(0, 4).map(x =>
+            '  ' + x.Band + ' \u2014 ' + rankName(rankOf(x)) + ', ' + Math.round(hoursHung(x)) + ' h' +
+            (urgentDeer(x) ? ' (near the maximum hold)' : '')).join('\n') +
+          (ahead.length > 4 ? '\n  \u2026and ' + (ahead.length - 4) + ' more' : '') +
+          '\n\nStart ' + d.Band + ' anyway? This is recorded.')) {
+          return err('Start ' + ahead[0].Band + ' instead, or confirm the override.');
+        }
+        queue('start', { band: d.Band, processor: p, processorName: pn, weight: naW ? 'N/A' : v('f1'), notWeighed: naW, confirmationChecked: true, skinned: true, antimicrobial: true, ack: ahead.length > 0 }, 'Start ' + d.Band);
       }
       if (kind === 'finish') {
         const c = calc(), ip = Math.round(num(v('f2')));
@@ -1650,6 +1692,95 @@
    * the Society's money, not Home Ground's, so it is counted and handed over on its own and never
    * appears in the Home Ground cash figures.
    */
+  /* ---------- handing a payment to Square ----------
+     The counter has Square Point of Sale on the same iPad. Without this, somebody types the
+     amount into Square by hand and then types the method into this app by hand, and the two
+     records only agree if nobody fat-fingers anything. With it, the amount goes across, the
+     transaction ID comes back, and the Square payment and the deer are tied together for good —
+     which is what makes the 1099-K reconciliation mechanical rather than a January afternoon.
+
+     Mechanics: we leave the app entirely (a URL scheme), Square takes the payment, and Square
+     reopens us at the callback URL with the result in ?data=. On iOS that reload can be a cold
+     start, so NOTHING may be held in memory across the jump — what we need to finish the job is
+     written to localStorage first, and the band also rides along in Square's own `state` field
+     as a belt-and-braces copy.
+
+     The whole thing is dormant unless a Square application ID is set, and every path falls back
+     to the manual method, because a reader that will not talk is not a reason to hold up a
+     hunter at the counter. */
+
+  const SQ_PENDING = 'hg-square-pending';
+
+  function squareReady() {
+    const s = S();
+    return !!(s && s.squareAppId);
+  }
+
+  function squareStart(job) {
+    const s = S();
+    if (!s.squareAppId) return false;
+    // Square wants the smallest currency unit, as a string.
+    const cents = String(Math.round(Number(job.amount) * 100));
+    if (!(Number(cents) > 0)) return false;
+    try { localStorage.setItem(SQ_PENDING, JSON.stringify(Object.assign({ at: Date.now() }, job))); }
+    catch (e) { /* private mode: the state field below still carries the band */ }
+    const data = {
+      amount_money: { amount: cents, currency_code: 'USD' },
+      callback_url: s.link || location.href.split('?')[0],
+      client_id: s.squareAppId,
+      version: '1.3',
+      notes: (job.band || '') + (job.hunter ? ' · ' + job.hunter : ''),
+      state: job.band || '',
+      options: { supported_tender_types: ['CREDIT_CARD'], auto_return: true },
+    };
+    if (s.squareLocationId) data.location_id = s.squareLocationId;
+    window.location = 'square-commerce-v1://payment/create?data=' + encodeURIComponent(JSON.stringify(data));
+    return true;
+  }
+
+  /* Called once on boot. If Square sent us back, finish what was started before we left. */
+  function squareReturn() {
+    const q = new URLSearchParams(location.search);
+    const raw = q.get('data');
+    if (!raw) return null;
+    // Clear it from the address bar so a refresh does not replay the payment.
+    try { history.replaceState({}, '', location.pathname); } catch (e) {}
+    let out = {};
+    try { out = JSON.parse(raw); } catch (e) { return null; }
+    let job = {};
+    try { job = JSON.parse(localStorage.getItem(SQ_PENDING) || '{}'); } catch (e) {}
+    try { localStorage.removeItem(SQ_PENDING); } catch (e) {}
+    const band = job.band || out.state || '';
+    if (out.status !== 'ok') {
+      const why = {
+        payment_canceled: 'The payment was cancelled in Square.',
+        not_logged_in: 'Nobody is signed in to Square on this device.',
+        no_network_connection: 'Square had no signal.',
+        could_not_perform: 'Square has an unfinished transaction open — clear it and try again.',
+        user_not_active: 'That Square location has not enabled card processing.',
+        user_id_mismatch: 'The Square location signed in here is not the one in Settings.',
+        data_invalid: 'Square rejected the request. Check the application ID and that the Web Callback URL in the Square Developer Console matches the Facility app link exactly.',
+      }[out.error_code] || ('Square said: ' + (out.error_code || 'something went wrong') + '.');
+      return { ok: false, band: band, job: job, message: why + (band ? ' Nothing was recorded against ' + band + '.' : '') };
+    }
+    // Offline Mode returns no transaction_id, only the device-generated one. Keep whichever came.
+    const id = out.transaction_id || out.client_transaction_id || '';
+    return { ok: true, band: band, job: job, squareId: id,
+      offline: !out.transaction_id && !!out.client_transaction_id };
+  }
+
+  /* Finish a returned Square payment: queue it the same way a hand-keyed one would be, so an
+     offline queue, a duplicate guard and the audit line all behave identically. */
+  function squareFinish(r) {
+    if (!r) return;
+    if (!r.ok) { toast(r.message, false); return; }
+    const job = r.job || {};
+    const f = Object.assign({}, job.fields || {}, { method: 'Card (Square)', squareId: r.squareId });
+    queue(job.action || 'payfee', f, (job.label || 'Payment') + ' ' + (r.band || ''));
+    toast('Square payment taken' + (r.offline ? ' (offline — it will settle when Square has signal)' : '') +
+      '. ' + (r.band || '') + ' recorded.', true);
+  }
+
   /* ---------- front desk ----------
      Four jobs that are one job: a deer arriving, a deer leaving, a drop-off to claim, and money.
      They lived on four screens, which works for somebody who has used the app all season and
@@ -1665,15 +1796,18 @@
 
     const row = x => {
       const tone = x.forfeitDue ? 'bad' : x.overdue ? 'warn' : '';
-      const owes = x.waived ? 'free — donated this season'
-        : x.owing > 0 ? money(x.owing) + ' due on collection' : 'paid';
+      const priv = x.kind === 'private';
+      const detail = priv
+        ? 'processed \u00b7 ready since ' + esc(x.since) + (x.lb ? ' \u00b7 ' + x.lb + ' lb' : '')
+        : 'in ' + x.daysHeld + ' day' + (x.daysHeld === 1 ? '' : 's') +
+          (x.overdue ? ' \u00b7 <b>' + Math.floor(x.overdueDays) + ' past collection</b>'
+                     : ' \u00b7 collect by ' + esc(x.collectBy));
       return '<div class="trow' + (tone ? ' ' + tone : '') + '" data-out="' + esc(x.band) + '">' +
-        '<div><b>' + esc(x.band) + '</b>' + (x.colour ? ' · ' + esc(x.colour) : '') +
-        '<div class="status">' + esc(x.hunter || 'no name') + ' · ' + esc(x.deer || 'deer') +
-        ' · in ' + x.daysHeld + ' day' + (x.daysHeld === 1 ? '' : 's') +
-        (x.overdue ? ' · <b>' + Math.floor(x.overdueDays) + ' past collection</b>' : ' · collect by ' + esc(x.collectBy)) +
-        '</div></div>' +
-        '<div class="tval" style="font-size:17px">' + (x.waived ? '—' : money(x.owing)) + '</div></div>';
+        '<div><b>' + esc(x.band) + '</b> <span class="hint">' + (priv ? 'processing' : 'cold storage') + '</span>' +
+        (x.colour ? ' \u00b7 ' + esc(x.colour) : '') +
+        '<div class="status">' + esc(x.hunter || 'no name') + ' \u00b7 ' + esc(x.deer || 'deer') +
+        ' \u00b7 ' + detail + '</div></div>' +
+        '<div class="tval" style="font-size:17px">' + (x.waived ? '\u2014' : money(x.owing)) + '</div></div>';
     };
 
     box.innerHTML =
@@ -1699,8 +1833,8 @@
 
       '<div class="card"><b>Collecting a deer (' + d.collect.length + ')</b>' +
       (d.collect.length
-        ? '<div class="status">Tap the deer they came for. Longest in first.</div>' + d.collect.map(row).join('')
-        : '<p class="status">No hang-only deer waiting to be collected.</p>') +
+        ? '<div class="status">Tap the deer they came for \u2014 cold storage and finished processing together, longest waiting first.</div>' + d.collect.map(row).join('')
+        : '<p class="status">Nothing waiting to be collected.</p>') +
       '</div>' +
 
       (d.drops.length
@@ -1728,32 +1862,61 @@
      it is deliberately not a gate. Refusing to hand back a hunter's own carcass over $50 is a lien
      claim, and not one worth making at a counter with other hunters watching. A manager can let it
      go unpaid with a reason. What cannot happen is the question going unasked. */
+  /* Handing a deer over — a hang-only one the hunter collects whole, or a privately processed one
+     with $250 on it. Same door, same three questions: who is taking it, has the money been
+     settled, and release it. They used to live on two screens, which split the counter's job for
+     no reason anyone standing at it would recognise.
+
+     The money is due here, and this is deliberately not a gate. Refusing to hand back a hunter's
+     own carcass over a fee is a lien claim, and not one worth making at a counter with other
+     hunters watching. A manager can let it go unpaid with a reason. What cannot happen is the
+     question going unasked. */
   function openCheckout(band, d) {
     const x = d.collect.filter(r => r.band === band)[0];
     if (!x) return;
     const money = n => '$' + (Math.round(n * 100) / 100);
     const ob = document.getElementById('outbox');
     const owes = !x.waived && x.owing > 0;
-    ob.innerHTML = '<div class="card"><b>Checking out ' + esc(band) + '</b>' +
-      '<div class="status">' + esc(x.hunter || 'no name') + ' · ' + esc(x.deer || 'deer') +
-      (x.confirmation ? ' · ' + esc(x.confirmation) : '') + ' · in ' + x.daysHeld + ' days</div>' +
-      (x.waived
+    const priv = x.kind === 'private';
+
+    const breakdown = priv
+      ? '<div class="note"><b>' + money(x.due) + '</b> — custom processing' +
+        (x.porkFat ? ', pork fat added' : '') +
+        (x.lb ? ' · ' + x.lb + ' lb packaged' : '') +
+        (x.paid ? ' · ' + money(x.paid) + ' already paid' : '') +
+        '<br><b>' + (owes ? money(x.owing) + ' due now' : 'Settled') + '</b></div>' +
+        (x.cuts ? '<div class="status"><b>Cut sheet:</b> ' + esc(x.cuts) + '</div>' : '')
+      : x.waived
         ? '<div class="note ok"><b>Nothing to pay.</b> They donated a deer this season.</div>'
         : '<div class="note"><b>' + money(x.due) + '</b> — ' + money(x.base) + ' storage' +
           (x.weeks > 1 ? ' (' + x.weeks + ' weeks)' : '') +
           (x.calloutDue ? ' plus ' + money(x.calloutDue) + ' call-out' + (x.callouts > 1 ? ' ×' + x.callouts : '') : '') +
           (x.paid ? ' · ' + money(x.paid) + ' already paid' : '') +
-          '<br><b>' + (owes ? money(x.owing) + ' due now' : 'Settled') + '</b></div>') +
-      (!d.open && d.passCallout
+          '<br><b>' + (owes ? money(x.owing) + ' due now' : 'Settled') + '</b></div>';
+
+    ob.innerHTML = '<div class="card"><b>Checking out ' + esc(band) + '</b>' +
+      '<div class="status">' + (priv ? '<b>Custom processing</b>' : '<b>Cold storage</b>') + ' · ' +
+      esc(x.hunter || 'no name') + ' · ' + esc(x.deer || 'deer') +
+      (x.confirmation ? ' · ' + esc(x.confirmation) : '') +
+      (priv ? ' · finished ' + esc(x.since) : ' · in ' + x.daysHeld + ' days') + '</div>' +
+      breakdown +
+      (!priv && !d.open && d.passCallout
         ? '<label class="choice"><input type="checkbox" id="ocnc"> <span>This collection is <b>not</b> a call-out — we were here anyway</span></label>'
         : '') +
       '<label for="octo">Who is collecting it?</label><input id="octo" type="text" autocomplete="off" value="' + esc(x.hunter || '') + '">' +
-      (owes ? '<label for="ocm">How are they paying?</label><select id="ocm"><option value="">Choose…</option>' +
-        (d.methods || ['Cash', 'Card (Square)', 'Check']).map(m => '<option>' + esc(m) + '</option>').join('') + '</select>' +
-        (d.manager
-          ? '<label class="choice"><input type="checkbox" id="ocu"> <span>Let it go <b>unpaid</b> — I will chase it</span></label>' +
-            '<input id="ocur" type="text" placeholder="Why it is going out unpaid" hidden>'
-          : '<p class="status">If they cannot pay, a manager has to release it.</p>')
+      (priv ? '<label for="oclb">Pounds going out <span class="hint">Leave as is unless it was reweighed</span></label>' +
+        '<input id="oclb" type="number" inputmode="decimal" value="' + esc(x.lb || '') + '">' : '') +
+      (owes
+        ? (squareReady()
+            ? '<button class="btn" id="ocsq">Take ' + money(x.owing) + ' on Square</button>' +
+              '<div class="status">Hands the amount to Square on this device and brings the receipt back. Or record it by hand:</div>'
+            : '') +
+          '<label for="ocm">How are they paying?</label><select id="ocm"><option value="">Choose…</option>' +
+          (d.methods || ['Cash', 'Card (Square)', 'Check']).map(m => '<option>' + esc(m) + '</option>').join('') + '</select>' +
+          (d.manager
+            ? '<label class="choice"><input type="checkbox" id="ocu"> <span>Let it go <b>unpaid</b> — I will chase it</span></label>' +
+              '<input id="ocur" type="text" placeholder="Why it is going out unpaid" hidden>'
+            : '<p class="status">If they cannot pay, a manager has to release it.</p>')
         : '') +
       '<div class="err" id="ocerr"></div>' +
       '<button class="submit" id="ocgo">Check ' + esc(band) + ' out</button></div>';
@@ -1761,13 +1924,33 @@
     const u = document.getElementById('ocu');
     if (u) u.onchange = () => { document.getElementById('ocur').hidden = !u.checked; };
 
-    document.getElementById('ocgo').onclick = () => {
-      const err = m => { document.getElementById('ocerr').textContent = m; };
+    const err = m => { document.getElementById('ocerr').textContent = m; };
+    const gather = () => {
       const to = document.getElementById('octo').value.trim();
-      if (!to) return err('Say who collected it. The record has to name a person.');
-      const nc = document.getElementById('ocnc');
+      if (!to) { err('Say who collected it. The record has to name a person.'); return null; }
       const f = { band: band, to: to };
+      const nc = document.getElementById('ocnc');
       if (nc && nc.checked) f.callout = false;
+      const lb = document.getElementById('oclb');
+      if (lb && lb.value) f.pounds = lb.value;
+      return f;
+    };
+
+    /* The Square path leaves the app, so everything needed to finish has to be handed over now.
+       We send the whole check-out, not just the payment — when Square returns, the deer goes out
+       in one queued action rather than a payment that half-happened. */
+    const sq = document.getElementById('ocsq');
+    if (sq) sq.onclick = () => {
+      const f = gather();
+      if (!f) return;
+      const ok = squareStart({ amount: x.owing, band: band, hunter: x.hunter,
+        action: 'checkout', label: 'Check-out', fields: f });
+      if (!ok) err('Square is not set up on this device. Record it by hand instead.');
+    };
+
+    document.getElementById('ocgo').onclick = () => {
+      const f = gather();
+      if (!f) return;
       if (owes) {
         const unpaid = document.getElementById('ocu');
         if (unpaid && unpaid.checked) {
@@ -2708,8 +2891,13 @@
 
   /* ---------- start ---------- */
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  /* Square may have just reopened us with a payment result. Read it before anything draws, so a
+     cold start after the jump still finishes the job rather than losing it. */
+  const sqBack = (() => { try { return squareReturn(); } catch (e) { return null; } })();
   if (st.pin && st.staff) {
-    if (pendingBand) { const b = pendingBand; pendingBand = null; showDeer(b); refresh(true); } else { showHome(); refresh(true); }
+    if (sqBack) { showDesk(); refresh(true); setTimeout(() => squareFinish(sqBack), 400); }
+    else if (pendingBand) { const b = pendingBand; pendingBand = null; showDeer(b); refresh(true); }
+    else { showHome(); refresh(true); }
     flush();
   } else showLogin(pendingBand ? 'Sign in to see band ' + pendingBand + '.' : '');
   window.addEventListener('hashchange', () => { const m = location.hash.match(/[#&]d=([^&]+)/); if (m && st.staff) { history.replaceState(null, '', location.pathname); showDeer(decodeURIComponent(m[1])); } });
