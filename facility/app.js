@@ -118,10 +118,24 @@
   async function call(body) {
     if (!CFG.BACKEND_URL || /PASTE_/.test(CFG.BACKEND_URL)) { const e = new Error('The app isn\'t connected yet (backend address missing).'); e.fatal = true; throw e; }
     let res;
+    /* A time limit, so a request that never comes back becomes a message with a button on it
+       rather than a panel that sits on "Loading…" for ever. Sixty seconds is deliberately long:
+       the backend waits up to 25 for the document lock before it even starts work, and a write
+       that is merely slow must not be given up on. A timed-out write is treated as unreachable,
+       not refused — we do not know whether it landed, so it stays in the queue and is sent again,
+       where the client ID stops it being written twice. */
+    const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = ctl ? setTimeout(() => ctl.abort(), 60000) : null;
     try {
       res = await fetch(CFG.BACKEND_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(Object.assign({ number: st.number, pin: st.pin, device: st.device }, body)), redirect: 'follow' });
-    } catch (e) { const err = new Error(navigator.onLine ? 'Couldn\'t reach the server.' : 'No signal.'); err.offline = true; throw err; }
+        body: JSON.stringify(Object.assign({ number: st.number, pin: st.pin, device: st.device }, body)),
+        redirect: 'follow', signal: ctl ? ctl.signal : undefined });
+    } catch (e) {
+      const timedOut = ctl && ctl.signal.aborted;
+      const err = new Error(timedOut ? 'The server took too long to answer. Nothing is lost — it will be sent again.'
+        : navigator.onLine ? 'Couldn\'t reach the server.' : 'No signal.');
+      err.offline = true; throw err;
+    } finally { if (timer) clearTimeout(timer); }
     let out;
     try { out = await res.json(); } catch (e) { const err = new Error('The server sent back something unexpected (status ' + res.status + ').'); err.fatal = true; throw err; }
     if (!out.ok) { const e = new Error(out.error || 'Something went wrong.'); e.fatal = true; throw e; }
@@ -610,7 +624,12 @@
   const rankName = r => ({ 1: 'donated', 2: 'custom processing', 3: 'cold storage' })[r] || 'other';
   // Within 24 hours of the maximum hold, rank stops mattering: this one is next either way.
   const urgentDeer = d => d.Type !== 'Cold storage' && hoursHung(d) >= (S().maxHold || 120) - 24;
-  const sortKey = d => (urgentDeer(d) ? 0 : rankOf(d)) * 1e6 - hoursHung(d);
+  /* An unpaid custom-processing deer sits half a rank down, behind every private deer that has
+     settled. Joe, 6 November: the longer they wait to pay, the longer it takes to process. No
+     penalty and no surcharge — the hunters who have paid simply go first. */
+  const unpaidDeer = d => { const o = owedOn(d); return !!(o && !o.settled); };
+  const orderOf = d => urgentDeer(d) ? 0 : rankOf(d) + (unpaidDeer(d) ? 0.5 : 0);
+  const sortKey = d => orderOf(d) * 1e6 - hoursHung(d);
   /* Deer of a higher priority than this one that are still waiting. Computed here rather than
      asked of the server, because the warning has to land before the action is queued \u2014 a
      queued start that bounces off the server tells the processor nothing until much later. */
@@ -620,7 +639,7 @@
        backwards: a carcass near the maximum hold goes first WHATEVER its rank \u2014 being urgent
        makes it more entitled, not less \u2014 and a higher-rank deer goes first among the rest. */
     return (all || []).filter(x => x.Status === 'Hanging' && x.Band !== d.Band &&
-      x.Type !== 'Cold storage' && (urgentDeer(x) || rankOf(x) < rankOf(d)))
+      x.Type !== 'Cold storage' && (urgentDeer(x) || orderOf(x) < orderOf(d)))
       .sort((a, b) => sortKey(a) - sortKey(b));
   }
 
@@ -686,10 +705,11 @@
         if (!up) return '<div class="status">Nothing waiting to be processed.</div>';
         return '<div class="note' + (urgentDeer(up) ? ' bad' : ' ok') + '"><b>Next up: ' + esc(up.Band) + '</b> \u00b7 ' +
           esc(rankName(rankOf(up))) + ' \u00b7 ' + Math.round(hoursHung(up)) + ' h hung' +
-          (urgentDeer(up) ? ' \u2014 <b>near the maximum hold, so it goes first whatever its priority</b>' : '') +
+          (urgentDeer(up) ? ' \u2014 <b>near the maximum hold, so it goes first whatever its priority</b>'
+            : unpaidDeer(up) ? ' \u2014 <b>unpaid</b>, so it cannot be started until the money is in' : '') +
           '</div>';
       })() +
-      '<div class="status"><b>Donated first, then custom processing, then cold storage</b> \u2014 oldest first within each. A deer within 24 h of the ' + s.maxHold + '-hour maximum hold jumps the queue. Amber: ' + s.startBy + ' hours hung, start processing. Red: over the maximum hold, tell Joe.</div>' +
+      '<div class="status"><b>Donated first, then custom processing, then cold storage</b> \u2014 oldest first within each. A custom-processing deer that has not been paid for goes behind the ones that have. A deer within 24 h of the ' + s.maxHold + '-hour maximum hold jumps the queue. Amber: ' + s.startBy + ' hours hung, start processing. Red: over the maximum hold, tell Joe.</div>' +
       '<button class="plain" id="reload">Refresh now</button></div>' +
       bandKeyHtml() +
       (bandFilter ? '<div class="note ok">Showing ' + esc(bandFilter) + ' bands only. <button class="plain" id="clearband" style="padding:0">Show them all</button></div>' : '') +
@@ -706,9 +726,24 @@
     $app.querySelectorAll('[data-band]').forEach(c => c.querySelectorAll('[data-a]').forEach(b => b.onclick = () => act(b.dataset.a, all.find(d => d.Band === c.dataset.band), c.querySelector('.form'))));
   }
 
+  /* What is still owed on a privately processed deer.
+
+     From 6 November custom processing is paid before the deer is cut, not when it is collected
+     (Joe). The old way had the facility doing a day of skilled work on spec and then, if the money
+     never came, holding a hunter's own venison over it — the worst of both ends. Asking at the
+     door costs nothing and settles it. */
+  function owedOn(d) {
+    if (!d || d.Type !== 'Private') return null;
+    const price = Number(d['Hunter price ($)'] || S().privatePrice || 300) || 0;
+    const paid = Number(d['Paid ($)'] || 0) || 0;
+    const owing = Math.max(0, Math.round((price - paid) * 100) / 100);
+    return { price: price, paid: paid, owing: owing, settled: owing <= 0 };
+  }
+
   function deerCard(d) {
     const s = S();
     const h = hoursHung(d), bc = colourOf(d), isCold = d.Type === 'Cold storage';
+    const owe = owedOn(d), live = d.Status !== 'Released' && d.Status !== 'Voided';
     const u = d.Status === 'Hanging' && !isCold ? urgency(d) : null;
     // Cold storage is not waiting to be processed, so the processing clock would mislabel it. Its
     // own limit is the Society's: five days, longer while there is room — a hunter to ring.
@@ -735,6 +770,10 @@
     const undoBtn = (!isViewer() && d.undo && d.undo.step)
       ? ' <button class="btn ghost" data-a="undo"' + (d.undo.allowed ? '' : ' disabled title="' + esc(d.undo.why) + '"') +
         '>Undo: ' + esc(undoName(d.undo.step)) + '</button>' : '';
+    // Money on a private deer, offered wherever the deer is: at the door, on the hook, on the
+    // bench. It is first in the row because it is the thing that unblocks everything after it.
+    const payBtn = (!isViewer() && owe && !owe.settled && live)
+      ? '<button class="btn alt" data-a="pay">Take $' + owe.owing + '</button> ' : '';
     return '<div class="card' + cls + (d.Type === 'Donated' ? ' donated' : '') + '" data-band="' + esc(d.Band) + '">' +
       '<div class="deer"><div><span class="band">' + esc(d.Band) + '</span> ' +
       '<span class="tag ' + (d.Type === 'Donated' ? 'don">DONATED' : 'prv">' + (isCold ? 'COLD STORAGE' : 'PRIVATE')) + '</span>' + (d['DDP deer'] === 'Yes' ? '<span class="tag">DDP</span>' : '') +
@@ -752,10 +791,18 @@
       (d.Status === 'Voided' ? '<div class="note bad"><b>Voided</b>' + (d['Void reason'] ? ': ' + esc(d['Void reason']) : '') +
         (d['Voided by'] ? ' · ' + esc(d['Voided by']) : '') + '</div>' : '') +
       (d.Cuts && d.Status !== 'Released' ? '<div class="note ok"><b>Cuts:</b> ' + esc(d.Cuts) + '</div>' : '') +
+      (owe && live && !owe.settled
+        ? '<div class="note bad" style="font-size:17px"><b>$' + owe.owing + ' owing</b>' +
+          (owe.paid ? ' of $' + owe.price + ' ($' + owe.paid + ' paid)' : '') +
+          '. Custom processing is paid before it is cut' +
+          (d.Status === 'Hanging' ? ' — it cannot be started until it is.' : '.') + '</div>'
+        : owe && live && owe.settled
+          ? '<div class="note ok">Custom processing paid: <b>$' + owe.paid + '</b>' +
+            (d['Payment method'] ? ' · ' + esc(d['Payment method']) : '') + '</div>' : '') +
       (d['First pack #'] && d['Last pack #'] ? '<div class="note ok"><b>Package numbers ' + esc(d['First pack #']) + '–' + esc(d['Last pack #']) + '</b> (MassWildlife)</div>'
         : d['First pack #'] ? '<div class="note warn" style="font-size:17px">Label the 2 lb packages in order from <b>' + esc(d['First pack #']) + '</b>: ' + esc(d['First pack #']) + ', ' + esc(('000' + (parseInt(d['First pack #'], 10) + 1)).slice(-4)) + ', …</div>' : '') +
       (d.Status === 'Released' ? '<div class="status">Released ' + esc(d.Released) + ' to ' + esc(d['Released to']) + '</div>' : '') +
-      '<div class="actions">' + act + (d.Status !== 'Released' && d.Status !== 'Voided' && !isViewer() ? '<button class="btn ghost" data-a="print">Print band</button>' : '') + editBtn + undoBtn + voidBtn + '</div><div class="form"></div></div>';
+      '<div class="actions">' + payBtn + act + (live && !isViewer() ? '<button class="btn ghost" data-a="print">Print band</button>' : '') + editBtn + undoBtn + voidBtn + '</div><div class="form"></div></div>';
   }
 
   function act(kind, d, box, after) {
@@ -770,6 +817,7 @@
     const byLast = d.Type === 'Donated' && firstPack > 0;
     // Donated, on the bench, and no number drawn yet. The one state the finish form cannot answer.
     const needsPack = d.Type === 'Donated' && !firstPack;
+    const owe = owedOn(d);
     const v = id => (document.getElementById(id) || {}).value || '';
     const opts = (list, cur) => ['<option value=""></option>'].concat(list.map(x =>
       '<option' + (String(cur) === x ? ' selected' : '') + '>' + esc(x) + '</option>')).join('');
@@ -802,7 +850,36 @@
           : '<p class="status">Skinned by: <b>' + esc(st.staff.name + ' (' + st.staff.number + ')') + '</b></p>') +
         '<label class="choice"><input id="k1" type="checkbox"> Skinned and head removed at the station behind MHU #1</label>' +
         '<label class="choice"><input id="k2" type="checkbox"> Antimicrobial spray applied</label>',
-      start: () => '<div class="note warn" style="font-size:17px">Tag confirmation number: <b>' + esc(d['MassWildlife confirmation'] || 'none recorded') + '</b></div>' +
+      /* Money on a private deer, taken wherever the deer happens to be. The same two ways as every
+         other charge in the app: hand it to Square on this device, or write down how they paid.
+         Part payment is allowed because a hunter putting half down at the door is better than a
+         hunter putting nothing down, and the deer simply stays unstarted until the rest arrives. */
+      pay: () => {
+        const o = owe || { price: 0, paid: 0, owing: 0 };
+        return '<div class="note ' + (o.owing > 0 ? 'bad' : 'ok') + '" style="font-size:17px">' +
+          '<b>$' + o.owing + ' owing</b> of $' + o.price + ' for custom processing' +
+          (d['Pork fat added'] === 'Yes' ? ' (includes the pork fat add-on)' : '') +
+          (o.paid ? ' · $' + o.paid + ' already paid' : '') + '</div>' +
+          '<p class="status">' + esc(d['Hunter name'] || 'The hunter') + ' · ' + esc(band(d.Band)) + '</p>' +
+          (squareReady()
+            ? '<button class="btn" id="psq">Take $' + o.owing + ' on Square</button>' +
+              '<div class="status">Hands the amount to Square on this device and brings the receipt back. Or record it by hand:</div>'
+            : '') +
+          '<label for="pm2">How are they paying?</label><select id="pm2"><option value="">Choose…</option>' +
+          (s.payMethods || ['Cash', 'Card (Square)', 'Check']).map(m => '<option>' + esc(m) + '</option>').join('') + '</select>' +
+          '<label for="pa2">Amount taken ($) <span class="hint">leave as is unless they are paying part of it</span></label>' +
+          '<input id="pa2" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.owing) + '">' +
+          '<p class="status">Cash goes in an envelope for the safe at close-out. Never in a pocket or the truck.</p>';
+      },
+      start: () => (owe && !owe.settled
+        ? '<div class="note bad" style="font-size:17px"><b>$' + owe.owing + ' is still owing on this deer.</b> ' +
+          'Custom processing is paid before it is cut. Take the payment first — the button is on the card above.' +
+          (isMgr()
+            ? '<label for="fup">Or start it anyway, and say why <span class="hint">goes on the record and to the other managers</span></label>' +
+              '<input id="fup" type="text" placeholder="Card machine down, paying Thursday">'
+            : '<br>If it has to go on now, a manager can start it with a reason.') + '</div>'
+        : '') +
+        '<div class="note warn" style="font-size:17px">Tag confirmation number: <b>' + esc(d['MassWildlife confirmation'] || 'none recorded') + '</b></div>' +
         '<label class="choice"><input id="f0" type="checkbox"> The confirmation number on the deer\'s tag matches</label>' +
         (d['Skinner name'] ? '<div class="note ok">Skinned by <b>' + esc(d['Skinner name']) + '</b>' + (d['Skinned at'] ? ' · ' + esc(d['Skinned at']) : '') + '. The skinning premium is theirs.</div><input id="f8" type="checkbox" checked hidden>'
           : '<label class="choice"><input id="f8" type="checkbox"> Skinned and head removed at the station behind MHU #1 <span class="hint">You get the $' + esc(s.skinRate || 25) + ' skinning premium for it</span></label>') +
@@ -828,6 +905,17 @@
         (needsPack
           ? '<div class="note bad"><b>No package numbers on this deer yet.</b> Get them before you ' +
             'label anything, so the numbers run in order on the state\u2019s sheet.</div>' +
+            /* Said before the button is tapped rather than after it fails. One donated deer holds
+               the sequence at a time, and the one thing the processor needs to know is which. */
+            (() => {
+              const g = (st.home.packs || {}).grinder;
+              return (g && g.band && band(g.band) !== band(d.Band))
+                ? '<div class="note warn"><b>' + esc(band(g.band)) + ' is on the grinder</b> with packages from ' +
+                  esc(g.first) + '. Numbers run in order, one donated deer at a time, so finish that one ' +
+                  'first and this deer picks up where it left off.' +
+                  '<button class="plain" id="fother" style="margin-top:6px">Open ' + esc(band(g.band)) + '</button></div>'
+                : '';
+            })() +
             '<button class="btn" id="fgp">Get package numbers</button>' +
             '<p class="status">Then come back here and enter the number on your last label.</p>'
           : '') +
@@ -860,14 +948,19 @@
         (s.pantries || []).map(p => '<option>' + esc(p) + '</option>').join('') + '<option value="other">Other…</option></select>' +
         '<input id="f3" type="text" placeholder="Who?" hidden style="margin-top:8px">' +
         '<label>Pounds out</label><input id="f2" type="number" inputmode="decimal" min="0" value="' + esc(d['Pounds packaged'] || '') + '">' +
-        (d.Type === 'Private' ? '<div class="note warn">Hunter pickup: collect <b>$' + esc(d['Hunter price ($)'] || s.privatePrice || 250) + '</b>' + (d['Pork fat added'] === 'Yes' ? ' (includes the pork fat add-on)' : '') + '.</div>' +
+        /* Paid up front from 6 November, so by the time a private deer reaches this form the money
+           is usually already in. Asking for it again is how a payment gets recorded twice. */
+        (owe && owe.settled ? '<div class="note ok">Paid in full: <b>$' + owe.paid + '</b>' +
+          (d['Payment method'] ? ' · ' + esc(d['Payment method']) : '') + '. Nothing to collect.</div>' : '') +
+        (d.Type === 'Private' && owe && !owe.settled ? '<div class="note warn">Hunter pickup: collect <b>$' + esc(owe.owing) + '</b>' + (owe.paid ? ' still owing of $' + esc(owe.price) : '') + (d['Pork fat added'] === 'Yes' ? ' (price includes the pork fat add-on)' : '') + '.</div>' +
           '<div class="grid2"><div><label for="pm">Paid by</label><select id="pm"><option value="">Choose…</option>' + (s.payMethods || ['Cash', 'Card (Square)', 'Check']).map(m => '<option>' + esc(m) + '</option>').join('') + '</select></div>' +
-          '<div><label for="pa">Amount collected ($)</label><input id="pa" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(d['Hunter price ($)'] || '') + '"></div></div>' +
+          '<div><label for="pa">Amount collected ($)</label><input id="pa" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(owe.owing) + '"></div></div>' +
           '<label for="pn">Receipt, check number or note <span class="hint">optional</span></label><input id="pn" type="text" maxlength="100">' +
           '<p class="status">Cash goes in an envelope for the safe at close-out. Never in a pocket or the truck.</p>' : ''),
     };
     box.innerHTML = forms[kind]() + '<div class="err" id="ferr"></div><button class="btn" id="fok" style="margin-top:12px">' +
-      (kind === 'void' ? 'Void it' : kind === 'edit' ? 'Save the correction' : 'Save') + '</button> <button class="btn ghost" id="fx">Cancel</button>';
+      (kind === 'void' ? 'Void it' : kind === 'edit' ? 'Save the correction' : kind === 'pay' ? 'Record the payment' : 'Save') +
+      '</button> <button class="btn ghost" id="fx">Cancel</button>';
     /* Cancel is bound FIRST, before anything that can throw. It used to be bound after the
        field wiring below, so a single missing element took the whole binding run down with it and
        left somebody holding a form with no way out. A way out is the one control that must never
@@ -876,6 +969,14 @@
     const on = (id, ev, fn) => { const el = document.getElementById(id); if (el) el[ev] = fn; };
     if (kind === 'release') on('f1', 'onchange', e => {
       const f3 = document.getElementById('f3'); if (f3) f3.hidden = e.target.value !== 'other'; });
+    /* Square leaves the app, so whatever is needed to finish has to be handed over before it goes.
+       Only the band: the amount is read back off the deer when the queued action lands, so a
+       payment and a price that moved while Square was open cannot disagree. */
+    on('psq', 'onclick', () => {
+      const ok = squareStart({ amount: (owe || {}).owing, band: band(d.Band), hunter: d['Hunter name'] || '',
+        action: 'paydeer', label: 'Processing payment', fields: { band: band(d.Band) } });
+      if (!ok) document.getElementById('ferr').textContent = 'Square is not set up on this device. Record it by hand instead.';
+    });
     const calc = () => {
       const drop = !!(document.getElementById('f7') || {}).checked, fr = drop ? 0 : fat;
       const entered = Math.round(num(v('f1')));
@@ -895,6 +996,7 @@
       on('f7', 'onchange', calc);
       /* Draw the number from inside the form and re-open it, so the processor never has to go
          looking for the button on another screen. */
+      on('fother', 'onclick', () => { const g = (st.home.packs || {}).grinder; if (g && g.band) showDeer(band(g.band)); });
       on('fgp', 'onclick', () => grind(d, box, () => {
         /* grind() writes the new number into the cached list, not into this closure's copy of the
            deer, so take it across before re-opening \u2014 otherwise the form rebuilds still
@@ -948,7 +1050,21 @@
         const wn = ((st.home.staff || []).find(x => x.number === who) || st.staff).name;
         queue('skin', { band: d.Band, skinner: who, skinnerName: wn, antimicrobial: true }, 'Skin ' + d.Band);
       }
+      if (kind === 'pay') {
+        const m = v('pm2'), amt = Number(v('pa2'));
+        if (!m) return err('Choose how they paid.');
+        if (!(amt > 0)) return err('Enter the amount taken.');
+        if (owe && amt > owe.owing + 0.005) return err('That is more than the $' + owe.owing + ' owing.');
+        queue('paydeer', { band: d.Band, method: m, amount: amt }, 'Payment ' + d.Band);
+        toast('$' + amt + ' recorded against ' + d.Band + '.', true);
+      }
       if (kind === 'start') {
+        /* The one hard block on this screen. Priority, below, is a judgement the person at the
+           bench may fairly override; whether the hunter has paid is not a judgement. */
+        if (owe && !owe.settled) {
+          if (!isMgr()) return err('$' + owe.owing + ' is still owing. Take the payment first, or ask a manager to start it.');
+          if (!v('fup').trim()) return err('$' + owe.owing + ' is still owing. Say why it is being started unpaid.');
+        }
         if (!document.getElementById('f0').checked) return err('Check the confirmation number on the tag first. If it doesn\'t match, stop and tell Joe.');
         if (!document.getElementById('f8').checked) return err('Skin it and remove the head at the station behind MHU #1, then tick the box.');
         if (!document.getElementById('f9').checked) return err('Apply the antimicrobial spray in MHU #1, then tick the box.');
@@ -973,7 +1089,8 @@
           '\n\nStart ' + d.Band + ' anyway? This is recorded.')) {
           return err('Start ' + ahead[0].Band + ' instead, or confirm the override.');
         }
-        queue('start', { band: d.Band, processor: p, processorName: pn, weight: naW ? 'N/A' : v('f1'), notWeighed: naW, confirmationChecked: true, skinned: true, antimicrobial: true, ack: ahead.length > 0 }, 'Start ' + d.Band);
+        queue('start', { band: d.Band, processor: p, processorName: pn, weight: naW ? 'N/A' : v('f1'), notWeighed: naW, confirmationChecked: true, skinned: true, antimicrobial: true, ack: ahead.length > 0,
+          unpaidReason: (owe && !owe.settled) ? v('fup').trim() : '' }, 'Start ' + d.Band);
       }
       if (kind === 'finish') {
         if (needsPack) return err('Tap Get package numbers first. A donated deer is labelled from the state\u2019s sequence, not from a bag count.');
@@ -994,12 +1111,13 @@
         const to = v('f1') === 'other' ? v('f3').trim() : v('f1');
         if (!to) return err('Say who it went to.');
         const pay = {};
-        if (d.Type === 'Private') {
+        // Only when there is still something to collect. A private deer paid at the door reaches
+        // this form settled, and asking again is how a payment gets written down twice.
+        if (d.Type === 'Private' && owe && !owe.settled) {
           pay.method = v('pm'); pay.paid = v('pa'); pay.payNote = v('pn');
           if (!pay.method) return err('Choose how the hunter paid.');
           if (pay.paid === '' || !(Number(pay.paid) >= 0)) return err('Enter the amount collected.');
-          const due = Number(d['Hunter price ($)'] || 0);
-          if (due && Number(pay.paid) !== due && !pay.payNote) return err('That isn\'t the $' + due + ' due. Say why in the note.');
+          if (Number(pay.paid) !== owe.owing && !pay.payNote) return err('That isn\'t the $' + owe.owing + ' owing. Say why in the note.');
         }
         queue('release', Object.assign({ band: d.Band, to, pounds: v('f2') }, pay), 'Release ' + d.Band);
       }
@@ -1034,6 +1152,7 @@
       '<label class="choice"><input type="radio" name="type" value="Private"> <span><b>Private</b>: processed for the hunter, $' + esc(s.privatePrice || 250) + '.</span></label>' +
       '<label class="choice"><input type="radio" name="type" value="Cold storage"> <span><b>Cold storage only</b>: the hunter hangs it and collects it. Not processed. <b>$' + esc(s.coldFee || 35) + '</b>, covering ' + esc(s.coldDays || 7) + ' days \u2014 then $' + esc(s.coldWeekFee || 50) + ' a week. Free if they donate a deer this season.</span></label>' +
       '<div id="feebox" hidden></div>' +
+      '<div id="privbox" hidden></div>' +
       (s.porkInStock === false ? '<p class="status" id="porkbox" hidden>Pork fat add-on: not available right now. The grind will be all venison.</p>'
         : '<label class="choice" id="porkbox" hidden><input id="pork" type="checkbox"> <span>Add pork fat to the ground (' + esc(s.fatPrivate || 10) + '%), <b>+$' + esc(s.porkAddOn || 20) + '</b>. Local-farm pork fat, as available. Without it, the grind is all venison.</span></label>') +
       '<label for="deer">Deer</label><select id="deer"><option value="">Choose…</option><option>Doe</option><option>Button buck</option><option>Sub-legal adult male</option><option>Antlered buck</option></select>' +
@@ -1102,41 +1221,92 @@
     const iapNow = () => (document.querySelector('input[name=iap]:checked') || {}).value;
     const showId = () => { document.getElementById('genid').textContent = genId() || 'enter the date of the shot below'; };
 
-    /* Suggest hunters the log has seen as the name is typed, and fill the customer ID, phone and
-       mailing address on a tap. The ID is 8 digits read off a phone screen in a cold trailer, so
-       typing it twice in a season is twice the chance of a wrong digit reaching Martin's sheet.
-       Nothing is filled without the tap, and a field already filled in is never overwritten. */
+    /* A hunter the log has already seen fills himself in as his name is typed: customer ID, phone,
+       email and mailing address, straight into the fields, no tap.
+
+       It used to wait for a tap on a suggestion, on the reasoning that a wrong ID filled quietly is
+       worse than one typed. Three weeks of check-ins says otherwise \u2014 Joe, 6 November: not one of
+       them filled anything, because the suggestion sat below the fold under the shot date and
+       nobody tapped what they never saw. A safeguard nobody reaches is not a safeguard. Gabe
+       Bellabuono has been through this door seven times and his eight-digit ID has been typed in
+       from a phone screen seven times.
+
+       What is kept: it only fills a field that is empty, it never touches the confirmation number,
+       the date, the deer or the weights, it says in plain words whose record it came from, one tap
+       takes it all back out, and a hunter carrying two different customer IDs in the log still
+       fills nothing \u2014 that is the one case where the log does not know the answer. */
+    let autoFrom = null, autoIds = [];
     loadHunters().then(() => suggestHunters());
+
+    function clearAuto() {
+      autoIds.forEach(id => { const el = document.getElementById(id); if (el) el.value = id === 'ads' ? 'MA' : ''; });
+      autoIds = []; autoFrom = null;
+    }
+    // Fills blanks only. A field the counter typed into is theirs, and one we filled earlier is
+    // ours to correct \u2014 which is what lets a half-typed name that matched the wrong hunter undo
+    // itself as the rest of the name arrives.
+    function put(id, val) {
+      const el = document.getElementById(id);
+      if (!el || !val) return;
+      if (el.value.trim() && autoIds.indexOf(id) < 0) return;
+      el.value = val;
+      if (autoIds.indexOf(id) < 0) autoIds.push(id);
+    }
+    function fillFrom(h) {
+      const split = (h.otherIds || []).length;          // two IDs on file: the log is not sure, so nor are we
+      put('fn', h.first); put('ln', h.last);
+      if (!split) put('lic', h.id);
+      put('ph', h.phone); put('hem', h.email);
+      const a = splitAddress(h.address);
+      if (a) { put('ad1', a.street); put('adt', a.town); put('ads', a.state); put('adz', a.zip); }
+      autoFrom = h;
+      return split;
+    }
+
     function suggestHunters() {
       const box = document.getElementById('hbox');
       if (!box) return;
+      // Anything we filled from a hunter who no longer matches what is typed goes back out first,
+      // so a wrong ID cannot survive the rest of the name being typed.
+      if (autoFrom) {
+        const still = hunterMatches(v('fn'), v('ln')).some(h => h.name === autoFrom.name);
+        if (!still) clearAuto();
+      }
       const hits = hunterMatches(v('fn'), v('ln'));
-      const typedLic = v('lic').replace(/\D/g, '');
       if (!hits.length) { box.innerHTML = ''; return; }
-      box.innerHTML = '<p class="status">' + (hits.length === 1 ? 'Checked in here before:' : 'Checked in here before \u2014 tap the right one:') + '</p>' +
+
+      if (hits.length === 1) {
+        const h = hits[0], split = fillFrom(h);
+        box.innerHTML =
+          '<div class="note ok"><b>' + esc(h.name) + '</b> \u2014 filled in from ' +
+          (h.lastSeen ? 'the check-in on ' + esc(h.lastSeen) : 'the last check-in') + '. ' +
+          h.deer + (h.deer === 1 ? ' deer' : ' deer') + ' through here. ' +
+          'Check the customer ID against their licence before you save.' +
+          '<button class="plain" id="hundo" style="margin-top:6px">Not them \u2014 clear it</button></div>' +
+          (split
+            ? '<div class="note bad">' + esc(h.name) + ' has more than one customer ID in the log: <b>' +
+              esc([h.id].concat(h.otherIds).join('</b> and <b>')) + '</b>. One is a typo, so the ID has ' +
+              'been left blank. Ask them which it is, and fix the other rows.</div>'
+            : '');
+        const u = document.getElementById('hundo');
+        if (u) u.onclick = () => { clearAuto(); box.innerHTML = ''; };
+        return;
+      }
+
+      // More than one. The log cannot choose between them and neither can we, so it stays a tap.
+      clearAuto();
+      box.innerHTML = '<p class="status">More than one hunter matches \u2014 tap the right one:</p>' +
         hits.map((h, i) =>
           '<button class="btn ghost" data-h="' + i + '" style="width:100%;text-align:left">' +
           '<b>' + esc(h.name) + '</b>' + (h.id ? ' \u00b7 ' + esc(h.id) : ' \u00b7 no customer ID on file') +
           '<br><span class="status">' + h.deer + (h.deer === 1 ? ' deer' : ' deer') +
           (h.lastSeen ? ', last on ' + esc(h.lastSeen) : '') +
-          (h.address ? ' \u00b7 ' + esc(h.address) : '') + '</span></button>').join('') +
-        hits.filter(h => (h.otherIds || []).length).map(h =>
-          '<div class="note bad">' + esc(h.name) + ' has more than one customer ID in the log: <b>' +
-          esc([h.id].concat(h.otherIds).join('</b> and <b>')) + '</b>. One is a typo. Ask them which, and fix the other rows.</div>').join('');
+          (h.address ? ' \u00b7 ' + esc(h.address) : '') + '</span></button>').join('');
       box.querySelectorAll('[data-h]').forEach(b => b.onclick = () => {
         const h = hits[+b.dataset.h];
-        if (h.first) document.getElementById('fn').value = h.first;
-        if (h.last) document.getElementById('ln').value = h.last;
-        if (h.id && !typedLic) document.getElementById('lic').value = h.id;
-        if (h.phone && !v('ph')) document.getElementById('ph').value = h.phone;
-        const a = splitAddress(h.address);
-        if (a && !v('ad1')) {
-          document.getElementById('ad1').value = a.street;
-          document.getElementById('adt').value = a.town;
-          document.getElementById('ads').value = a.state;
-          document.getElementById('adz').value = a.zip;
-        }
-        box.innerHTML = '<div class="note ok">Filled in from ' + esc(h.name) + '\u2019s last check-in. Check the customer ID against their licence before you save.</div>';
+        fillFrom(h);
+        box.innerHTML = '<div class="note ok">Filled in from ' + esc(h.name) + '\u2019s last check-in. ' +
+          'Check the customer ID against their licence before you save.</div>';
       });
     }
     ['fn', 'ln'].forEach(id => { const el = document.getElementById(id); if (el) el.oninput = suggestHunters; });
@@ -1154,6 +1324,29 @@
       box.hidden = !e.target.checked;
       if (e.target.checked && !arr.value) arr.value = (v('sd') || isoDate(now)) + 'T12:00';
     };
+    /* Custom processing is settled at the door from 6 November. The deer is still taken either
+       way — a hunter is never turned round over money — but it hangs rather than going on the
+       bench, and that is said here, in front of them, rather than discovered later. */
+    function showPrivBox() {
+      const pb = document.getElementById('privbox');
+      if (!pb) return;
+      const pork = document.getElementById('pork');
+      const price = Number(s.privatePrice || 300) + ((pork && pork.checked) ? Number(s.porkAddOn || 20) : 0);
+      const keep = (document.getElementById('ppay') || {}).value || '';
+      pb.innerHTML =
+        '<div class="note warn" style="font-size:17px"><b>$' + price + ' for custom processing</b>' +
+        ((pork && pork.checked) ? ', including the pork fat add-on' : '') +
+        '. <b>Due before it is cut.</b> We will still take the deer and hang it, but it does not go ' +
+        'on the bench until it is paid — and the deer that have paid go first.</div>' +
+        '<label for="ppay">Paying now?</label><select id="ppay">' +
+        '<option value="">Not yet — due before processing starts</option>' +
+        (s.payMethods || ['Cash', 'Card (Square)', 'Check']).map(x =>
+          '<option' + ('Paying now — ' + x === keep ? ' selected' : '') + '>Paying now — ' + esc(x) + '</option>').join('') +
+        '</select>' +
+        '<p class="status">On the card reader: choose Card (Square) here to write it down, or open the ' +
+        'deer straight after and tap <b>Take $' + price + '</b> to hand the amount to Square itself.</p>';
+      if (keep) pb.querySelector('#ppay').value = keep;
+    }
     document.querySelectorAll('input[name=type]').forEach(r => r.onchange = () => {
       const t = (document.querySelector('input[name=type]:checked') || {}).value;
       document.getElementById('porkbox').hidden = t !== 'Private';
@@ -1161,8 +1354,13 @@
       document.getElementById('cutbox').hidden = t !== 'Private';
       const fb = document.getElementById('feebox');
       fb.hidden = t !== 'Cold storage';
+      const pb = document.getElementById('privbox');
+      pb.hidden = t !== 'Private';
+      if (t === 'Private') showPrivBox();
       if (t === 'Cold storage') checkFee();
     });
+    // The add-on moves the price, so the figure the hunter is being quoted has to move with it.
+    { const pk = document.getElementById('pork'); if (pk) pk.onchange = showPrivBox; }
     /* Two things to settle at the counter before a hang-only deer is taken, and they are separate
        questions. Is there room for it at all — donated and private deer come first, and above the
        squeeze this one does not come in at all. And what does the hunter owe, which is nothing if
@@ -1278,6 +1476,12 @@
       if (type === 'Cold storage' && meth && meth.value) {
         // The option text carries the method after an em dash; send the method itself.
         queue('payfee', { band: b, method: meth.value.replace(/^.*—\s*/, '') }, 'Storage charge ' + b);
+      }
+      /* Queued behind the check-in, not with it, for the same reason the storage charge is: the
+         deer and the money are two facts, and one of them failing must not take the other down. */
+      const pmeth = document.getElementById('ppay');
+      if (type === 'Private' && pmeth && pmeth.value) {
+        queue('paydeer', { band: b, method: pmeth.value.replace(/^.*—\s*/, '') }, 'Processing payment ' + b);
       }
       printBand({ Band: b, Intake: stamp(), Type: type, Deer: f.deer, 'MassWildlife confirmation': f.confirmation });
       showBoard();
@@ -1548,16 +1752,41 @@
     if (cov) cov.onclick = () => go(cov, { action: 'cover', date: bookPick.date, start: bookPick.start, end: bookPick.end, kind: bookKind }, out => { cov.textContent = 'Sent to ' + out.sent + ' phone' + (out.sent === 1 ? '' : 's'); });
   }
   const confirmCancel = () => true;
-  /** Donated deer: reserve the next MassWildlife package number before grinding. */
+  /** Donated deer: reserve the next MassWildlife package number before grinding.
+
+      This used to replace the whole form with a red box when it failed, which left Graham on
+      6 November standing at the bench with a deer he could not finish and a panel with no buttons
+      on it: the only escape was to leave the deer and come back, which dropped him straight into
+      the same branch again. A failure has to leave a way forward, always. So: the error, a Try
+      again, a way back to the finish form, and — when another donated deer really is holding the
+      numbers — its band and a button straight to it, because "finish that one first" is no use to
+      somebody who cannot see which one it is. */
   async function grind(d, box, after) {
-    box.innerHTML = '<p class="status">Getting package numbers…</p>';
+    const back = () => act('finish', d, box, after);
+    box.innerHTML = '<p class="status">Getting package numbers…</p>' +
+      '<button class="btn ghost" id="gx" style="margin-top:10px">Cancel</button>';
+    { const x = document.getElementById('gx'); if (x) x.onclick = back; }
     try {
       const out = await call({ action: 'grind', band: d.Band });
       (st.home.deer || []).forEach(x => { if (band(x.Band) === band(out.band) && x.Status !== 'Released') x['First pack #'] = out.first; });
       st.home.packs = { next: st.home.packs && st.home.packs.next, grinder: { band: band(out.band), first: out.first } };
       save(); (after || showBoard)();
       toast('Label packages from ' + out.first + ', in order.', true);
-    } catch (e) { box.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Package numbers need signal. Try again when connected.' : e.message) + '</div>'; }
+    } catch (e) {
+      // The backend names the blocking deer in its message; pull the band back out of it so the
+      // way to that deer can be one tap rather than a hunt through the board.
+      const m = /Band (\d{10}) is on the grinder/.exec(e.message || '');
+      box.innerHTML = '<div class="note bad">' +
+        esc(e.offline ? 'Package numbers need signal — they are drawn from the state’s sequence, so they cannot be given out offline. The deer stays on the bench; try again when you are connected.' : e.message) +
+        '</div>' +
+        (m ? '<button class="btn" id="gother">Open ' + esc(m[1]) + '</button> ' : '') +
+        '<button class="btn" id="gretry">Try again</button> ' +
+        '<button class="btn ghost" id="gback">Back to finishing ' + esc(band(d.Band)) + '</button>';
+      const on = (id, fn) => { const el = document.getElementById(id); if (el) el.onclick = fn; };
+      on('gother', () => showDeer(m[1]));
+      on('gretry', () => grind(d, box, after));
+      on('gback', back);
+    }
   }   // no browser dialogs: cancelling is one tap and can be re-booked
 
   /* ---------- messages ---------- */
@@ -1912,6 +2141,19 @@
       '<button class="btn" data-go2="raisedrop">A deer is coming in</button>' +
       '<div class="status">Donated and privately processed deer are never turned away. Only hang-only deer wait for space.</div></div>' +
 
+      /* Money still out on deer that are here. It sits above the collection list because this is
+         the one the counter can do something about while the hunter is still in front of them. */
+      ((d.unpaid || []).length
+        ? '<div class="card"><b>Waiting on payment (' + d.unpaid.length + ')</b>' +
+          '<div class="status">Custom processing is paid before the deer is cut. Tap one to take the money.</div>' +
+          d.unpaid.map(x => '<div class="trow" data-pay="' + esc(x.band) + '"><div><b>' + esc(x.hunter || 'no name') + '</b>' +
+            '<div class="status">' + esc(x.band) + ' · ' + esc(x.deer || 'deer') + ' · ' +
+            (x.status === 'Processing' ? 'on the bench' : x.hours + ' h hung') +
+            (x.paid ? ' · ' + money(x.paid) + ' of ' + money(x.price) + ' paid' : '') + '</div></div>' +
+            '<div class="tval" style="font-size:17px">' + money(x.owing) + '</div></div>').join('') +
+          '</div>'
+        : '') +
+
       '<div class="card"><b>Collecting a deer (' + d.collect.length + ')</b>' +
       (d.collect.length
         ? '<div class="status">Tap the deer they came for \u2014 cold storage and finished processing together, longest waiting first.</div>' + d.collect.map(row).join('')
@@ -1930,12 +2172,13 @@
 
       '<div class="card"><b>What things cost</b><div class="status">' +
       'Cold storage ' + money(d.fee) + ' for ' + d.coldDays + ' days, then ' + money(d.weekFee) + ' a week. ' +
-      'Private processing ' + money(d.privatePrice) + '. Donating is free and waives cold storage. ' +
+      'Private processing ' + money(d.privatePrice) + ', paid before the deer is cut. Donating is free and waives cold storage. ' +
       (d.passCallout ? 'Outside posted hours adds ' + money(d.calloutFee) + ' per trip.' : '') +
       '</div></div>' +
       '<div id="outbox"></div>';
 
     box.querySelectorAll('.trow[data-out]').forEach(el => { el.onclick = () => openCheckout(el.dataset.out, d); });
+    box.querySelectorAll('.trow[data-pay]').forEach(el => { el.onclick = () => showDeer(el.dataset.pay); });
     box.querySelectorAll('[data-go2]').forEach(el => { el.onclick = () => GO[el.dataset.go2](); });
   }
 
