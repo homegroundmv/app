@@ -355,6 +355,14 @@
         (alone ? '<div class="note warn"><b>You are the only one clocked in.</b> Keep your phone on you.</div>' : '') +
         (h.expectedOut ? '<div class="status">You get a nudge ' + esc(s.loneGrace || 30) + ' minutes after ' + t12(h.expectedOut) +
           ' if you have not clocked out, and the managers hear at ' + esc(s.mgrGrace || 60) + ' minutes.</div>' : '') +
+        /* What you are doing right now, and a tap to change it. Hours are paid by kind — the
+           hourly rate for management, nothing hourly for processing because the $125 a deer has
+           already paid for those hours — so a shift that is really two jobs has to say so. */
+        '<div class="kindsw"><span class="status">Right now:</span>' +
+        [['Other', 'Management'], ['Processing', 'Processing'], ['Skinning', 'Skinning']].map(k =>
+          '<button type="button" data-kind="' + k[0] + '"' +
+          (((h.clockKind || 'Other') === k[0]) ? ' class="on"' : '') + '>' + esc(k[1]) + '</button>').join('') +
+        '</div>' +
         '<button class="plain" id="still">Still here: change my finish time</button>' +
         '<button class="plain" id="fixclock">Correct a clock-out time</button><div id="clock-err" class="err"></div></div>'
       : '<div class="card"><div class="deer"><div><b>Not clocked in</b>' +
@@ -387,6 +395,11 @@
       (atDoor() ? '' : big('raisedrop', 'A deer is coming in', 'A hunter texted or rang · tell the team so someone meets them', 'alt')) +
       big('oncall', 'On call', (h.drops && h.drops.onCall ? first(h.drops.onCall.name) + ' today' : 'Nobody on call today') + ' · who covers an unclaimed drop-off', (h.drops && h.drops.onCall) ? 'view' : 'red') +
       big('fees', 'Cooler fees', 'The Ag Society\'s season fee · who owes, and what we are holding for them', 'alt') +
+      /* Everybody, not just managers. The person who sees the last box of bags is the one at the
+         bench, and if flagging it is three screens into a manager menu it never gets flagged. */
+      big('supplies', 'Running low on something?', h.openSupplies
+        ? h.openSupplies + (h.openSupplies === 1 ? ' thing waiting' : ' things waiting') + ' · tell the managers what we need'
+        : 'Bags, gloves, sanitizer — two taps and the managers know', h.openSupplies ? 'red' : 'alt') +
       (isMgr() ? big('sensors', 'Sensors', 'Cold storage and both MHUs · live temperatures and the record', 'view') : '') +
       (isMgr() ? big('team', 'Team numbers', 'Every processor, this week and the season', 'view') : '') +
       (isMgr() || /intake/i.test((st.staff && st.staff.role) || '') ? big('martin', 'Donation report', 'Rows for Martin\'s sheet', 'alt') : '') +
@@ -463,6 +476,18 @@
     /* Forgetting to clock out is the normal failure, not the rare one, and the honest fix is to
        let people say when they actually left. It is pay data, so nothing is silent: the row keeps
        what the clock recorded, and the managers get told about every correction. */
+    $app.querySelectorAll('[data-kind]').forEach(b => b.onclick = async () => {
+      if (b.classList.contains('on')) return;
+      $app.querySelectorAll('[data-kind]').forEach(x => { x.disabled = true; });
+      try {
+        const out = await call({ action: 'switchkind', kind: b.dataset.kind });
+        st.home.clockKind = out.kind; st.home.clockedIn = out.clockedIn; st.home.week = out.week; save();
+        showHome(out.unchanged ? '' : 'Now on ' + (out.kind === 'Other' ? 'management' : out.kind.toLowerCase()) + ' time.');
+      } catch (e) {
+        $app.querySelectorAll('[data-kind]').forEach(x => { x.disabled = false; });
+        clockErr('<div class="err">' + esc(e.offline ? 'Needs signal to switch.' : e.message) + '</div>');
+      }
+    });
     const fixc = document.getElementById('fixclock');
     if (fixc) fixc.onclick = async () => {
       fixc.disabled = true;
@@ -506,7 +531,13 @@
   const tile = (n, label) => '<div class="tile"><div class="n">' + esc(n) + '</div><div class="l">' + esc(label) + '</div></div>';
   const group = t => '<div class="grp">' + esc(t) + '</div>';
   (() => { const c = document.createElement('style');
-    c.textContent = '.grp{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:20px 2px 4px}' +
+    c.textContent = '.kindsw{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0 2px}' +
+      '.kindsw>span{margin-right:2px}' +
+      '.kindsw button{font:inherit;font-size:14px;padding:7px 13px;border-radius:99px;border:1px solid var(--line);' +
+      'background:var(--card,transparent);color:var(--ink,inherit);cursor:pointer}' +
+      '.kindsw button.on{background:var(--green-dark);color:#fff;border-color:var(--green-dark);font-weight:700}' +
+      '.kindsw button:disabled{opacity:.5}' +
+      '.grp{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:20px 2px 4px}' +
       '.big.view{background:var(--card);color:var(--green-dark);border:2px solid var(--green)}.big.view small{opacity:.8}' +
       // the lead card: the one thing to do now, with its own button, so the commonest action is one tap
       '.lead{background:#fff;border:3px solid var(--green);border-radius:16px;padding:14px 16px 16px;margin:12px 0}' +
@@ -670,6 +701,7 @@
         '<div><label for="e_phone">Phone</label><input id="e_phone" type="text" inputmode="tel" value="' + esc(d['Hunter phone'] || '') + '"></div></div>' +
         '<label for="e_confirmation">MassWildlife confirmation</label><input id="e_confirmation" type="text" autocapitalize="characters" value="' + esc(d['MassWildlife confirmation'] || '') + '">' +
         (d['Sent to Martin'] ? '<p class="note warn">This deer is already on MassWildlife’s sheet. Changing the licence, the name or the confirmation number makes his copy wrong, so it gets flagged for correcting rather than pasted again.</p>' : '') +
+        '<label for="e_email">Email</label><input id="e_email" type="email" inputmode="email" autocapitalize="off" value="' + esc(d['Hunter email'] || '') + '">' +
         '<label for="e_address">Mailing address</label><input id="e_address" type="text" value="' + esc(d['Hunter mailing address'] || '') + '">' +
         '<div class="grid2"><div><label for="e_deer">Deer</label><select id="e_deer">' + opts(['Doe', 'Button buck', 'Sub-legal adult male', 'Antlered buck'], d['Deer']) + '</select></div>' +
         '<div><label for="e_points">Antler points</label><input id="e_points" type="number" inputmode="numeric" min="0" step="1" value="' + esc(d['Antler points'] || '') + '"></div></div>' +
@@ -764,7 +796,7 @@
       if (kind === 'edit') {
         const why = v('er').trim();
         if (!why) return err('Say why it is being corrected. The reason goes on the record.');
-        const fields = ['firstName', 'lastName', 'customerId', 'phone', 'address', 'confirmation', 'deer', 'points', 'takenWith', 'ammunition', 'notes'];
+        const fields = ['firstName', 'lastName', 'customerId', 'phone', 'email', 'address', 'confirmation', 'deer', 'points', 'takenWith', 'ammunition', 'notes'];
         const changes = {};
         fields.forEach(k => { changes[k] = v('e_' + k).trim(); });
         if (!changes.firstName && !changes.lastName) return err('A deer needs a hunter’s name on it.');
@@ -908,7 +940,12 @@
       /* A required field nobody can satisfy gets defeated, not obeyed: every donated row checked in
          before 4 November carries "Na, Na, MA 555555". A deer dropped off out of hours arrives
          without its hunter, so this will keep happening. Record the absence as a fact instead. */
-      '<label class="choice"><input id="adna" type="checkbox"> No address to hand <span class="hint">Held on Patrick’s sheet or coming later. Leaves it blank and flags it on the payment list, rather than putting something made up on a cheque.</span></label></div>' +
+      '<label class="choice"><input id="adna" type="checkbox"> No address to hand <span class="hint">Held on Patrick’s sheet or coming later. Leaves it blank and flags it on the payment list, rather than putting something made up on a cheque.</span></label>' +
+      /* TFMV runs hunter payments through payroll, so a cheque waits on a W-4. Sending the link
+         while the hunter is standing at the counter beats chasing them for it in January. We send
+         the link and nothing else — the completed form goes to TFMV, never to us. */
+      '<label for="hem">Hunter email <span class="hint">so we can send the tax form Tick Free MV needs before paying</span></label><input id="hem" type="email" inputmode="email" autocomplete="email" autocapitalize="off">' +
+      '<label class="choice"><input id="taxf" type="checkbox" checked> Email them the tax form <span class="hint">A link to the W-4, copied to Tick Free MV. They fill it in and send it back to TFMV, not to us.</span></label></div>' +
       cutsHtml() +
       // Weighed at the door, hide and head on. Not the carcass weight, which is taken at the
       // hanging scale after skinning: two different numbers that must never be mistaken for each
@@ -1063,6 +1100,9 @@
       const f = { band: b, iap: iap === 'Yes', type, deer: v('deer'), points: v('deer') === 'Antlered buck' ? pts : '', firstName: v('fn'), lastName: v('ln'), customerId: lic, hunterPhone: v('ph'), confirmation: v('cf'), takenWith: v('tw'), ammunition: v('am'),
         cuts: type === 'Private' ? readCuts() : '',
         address: (type === 'Donated' && !noAddr) ? v('ad1') + ', ' + v('adt') + ', ' + (v('ads') || 'MA').toUpperCase() + ' ' + v('adz') : '',
+        hunterEmail: v('hem').trim(),
+        // Only meaningful on a donated deer, and only if we actually have somewhere to send it.
+        sendTaxForm: type === 'Donated' && !!(document.getElementById('taxf') || {}).checked && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v('hem').trim()),
         shotDate: v('sd'),
         arrived: document.getElementById('earlier').checked ? v('arr') : '',
         dressed4h: document.getElementById('fd').checked, ddp: document.getElementById('ddp').checked, skinned: false,
@@ -1637,7 +1677,12 @@
       row('This week', '$' + fmt(total), '') +
       '<div class="status" style="margin-top:8px">All clocked time counts, including cleaning, waiting and training.' +
       (w.topUp ? ' Home Ground tops you up to minimum wage: $' + fmt(w.topUp) + ' so far this week.' : '') +
-      (w.overtime ? ' Overtime: ' + fmt(w.overtime) + ' hours over 40.' : '') + '</div></div>';
+      /* Overtime used to say only how many hours you had gone over, which told nobody what was
+         owed. With a monthly figure and a piece rate in the same week the rate is the weighted
+         average of everything earned, not the hourly — so it is worth showing. */
+      (w.overtime ? ' <b>Overtime: ' + fmt(w.overtime) + ' hours over 40' +
+        (w.overtimePay ? ', $' + fmt(w.overtimePay) + ' owed on top at a $' + fmt(w.regularRate) + ' regular rate' : '') + '.</b>' : '') +
+      (w.owed && w.owed !== w.total ? ' Due this week including top-up and overtime: <b>$' + fmt(w.owed) + '</b>.' : '') + '</div></div>';
   }
   async function showNumbers() {
     frame('numbers', 'My numbers', '<div id="nums"><p class="status">Loading…</p></div>');
@@ -1667,7 +1712,8 @@
           '</td><td>' + fmt(p.season.groundVenisonLb) + '</td><td>' + (p.season.avgYield ? p.season.avgYield + '%' : '—') + '</td><td>' + p.week.deer + '</td><td>' + (p.week.skinned || 0) + '</td><td>' + (p.week.intakes || 0) + '</td><td>' + fmt(p.week.hours) +
           '</td><td>$' + fmt(p.week.total === undefined ? p.week.pay : p.week.total) +
           '</td><td>' + (p.week.hours ? '$' + fmt(p.week.perHour) : '—') + '</td><td' + (p.week.topUp ? ' class="warn"' : '') + '>' + (p.week.topUp ? '$' + fmt(p.week.topUp) : '') +
-          '</td><td' + (p.week.overtime ? ' class="warn"' : '') + '>' + (p.week.overtime ? fmt(p.week.overtime) : '') + '</td></tr>').join('') +
+          '</td><td' + (p.week.overtime ? ' class="warn"' : '') + '>' +
+          (p.week.overtime ? fmt(p.week.overtime) + (p.week.overtimePay ? '<br><span class="status">$' + fmt(p.week.overtimePay) + '</span>' : '') : '') + '</td></tr>').join('') +
         '</tbody></table></div><p class="status">Week: pay is processing, skinning, the door and other clocked time. Top-up: what\'s owed to bring it up to minimum wage for hours clocked this week. OT: hours over 40. The full split is on the Processor Totals tab.</p>';
     } catch (e) { box.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal.' : e.message) + '</div>'; }
   }
@@ -1807,6 +1853,8 @@
         '<div class="status"><button class="plain" data-go2="fees" style="padding:0">Cooler fees</button></div></div>' : '') +
       '<div class="card"><b>Cleaning and upkeep</b> <span class="status">last logged</span>' +
       up('Sanitizer test', x.upkeep.sanitizer) + up('Thermometer check', x.upkeep.thermometer) +
+      // Nightly, and the one on this card that is a food safety step rather than housekeeping.
+      up('Waste out of cold storage', x.upkeep.wasteOut) +
       up('Tight tank pumped', x.upkeep.tightTank) + '</div>';
   }
 
@@ -1982,7 +2030,16 @@
       const row = (p, chk) => '<div class="trow">' + (chk ? '<label class="choice" style="margin:0"><input type="checkbox" data-band="' + esc(p.band) + '"> ' : '<div>') +
         '<span><b>' + esc(p.hunter || '(no name)') + '</b> · ' + money(p.amount) + ' · ' + esc(p.deer) + '<br><span class="status">' +
         esc(p.address || 'NO ADDRESS ON FILE') + (p.phone ? ' · ' + esc(p.phone) : '') + '<br>Band ' + esc(p.band) + ', in ' + esc(p.dateIn) +
-        (p.status === 'Paid' ? ' · check sent ' + esc(p.sent) + (p.note ? ' (' + esc(p.note) + ')' : '') : '') + '</span></span>' + (chk ? '</label>' : '</div>') + '</div>';
+        (p.status === 'Paid' ? ' · check sent ' + esc(p.sent) + (p.note ? ' (' + esc(p.note) + ')' : '') : '') + '</span>' +
+        /* TFMV cannot pay until the hunter has filed a W-4, so an unsent form is a blocker on this
+           screen in the same way a missing address is. Shown where somebody would notice it, with
+           the send on the spot rather than two screens away. */
+        (p.status !== 'Paid' ? '<br><span class="status">' + (p.taxFormSent
+          ? 'Tax form sent ' + esc(p.taxFormSent)
+          : '<b>NO TAX FORM SENT</b>' + (p.email
+            ? ' · <button class="plain" data-tax="' + esc(p.band) + '" style="padding:0">send it to ' + esc(p.email) + '</button>'
+            : ' and no email on file — add one with Correct the record')) + '</span>' : '') +
+        '</span>' + (chk ? '</label>' : '</div>') + '</div>';
       box.innerHTML = '<div class="tiles">' + '<div class="tile"><div class="n">' + money(out.owed) + '</div><div class="l">' + out.owedCount + (out.owedCount === 1 ? ' check' : ' checks') + ' owed</div></div>' +
         '<div class="tile"><div class="n">' + money(out.paid) + '</div><div class="l">' + out.paidCount + (out.paidCount === 1 ? ' check' : ' checks') + ' sent</div></div></div>' +
         '<div class="card"><p class="status">TFMV pays each donating hunter by check. Download the list for TFMV, then mark the deer paid once the checks go out.</p>' +
@@ -2002,6 +2059,12 @@
         document.body.appendChild(a); a.click(); a.remove();
         document.getElementById('pout').innerHTML = '<div class="note ok">' + owed.length + (owed.length === 1 ? ' check, ' : ' checks, ') + money(out.owed) + ', downloaded.</div>';
       };
+      box.querySelectorAll('[data-tax]').forEach(b => b.onclick = async () => {
+        b.disabled = true; b.textContent = 'sending…';
+        try { const r = await call({ action: 'taxform', band: b.dataset.tax, clientId: 'tax-' + b.dataset.tax + '-' + Date.now() });
+          toast('Tax form sent to ' + r.to, true); draw(await call({ action: 'payments' })); }
+        catch (e) { b.disabled = false; b.textContent = 'send failed — ' + (e.offline ? 'needs signal' : e.message); }
+      });
       const mk = document.getElementById('pmark');
       if (mk) mk.onclick = async () => {
         const bands = Array.from(box.querySelectorAll('input[data-band]:checked')).map(x => x.dataset.band);
@@ -2014,7 +2077,58 @@
     call({ action: 'payments' }).then(draw).catch(e => { box.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal. Try again when connected.' : e.message) + '</div>'; });
   }
 
-  const GO = { payments: showPayments, status: showStatus, board: showBoard, intake: showIntake, shifts: () => showShifts(), messages: showMessages, help: showHelp,
+  /* Running low. Anyone raises one; managers mark it ordered or received. Deliberately asks for
+     almost nothing — the item, how bad it is, and optionally a word — because the price, the
+     supplier and who pays belong on the purchases list, which is a job done sitting down. */
+  function showSupplies(note) {
+    frame('supplies', 'Running low', '<div id="sup"><p class="status">Loading…</p></div>');
+    const box = document.getElementById('sup');
+    const URG = ['Running low', 'We are out'];
+    const draw = out => {
+      const quick = out.quick || [], list = out.supplies || [];
+      const open = list.filter(x => x.status === 'Open'), done = list.filter(x => x.status !== 'Open');
+      box.innerHTML = (note ? '<div class="note ok">' + esc(note) + '</div>' : '') +
+        '<div class="card"><b>What are we low on?</b>' +
+        '<div class="chips" style="display:flex;flex-wrap:wrap;gap:6px;margin:10px 0">' +
+        quick.map(q => '<button type="button" class="btn ghost" data-q="' + esc(q) + '" style="padding:8px 12px">' + esc(q) + '</button>').join('') +
+        '</div>' +
+        '<label for="sitem">Or type it</label><input id="sitem" type="text" maxlength="80" placeholder="Something else we need">' +
+        '<label for="snote">Anything to add <span class="hint">optional</span></label><input id="snote" type="text" maxlength="200" placeholder="Down to two boxes">' +
+        '<label for="surg">How bad</label><select id="surg">' + URG.map(u => '<option>' + esc(u) + '</option>').join('') + '</select>' +
+        '<div class="err" id="serr"></div><button class="submit" id="sgo">Tell the managers</button></div>' +
+        '<div class="card"><h3>Waiting</h3>' + (open.length ? open.map(rowHtml).join('') : '<p class="status">Nothing outstanding.</p>') + '</div>' +
+        (done.length ? '<div class="card"><h3>Sorted recently</h3>' + done.map(rowHtml).join('') + '</div>' : '');
+      box.querySelectorAll('[data-q]').forEach(b => b.onclick = () => { document.getElementById('sitem').value = b.dataset.q; document.getElementById('sitem').focus(); });
+      document.getElementById('sgo').onclick = async () => {
+        const item = (document.getElementById('sitem').value || '').trim();
+        if (!item) { document.getElementById('serr').textContent = 'Tap one above, or type what we need.'; return; }
+        const btn = document.getElementById('sgo'); btn.disabled = true;
+        try {
+          const r = await call({ action: 'raisesupply', fields: { item: item, note: document.getElementById('snote').value.trim(), urgency: document.getElementById('surg').value },
+            clientId: 'sup-' + Date.now() });
+          showSupplies(r.already ? (r.upgraded ? item + ' was already flagged — now marked as out.' : item + ' is already on the list.') : item + ': the managers know.');
+        } catch (e) { btn.disabled = false; document.getElementById('serr').textContent = e.offline ? 'Needs signal — try again when you have a bar.' : e.message; }
+      };
+      box.querySelectorAll('[data-sup]').forEach(sel => sel.onchange = async () => {
+        sel.disabled = true;
+        try { const r = await call({ action: 'setsupply', id: sel.dataset.sup, status: sel.value }); draw(Object.assign({ quick: quick }, r)); }
+        catch (e) { sel.disabled = false; toast(e.offline ? 'Needs signal.' : e.message); }
+      });
+    };
+    const rowHtml = x => '<div class="trow"><div><span><b>' + esc(x.item) + '</b>' +
+      (x.urgency === 'We are out' ? ' <span class="pill" style="background:var(--red,#A12A1F);color:#fff">OUT</span>' : '') +
+      '<br><span class="status">' + esc(x.by || 'Someone') + ', ' + esc(when(x.when)) +
+      (x.note ? ' · ' + esc(x.note) : '') +
+      (x.status !== 'Open' ? '<br>' + esc(x.status) + (x.actionedBy ? ' by ' + esc(x.actionedBy) : '') + (x.actioned ? ' · ' + esc(x.actioned) : '') : '') +
+      '</span></span></div>' +
+      (isMgr() ? '<div><select data-sup="' + esc(x.id) + '" aria-label="What happened to ' + esc(x.item) + '">' +
+        ['Open', 'Ordered', 'Received', 'Not needed'].map(s => '<option' + (s === x.status ? ' selected' : '') + '>' + esc(s) + '</option>').join('') +
+        '</select></div>' : '') + '</div>';
+    call({ action: 'supplies' }).then(draw)
+      .catch(e => { box.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal. Try again when connected.' : e.message) + '</div>'; });
+  }
+
+  const GO = { supplies: () => showSupplies(), payments: showPayments, status: showStatus, board: showBoard, intake: showIntake, shifts: () => showShifts(), messages: showMessages, help: showHelp,
     numbers: showNumbers, daily: showDaily, team: showTeam, martin: () => showMartin(), donate: showDonate, scan: () => showScan(),
     preop: showPreop, opssop: showOpSsop, corrective: () => showCorrective(), records: showRecords,
     skinning: () => showShifts(null, null, 'Skinning'),
@@ -2041,7 +2155,19 @@
   const OP_FALLBACK = ['Employee clothing', 'Hand soap and towels', 'Hand washing procedures', 'Equipment',
     'Condensation', 'Floors', 'Walls', 'Ceilings', 'Knife sanitizer temp', 'Saw sanitizer temp',
     'Knives', 'Aprons', 'Boots', 'Garbage bins', 'Water pooling', 'Bleeding area', 'Insect control'];
-  const preopItems = () => { const x = S().preopItems; return x && x.length ? x : PREOP_FALLBACK; };
+  /* Pre-op is three lists now: what both units share, then MHU #1 (the rail, skinning and sanitary
+     dressing) and MHU #2 (band saw, grinder, stuffer, sealer). Keyed "unit|item" because the same
+     name can sit in both rooms, and a flat list meant signing for a band saw that is not in the
+     room you are standing in. */
+  const preopKeys = () => {
+    const s = S(), both = (s.preopItems && s.preopItems.length) ? s.preopItems : PREOP_FALLBACK;
+    const keys = both.map(i => '|' + i);
+    (s.preopMhu1 || []).forEach(i => keys.push('MHU #1|' + i));
+    (s.preopMhu2 || []).forEach(i => keys.push('MHU #2|' + i));
+    return keys;
+  };
+  const preopLabel = k => String(k).split('|').slice(1).join('|');
+  const preopGroup = k => String(k).split('|')[0] || 'Both units';
   const opItems = () => { const x = S().opItems; return x && x.length ? x : OP_FALLBACK; };
   const nowHM = () => { const d = new Date(); return d.getHours() + ':' + pad(d.getMinutes()); };
   const myInitials = () => String((st.staff && st.staff.name) || '').trim().split(/\s+/)
@@ -2092,8 +2218,16 @@
   function lineRecord(cfg) {
     ssopCss();
     const items = cfg.items(), state = {};
+    /* Items stay a flat array of unique keys, so state, selectors and the tally are untouched.
+       A record that wants sections supplies label() and group(): the pre-op one does, because the
+       two units hold different equipment; the operational one does not and renders exactly as
+       before. */
+    const label = cfg.label || (it => it);
+    const groupOf = cfg.group || (() => '');
     items.forEach(it => { state[it] = { status: '', note: '' }; FIXES.forEach(f => { state[it][f[0]] = false; }); });
-    const row = (it, i) => '<div class="line" data-it="' + esc(it) + '"><div class="nm">' + esc(it) + '</div>' +
+    const row = (it, i) => (groupOf(it) && groupOf(it) !== (i ? groupOf(items[i - 1]) : null)
+        ? '<div class="grp" style="margin-top:' + (i ? '18px' : '2px') + '">' + esc(groupOf(it)) + '</div>' : '') +
+      '<div class="line" data-it="' + esc(it) + '"><div class="nm">' + esc(label(it)) + '</div>' +
       '<div class="seg">' + cfg.choices.map(ch => '<button type="button" data-set="' + ch[0] + '" class="' + ch[2] + '">' + esc(ch[1]) + '</button>').join('') + '</div></div>' +
       '<div class="fix" data-fix="' + esc(it) + '" hidden>' + cfg.fixHtml(it) + '</div>';
     frame(cfg.name, '',
@@ -2141,18 +2275,20 @@
       const initials = document.getElementById('sin').value.trim().toUpperCase();
       if (!initials) return err('Put your initials on the record.');
       const blank = items.filter(it => !state[it].status);
-      if (blank.length) return err('Still to mark: ' + blank.slice(0, 4).join(', ') + (blank.length > 4 ? ' and ' + (blank.length - 4) + ' more' : '') + '.');
+      // Names, not keys — the key carries the unit prefix and nobody should ever see it.
+      if (blank.length) return err('Still to mark: ' + blank.slice(0, 4).map(label).join(', ') + (blank.length > 4 ? ' and ' + (blank.length - 4) + ' more' : '') + '.');
       const bad = items.filter(it => state[it].status === cfg.badValue);
       const held = bad.filter(it => cfg.heldTest(state[it]));
       queue(cfg.action, { initials, time: document.getElementById('stm').value, items: state }, cfg.title);
-      cfg.done(bad, held);
+      // The callback writes a message a person reads, so it gets names rather than keys.
+      cfg.done(bad.map(label), held.map(label));
     };
   }
 
   function showPreop() {
     lineRecord({
       name: 'preop', title: 'Pre-op sanitation', formTitle: 'Pre-Operational Sanitation Record', action: 'preop',
-      items: preopItems,
+      items: preopKeys, label: preopLabel, group: preopGroup,
       choices: [['A', 'A', 'good'], ['U', 'U', 'bad']],
       goodValue: 'A', badValue: 'U', badWord: 'unacceptable', heldWord: 'not released',
       heldTest: x => !x.released,
