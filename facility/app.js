@@ -624,6 +624,46 @@
       .sort((a, b) => sortKey(a) - sortKey(b));
   }
 
+  const undoName = step => ({ skin: 'skinning', start: 'start processing', grind: 'package numbers',
+    finish: 'finished', release: 'release' })[step] || step;
+
+  /* Undo asks for a reason before it does anything, and says plainly what it is about to reverse.
+     The heavy ones (finish, release) say what will NOT be reversed too \u2014 a release that took
+     $300 does not hand the money back, and somebody has to know that before they tap it. */
+  function askUndo(d, box, after) {
+    const u = d.undo;
+    if (!u || !u.step) return;
+    if (!u.allowed) { toast(u.why, false); return; }
+    const host = box;
+    if (!host) return;
+    host.innerHTML = '<div class="card"><b>Undo: ' + esc(undoName(u.step)) + '</b>' +
+      '<div class="status">' + esc(u.label) + '</div>' +
+      '<div class="note' + (u.heavy ? ' warn' : '') + '">This ' + esc(u.undoes) + '.' +
+      (u.step === 'release' ? ' <b>It does not refund anything that was paid.</b>' : '') +
+      (u.step === 'finish' ? ' <b>The first package number is kept</b>, so labels already written still match.' : '') +
+      '</div>' +
+      '<label for="uwhy">Why <span class="hint">goes on the deer and in the log</span></label>' +
+      '<input id="uwhy" type="text" autocomplete="off" placeholder="Tapped the wrong deer">' +
+      '<div class="err" id="uerr"></div>' +
+      '<button class="submit" id="uok">Undo it</button> <button class="btn ghost" id="ux">Keep it as it is</button></div>';
+    document.getElementById('ux').onclick = () => { host.innerHTML = ''; };
+    document.getElementById('uok').onclick = async () => {
+      const why = document.getElementById('uwhy').value.trim();
+      if (!why) { document.getElementById('uerr').textContent = 'Say why. An undo with no reason is a hole in the record.'; return; }
+      const b = document.getElementById('uok'); b.disabled = true; b.textContent = 'Undoing\u2026';
+      try {
+        const out = await call({ action: 'undo', fields: { band: d.Band, step: u.step, reason: why } });
+        host.innerHTML = '';
+        toast((out && out.note) || 'Undone.', true);
+        if (after) after(); else showBoard();
+        refresh(true);
+      } catch (e) {
+        b.disabled = false; b.textContent = 'Undo it';
+        document.getElementById('uerr').textContent = e.offline ? 'Needs signal to undo.' : e.message;
+      }
+    };
+  }
+
   function showBoard() {
     const s = S();
     const all = deerList();
@@ -688,6 +728,13 @@
     const canEdit = !isViewer() && (isMgr() || /intake/i.test((st.staff || {}).role || ''));
     const editBtn = canEdit && d.Status !== 'Voided'
       ? ' <button class="btn ghost" data-a="edit">Correct the record</button>' : '';
+    /* One step back. Every action here commits the instant it is tapped, which is right at a cold
+       bench \u2014 but until 6 November almost none of them could be reversed, and the only way out
+       was Void, which marks the whole deer as something that never happened. A mis-tapped start
+       that also took a package number silently blocked the grinder for every other donated deer. */
+    const undoBtn = (!isViewer() && d.undo && d.undo.step)
+      ? ' <button class="btn ghost" data-a="undo"' + (d.undo.allowed ? '' : ' disabled title="' + esc(d.undo.why) + '"') +
+        '>Undo: ' + esc(undoName(d.undo.step)) + '</button>' : '';
     return '<div class="card' + cls + (d.Type === 'Donated' ? ' donated' : '') + '" data-band="' + esc(d.Band) + '">' +
       '<div class="deer"><div><span class="band">' + esc(d.Band) + '</span> ' +
       '<span class="tag ' + (d.Type === 'Donated' ? 'don">DONATED' : 'prv">' + (isCold ? 'COLD STORAGE' : 'PRIVATE')) + '</span>' + (d['DDP deer'] === 'Yes' ? '<span class="tag">DDP</span>' : '') +
@@ -708,18 +755,21 @@
       (d['First pack #'] && d['Last pack #'] ? '<div class="note ok"><b>Package numbers ' + esc(d['First pack #']) + '–' + esc(d['Last pack #']) + '</b> (MassWildlife)</div>'
         : d['First pack #'] ? '<div class="note warn" style="font-size:17px">Label the 2 lb packages in order from <b>' + esc(d['First pack #']) + '</b>: ' + esc(d['First pack #']) + ', ' + esc(('000' + (parseInt(d['First pack #'], 10) + 1)).slice(-4)) + ', …</div>' : '') +
       (d.Status === 'Released' ? '<div class="status">Released ' + esc(d.Released) + ' to ' + esc(d['Released to']) + '</div>' : '') +
-      '<div class="actions">' + act + (d.Status !== 'Released' && d.Status !== 'Voided' && !isViewer() ? '<button class="btn ghost" data-a="print">Print band</button>' : '') + editBtn + voidBtn + '</div><div class="form"></div></div>';
+      '<div class="actions">' + act + (d.Status !== 'Released' && d.Status !== 'Voided' && !isViewer() ? '<button class="btn ghost" data-a="print">Print band</button>' : '') + editBtn + undoBtn + voidBtn + '</div><div class="form"></div></div>';
   }
 
   function act(kind, d, box, after) {
     if (kind === 'print') return printBand(d);
     if (kind === 'grind') return grind(d, box, after);
+    if (kind === 'undo') return askUndo(d, box, after);
     const s = S();
     const fatPct = d.Type === 'Donated' ? s.fatDonated : (d['Pork fat added'] === 'Yes' ? s.fatPrivate : 0), fatOn = fatPct > 0, fat = fatPct / 100;
     // Donated deer have their package numbers reserved before grinding, so the last label written
     // is known and the count follows from it. Everything else is still counted.
     const firstPack = parseInt(d['First pack #'], 10) || 0;
     const byLast = d.Type === 'Donated' && firstPack > 0;
+    // Donated, on the bench, and no number drawn yet. The one state the finish form cannot answer.
+    const needsPack = d.Type === 'Donated' && !firstPack;
     const v = id => (document.getElementById(id) || {}).value || '';
     const opts = (list, cur) => ['<option value=""></option>'].concat(list.map(x =>
       '<option' + (String(cur) === x ? ' selected' : '') + '>' + esc(x) + '</option>')).join('');
@@ -771,7 +821,17 @@
         // Counting the packages back is a second, avoidable chance to get it wrong, so ask for the
         // thing they are holding and work the count out from it. Private deer have no package
         // numbers, so they are still counted.
-        '<div class="grid2"><div>' + (byLast
+        /* A donated deer with no package number yet used to fall back to the bag-count field,
+           silently, which is the field this design exists to avoid. Graham found it on 6 November
+           and learned to tap around the screen until the right prompt appeared. It is not a
+           fallback now: the form says what is missing and gets the number from here. */
+        (needsPack
+          ? '<div class="note bad"><b>No package numbers on this deer yet.</b> Get them before you ' +
+            'label anything, so the numbers run in order on the state\u2019s sheet.</div>' +
+            '<button class="btn" id="fgp">Get package numbers</button>' +
+            '<p class="status">Then come back here and enter the number on your last label.</p>'
+          : '') +
+        '<div class="grid2"' + (needsPack ? ' hidden' : '') + '><div>' + (byLast
           ? '<label>Last package number <span class="hint">the number on the last label you wrote</span></label><input id="f1" type="number" inputmode="numeric" min="0" step="1" placeholder="' + esc(d['First pack #']) + '\u2026">'
           : '<label>Ground packages (' + esc(s.pkgSize) + ' lb)</label><input id="f1" type="number" inputmode="numeric" min="0" step="1">') + '</div>' +
         (d.Type === 'Donated' ? '<input id="f2" type="hidden" value="0"><input id="f3" type="hidden" value="0"></div><p class="status">Donated deer: all grind, to the state standard, on the MassWildlife label.</p>'
@@ -808,7 +868,14 @@
     };
     box.innerHTML = forms[kind]() + '<div class="err" id="ferr"></div><button class="btn" id="fok" style="margin-top:12px">' +
       (kind === 'void' ? 'Void it' : kind === 'edit' ? 'Save the correction' : 'Save') + '</button> <button class="btn ghost" id="fx">Cancel</button>';
-    if (kind === 'release') document.getElementById('f1').onchange = e => { document.getElementById('f3').hidden = e.target.value !== 'other'; };
+    /* Cancel is bound FIRST, before anything that can throw. It used to be bound after the
+       field wiring below, so a single missing element took the whole binding run down with it and
+       left somebody holding a form with no way out. A way out is the one control that must never
+       depend on the rest of the screen being right. */
+    document.getElementById('fx').onclick = () => { box.innerHTML = ''; };
+    const on = (id, ev, fn) => { const el = document.getElementById(id); if (el) el[ev] = fn; };
+    if (kind === 'release') on('f1', 'onchange', e => {
+      const f3 = document.getElementById('f3'); if (f3) f3.hidden = e.target.value !== 'other'; });
     const calc = () => {
       const drop = !!(document.getElementById('f7') || {}).checked, fr = drop ? 0 : fat;
       const entered = Math.round(num(v('f1')));
@@ -823,8 +890,21 @@
         (d['First pack #'] && pk + num(v('f2')) > 0 ? '<br>Package numbers: <b>' + esc(d['First pack #']) + '–' + ('000' + (firstPack + pk + Math.round(num(v('f2'))) - 1)).slice(-4) + '</b>' : '');
       return { pk, il, total };
     };
-    if (kind === 'finish') { ['f1', 'f2', 'f3'].forEach(id => { document.getElementById(id).oninput = calc; }); const f7 = document.getElementById('f7'); if (f7) f7.onchange = calc; calc(); }
-    document.getElementById('fx').onclick = () => { box.innerHTML = ''; };
+    if (kind === 'finish') {
+      ['f1', 'f2', 'f3'].forEach(id => on(id, 'oninput', calc));
+      on('f7', 'onchange', calc);
+      /* Draw the number from inside the form and re-open it, so the processor never has to go
+         looking for the button on another screen. */
+      on('fgp', 'onclick', () => grind(d, box, () => {
+        /* grind() writes the new number into the cached list, not into this closure's copy of the
+           deer, so take it across before re-opening \u2014 otherwise the form rebuilds still
+           believing there is no number and asks for it again. */
+        const fresh = (st.home.deer || []).find(x => band(x.Band) === band(d.Band) && x.Status !== 'Released');
+        if (fresh && fresh['First pack #']) d['First pack #'] = fresh['First pack #'];
+        act('finish', d, box, after);
+      }));
+      try { calc(); } catch (e) { /* a sum that will not add up must not strand the form */ }
+    }
     document.getElementById('fok').onclick = () => {
       const err = m => { document.getElementById('ferr').textContent = m; };
       if (kind === 'edit') {
@@ -896,6 +976,7 @@
         queue('start', { band: d.Band, processor: p, processorName: pn, weight: naW ? 'N/A' : v('f1'), notWeighed: naW, confirmationChecked: true, skinned: true, antimicrobial: true, ack: ahead.length > 0 }, 'Start ' + d.Band);
       }
       if (kind === 'finish') {
+        if (needsPack) return err('Tap Get package numbers first. A donated deer is labelled from the state\u2019s sequence, not from a bag count.');
         const c = calc(), ip = Math.round(num(v('f2')));
         if (byLast && Math.round(num(v('f1'))) > 0 && Math.round(num(v('f1'))) < firstPack) {
           return err('The last package number can\'t be below ' + d['First pack #'] + ', which is where this deer started.');
