@@ -115,7 +115,69 @@
   const isViewer = () => !!(st.staff && st.staff.viewer);
 
   /* ---------- backend ---------- */
+  /* ---------- screens that can open on what we already know ----------
+
+     Joe, 7 November: "it's almost every tab I click on... donation report, sanitation records,
+     etc.. there's a lag with all of them." Every screen that fetches opens on "Loading…" and
+     waits for Apps Script, and that wait is a fixed cost per request — it is there whatever the
+     screen is doing.
+
+     So a screen that only READS opens on the last answer we were given, straight away, and
+     redraws itself when the fresh one lands. Nothing here is guessed or computed: it is the
+     server's own last reply, held for a few hours. Every write still goes to the server and
+     waits, because a write that lied would be far worse than a slow one — this makes looking
+     instant and leaves doing honest.
+
+     The list is explicit. An action not on it is never served from a cache, so anything added
+     later is slow-but-correct rather than fast-but-wrong. */
+  const CACHEABLE = ['desk', 'fees', 'oncall', 'drops', 'priority', 'martin', 'records', 'ssop',
+    'stats', 'team', 'shifts', 'shiftlog', 'supplies', 'threads', 'status', 'sensors', 'payments',
+    'donations', 'tocollect', 'temprecord', 'deeredits', 'hunters'];
+  const CACHE_TTL = 6 * 36e5;
+  // Some of these are asked per deer, per channel or per day, so the key has to carry that.
+  const cacheKey = b => b.action + '|' + [b.band, b.channel, b.date, b.days, b.kind].map(x => x == null ? '' : x).join('|');
+  const cacheGet = b => {
+    const c = (st.screens || {})[cacheKey(b)];
+    return (c && Date.now() - c.at < CACHE_TTL) ? c : null;
+  };
+  const cachePut = (b, out) => {
+    st.screens = st.screens || {};
+    st.screens[cacheKey(b)] = { at: Date.now(), d: out };
+    // Keep it small: a phone does not need every screen it has ever opened.
+    const keys = Object.keys(st.screens);
+    if (keys.length > 24) keys.sort((x, y) => st.screens[x].at - st.screens[y].at).slice(0, keys.length - 24)
+      .forEach(k => { delete st.screens[k]; });
+    try { save(); } catch (e) {}
+  };
+  /* Compared WITHOUT the timing fields the server stamps on every reply, which differ every time
+     by definition. Left in, every refresh would look like changed data, redraw the screen, fetch
+     again, and so on — a loop that would hammer the backend from every phone in the building. */
+  const sameAnswer = (a, b) => {
+    const strip = o => { const c = Object.assign({}, o); delete c.ms; delete c.lockMs; delete c.fromCache; return c; };
+    try { return JSON.stringify(strip(a)) === JSON.stringify(strip(b)); } catch (e) { return false; }
+  };
+  /* And a belt for the braces: one background refresh per screen per twenty seconds, whatever
+     else happens. If some field in a payload is genuinely volatile, the worst case is a screen
+     that refreshes a little often, not a phone sitting in a fetch loop. */
+  const refreshedAt = {};
+
   async function call(body) {
+    /* Served from the last answer, with a refresh started behind it. The screen that asked gets
+       its data in the same tick, so it paints at once; when the real answer differs, the screen
+       is drawn again — unless a finger is on it, which the quiet-redraw rules already handle. */
+    if (body && CACHEABLE.indexOf(body.action) >= 0 && !body.__fresh) {
+      const hit = cacheGet(body);
+      if (hit) {
+        const k = cacheKey(body), asked = current;
+        if (!refreshedAt[k] || Date.now() - refreshedAt[k] > 20000) {
+          refreshedAt[k] = Date.now();
+          call(Object.assign({ __fresh: true }, body))
+            .then(fresh => { if (!sameAnswer(fresh, hit.d) && current === asked) redraw(true); })
+            .catch(() => { /* the screen is already up; a failed refresh is not worth a message */ });
+        }
+        return Object.assign({ fromCache: hit.at }, hit.d);
+      }
+    }
     if (!CFG.BACKEND_URL || /PASTE_/.test(CFG.BACKEND_URL)) { const e = new Error('The app isn\'t connected yet (backend address missing).'); e.fatal = true; throw e; }
     let res;
     /* A time limit, so a request that never comes back becomes a message with a button on it
@@ -126,6 +188,7 @@
        where the client ID stops it being written twice. */
     const ctl = typeof AbortController === 'function' ? new AbortController() : null;
     const timer = ctl ? setTimeout(() => ctl.abort(), 60000) : null;
+    const t0 = Date.now();
     try {
       res = await fetch(CFG.BACKEND_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify(Object.assign({ number: st.number, pin: st.pin, device: st.device }, body)),
@@ -139,6 +202,26 @@
     let out;
     try { out = await res.json(); } catch (e) { const err = new Error('The server sent back something unexpected (status ' + res.status + ').'); err.fatal = true; throw err; }
     if (!out.ok) { const e = new Error(out.error || 'Something went wrong.'); e.fatal = true; throw e; }
+    /* Keep the last slow request, so "it took fifteen seconds" can be answered with where the
+       fifteen seconds went instead of a guess. The server reports its own time and how much of
+       it was spent queueing behind another request; whatever is left over is the trip there and
+       back, which is the phone's signal and Apps Script waking up. */
+    const total = Date.now() - t0;
+    if (total > 2500) {
+      st.slow = { action: body.action || '?', total: total, ms: Number(out.ms) || 0,
+        lockMs: Number(out.lockMs) || 0, at: Date.now() };
+      try { save(); } catch (e) {}
+    }
+    if (body && CACHEABLE.indexOf(body.action) >= 0) cachePut(body, out);
+    /* Anything that writes throws the lot away. A forfeit, a release, a payment — any of them can
+       change a screen somewhere else, and working out which would be a list nobody maintains. A
+       write is rare next to a read, so the cost is one honest fetch afterwards; the alternative is
+       a counter still showing a deer that has just been handed over. */
+    else if (body && body.action && body.action !== 'login' && body.action !== 'home') {
+      st.screens = {};
+      Object.keys(refreshedAt).forEach(k => { delete refreshedAt[k]; });
+      try { save(); } catch (e) {}
+    }
     return out;
   }
 
@@ -250,9 +333,12 @@
     redrawing = !!quiet;
     try {
       if (current === 'home') showHome();
-      if (current === 'board' && !document.querySelector('.form input, .form select')) showBoard();
-      if (current === 'donate' && !document.querySelector('.form input, .form select, #lic2:focus')) showDonate();
-      if (current === 'deer' && shownBand && !document.querySelector('.form input, .form select')) showDeer(shownBand);
+      else if (current === 'board' && !document.querySelector('.form input, .form select')) showBoard();
+      else if (current === 'donate' && !document.querySelector('.form input, .form select, #lic2:focus')) showDonate();
+      else if (current === 'deer' && shownBand && !document.querySelector('.form input, .form select')) showDeer(shownBand);
+      /* The fetched screens redraw themselves by being opened again, which is what happens when
+         the real answer arrives behind the cached one. Never while something is half typed. */
+      else if (GO[current] && !document.querySelector('input:focus, select:focus, textarea:focus')) GO[current]();
     } finally { redrawing = false; }
   }
   // Exposed so the tests can fire the 45-second poll's redraw without waiting 45 seconds for it.
@@ -269,7 +355,15 @@
       (navigator.onLine ? '' : '<span class="status">No signal. They\'ll send on their own.</span>')
       : '<span class="pill">Everything sent</span> <span class="status">Updated ' + esc(st.synced || '—') + '</span>') +
       bad.map(i => '<div class="note bad">' + esc(i.label) + ' was not accepted: ' + esc(i.error) +
-        ' <button class="plain" data-drop="' + esc(i.clientId) + '">Remove it</button></div>').join('');
+        ' <button class="plain" data-drop="' + esc(i.clientId) + '">Remove it</button></div>').join('') +
+      /* Shown only after something was actually slow, and only for a few minutes. It is for
+         telling somebody what happened, not decoration. */
+      (st.slow && Date.now() - st.slow.at < 300000
+        ? '<div class="status" style="margin-top:4px">Last slow screen: <b>' + esc(st.slow.action) + '</b> took ' +
+          (st.slow.total / 1000).toFixed(1) + 's · server ' + (st.slow.ms / 1000).toFixed(1) + 's' +
+          (st.slow.lockMs > 300 ? ' (waiting on another request ' + (st.slow.lockMs / 1000).toFixed(1) + 's)' : '') +
+          ' · connection ' + (Math.max(0, st.slow.total - st.slow.ms) / 1000).toFixed(1) + 's</div>'
+        : '');
     el.querySelectorAll('[data-drop]').forEach(b => b.onclick = () => { st.outbox = st.outbox.filter(x => x.clientId !== b.dataset.drop); save(); status(); });
   }
   function toast(msg, ok) {
@@ -330,7 +424,7 @@
   }
   // The cached front desk goes too: on a shared iPad the next person must not open to the last
   // person's counter, however briefly, and the manager-only controls are drawn from it.
-  function signOut(msg) { st.pin = ''; st.staff = null; st.home = {}; st.deskCache = null; save(); showLogin(msg); }
+  function signOut(msg) { st.pin = ''; st.staff = null; st.home = {}; st.deskCache = null; st.screens = {}; st.slow = null; save(); showLogin(msg); }
 
   function showLogin(msg) {
     stopThread();
@@ -2265,21 +2359,11 @@
      change between one minute and the next. Nothing is acted on from the cached copy: every tap
      from here goes to the server as it always did. */
   async function showDesk() {
-    const cached = st.deskCache && st.deskCache.d;
-    if (cached) drawDesk(cached, st.deskCache.at);
-    else frame('desk', 'Front desk', '<div id="dk"><p class="status">Loading…</p></div>');
+    frame('desk', 'Front desk', '<div id="dk"><p class="status">Loading…</p></div>');
     let d;
     try { d = await call({ action: 'desk' }); }
-    catch (e) {
-      const box = document.getElementById('dk');
-      const msg = esc(e.offline ? 'Needs signal.' : e.message);
-      // With something on screen already, a failed refresh is a note on top of it, not a blank page.
-      if (box) box.insertAdjacentHTML('afterbegin', '<div class="note ' + (cached ? 'warn' : 'bad') + '">' +
-        msg + (cached ? ' Showing the last copy.' : '') + '</div>');
-      return;
-    }
-    st.deskCache = { at: Date.now(), d: d }; save();
-    drawDesk(d, 0);
+    catch (e) { document.getElementById('dk').innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal.' : e.message) + '</div>'; return; }
+    drawDesk(d, d.fromCache || 0);
   }
 
   function drawDesk(d, cachedAt) {
