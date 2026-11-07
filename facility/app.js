@@ -169,8 +169,15 @@
   async function refresh(quiet) {
     try {
       const out = await call({ action: 'home' });
+      /* If the facility has not changed since the last poll there is nothing to repaint, and
+         repainting anyway is how a background refresh eats a tap for no gain at all. The outbox
+         counts as part of the picture, because a queued action that has just landed changes what
+         the screen should say even when the server payload is identical. */
+      const sig = sigOf(out) + '|' + st.outbox.length;
+      const same = sig === homeSig;
+      homeSig = sig;
       st.home = out; st.synced = stamp(); save();
-      redraw();
+      if (!(quiet && same)) redraw(quiet);
       notifyNewAlerts();
     } catch (e) {
       if (e.fatal && /PIN|switched off/.test(e.message)) { signOut(e.message); return; }
@@ -205,13 +212,51 @@
     return m ? { street: m[1].trim(), town: m[2].trim(), state: m[3].toUpperCase(), zip: m[4] } : null;
   }
 
-  // Redraw only screens that just show data, never one with a form being filled in.
-  function redraw() {
-    if (current === 'home') showHome();
-    if (current === 'board' && !document.querySelector('.form input, .form select')) showBoard();
-    if (current === 'donate' && !document.querySelector('.form input, .form select, #lic2:focus')) showDonate();
-    if (current === 'deer' && shownBand && !document.querySelector('.form input, .form select')) showDeer(shownBand);
+  /* ---- redrawing without fighting the person holding the phone ----
+
+     Every 45 seconds the app refetches and rebuilds the screen with innerHTML. That is fine when
+     nobody is touching it and awful when somebody is: the node under the finger is replaced
+     mid-tap so the tap lands on nothing, and frame() scrolls back to the top, so a processor
+     reading down the board gets yanked to the first card. Both read as "the app is laggy" and
+     both produce the same response — tap it again, harder (Joe, 7 November).
+
+     So a background redraw now: waits until the screen has been left alone for a few seconds,
+     does nothing at all if the data came back the same, and keeps the scroll position. A redraw
+     the person asked for by tapping something is unaffected. */
+  let lastTouch = 0, pointerDown = false, homeSig = '', redrawing = false;
+  // Cheap, order-independent enough for "did anything change?", and far cheaper than diffing.
+  const sigOf = o => { const s = JSON.stringify(o) || ''; let h = 5381;
+    for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+    return s.length + ':' + h; };
+  /* The window that matters is tiny: a finger that is DOWN, plus the moment between lifting it
+     and the click being dispatched. That is when replacing the DOM throws the tap away. Holding
+     off for seconds afterwards would be a different bug — the screen would sit on stale figures
+     right after the action that changed them. */
+  ['pointerdown', 'touchstart', 'mousedown'].forEach(ev =>
+    document.addEventListener(ev, () => { pointerDown = true; lastTouch = Date.now(); }, true));
+  ['pointerup', 'touchend', 'touchcancel', 'mouseup', 'pointercancel', 'click', 'keydown'].forEach(ev =>
+    document.addEventListener(ev, () => { pointerDown = false; lastTouch = Date.now(); }, true));
+  const QUIET_MS = 350;
+
+  let deferred = null;
+  function redraw(quiet) {
+    /* A quiet redraw yields to the person using the screen — but it comes back, rather than
+       dropping the update on the floor and leaving stale figures up until the next poll. */
+    if (quiet && (pointerDown || Date.now() - lastTouch < QUIET_MS)) {
+      if (!deferred) deferred = setTimeout(() => { deferred = null; redraw(true); }, QUIET_MS);
+      return;
+    }
+    if (deferred) { clearTimeout(deferred); deferred = null; }
+    redrawing = !!quiet;
+    try {
+      if (current === 'home') showHome();
+      if (current === 'board' && !document.querySelector('.form input, .form select')) showBoard();
+      if (current === 'donate' && !document.querySelector('.form input, .form select, #lic2:focus')) showDonate();
+      if (current === 'deer' && shownBand && !document.querySelector('.form input, .form select')) showDeer(shownBand);
+    } finally { redrawing = false; }
   }
+  // Exposed so the tests can fire the 45-second poll's redraw without waiting 45 seconds for it.
+  window.__hgRedraw = redraw;
   window.addEventListener('online', flush);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) flush(); });
   setInterval(() => { if (!document.hidden && (current === 'home' || current === 'board' || current === 'donate')) { flush(); if (!flushing) refresh(true); } }, 45000);
@@ -241,7 +286,11 @@
       if (['preop', 'opssop', 'corrective', 'log', 'reject'].indexOf(x.action) >= 0) return;
       if (!b) return;
       const d = by(b);
-      if (x.action === 'intake' && !d) list.push({ Band: b, Intake: x.at, 'Hunter number': f.hunterNumber, 'Hunter name': f.hunterName || ((f.firstName || '') + ' ' + (f.lastName || '')).trim(), 'MassWildlife confirmation': f.confirmation, Deer: f.deer, Type: f.type, 'Intake weight (lb)': f.intakeWeight, 'Weighed as': f.weighedAs, 'Pork fat added': f.porkFat ? 'Yes' : (f.type === 'Donated' ? 'Yes' : 'No'), Status: 'Hanging', pending: true });
+      if (x.action === 'intake' && !d) list.push({ Band: b, Intake: x.at, 'Hunter number': f.hunterNumber, 'Hunter name': f.hunterName || ((f.firstName || '') + ' ' + (f.lastName || '')).trim(), 'MassWildlife confirmation': f.confirmation, Deer: f.deer, Type: f.type, 'Intake weight (lb)': f.intakeWeight, 'Weighed as': f.weighedAs, 'Pork fat added': f.porkFat ? 'Yes' : (f.type === 'Donated' ? 'Yes' : 'No'),
+        // Carried so a check-in made with no signal still shouts about the rack on the card the
+        // skinner is about to read — that is the whole point of asking at the door.
+        'Skull kept': f.skull === true ? 'Yes' : f.skull === false ? 'No' : '',
+        Status: 'Hanging', pending: true });
       if (!d) return;
       d.pending = true;
       if (x.action === 'skin') { d['Skinner'] = f.skinner || st.staff.number; d['Skinner name'] = f.skinnerName || st.staff.name; d['Skinned at'] = x.at; d['Skinned at station'] = 'Yes'; }
@@ -272,7 +321,12 @@
     const hb = document.getElementById('home-btn');
     if (hb) hb.onclick = () => showHome();
     status();
-    window.scrollTo(0, 0);
+    /* Jump to the top when the person navigated here, and never when the 45-second poll is
+       repainting the screen they are already reading. Being thrown back to the first card while
+       working down the board is one of the things that made the app feel like it was fighting
+       back (Joe, 7 November). */
+    if (redrawing) { const y = window.scrollY; requestAnimationFrame(() => window.scrollTo(0, y)); }
+    else window.scrollTo(0, 0);
   }
   function signOut(msg) { st.pin = ''; st.staff = null; st.home = {}; save(); showLogin(msg); }
 
@@ -398,50 +452,79 @@
       : processing ? 'A deer is on the table — sign this now'
       : 'Start here — sign it before the first deer. Sixteen lines, A or U';
 
+    /* ---- the home screen, in the order the day actually runs ----
+
+       One screen used to serve everybody, so it carried every tile in a fixed order, and the
+       result was both duplicated and wrong for most people: "Check in a deer" sat on Home AND
+       inside the Front desk, and a processor who never touches the counter opened to it every
+       morning (Joe, 6 November).
+
+       Now the sequence is the same for everyone — clock in, start of shift, the work, as it
+       happens, the office — and only the ORDER of the two work tiles changes with the role,
+       because the first thing on the screen should be the thing that person is about to do.
+       Checking a deer in lives at the Front desk and nowhere else: one door for the counter,
+       one for the floor. */
+
+    const doorFirst = atDoor() && !isMgr();      // Intake: the counter IS the job
+    const boardTile = big('board', 'Deer Board',
+      (preop.done ? '' : 'After pre-op · ') + inC + ' of ' + s.coolerCap + ' in the cooler' +
+      (inC >= s.coolerCap ? ' · FULL' : '') + ' · skin, start, package, finish');
+    /* The door is one job even though it is four actions, so it gets one tile and holds all four.
+       Whoever is covering the counter should not have to work out which of four screens the hunter
+       standing in front of them belongs to. */
+    const deskTile = big('desk', 'Front desk',
+      'Deer in, deer out, drop-offs and money — everything at the counter' +
+      (h.storage && h.storage.hanging ? ' · ' + h.storage.hanging + ' to collect' : '') +
+      (bandColour(new Date()) ? ' · today’s band: ' + bandColour(new Date()) : ''), 'alt');
+
     const more =
+      group('Booking') +
       big('shifts', 'Book your time', 'Processing · up to ' + s.maxAtOnce + ' at once') +
       big('skinning', 'Book skinning time', 'Behind MHU #1' + (h.skinRoom ? ' · room for ' + h.skinRoom.room + ' more' : ''), 'alt') +
-      big('scan', 'Scan a band', 'Point at the QR code on a band') +
-      big('corrective', 'Corrective action', 'Write up a problem and what you did about it', 'alt') +
-      big('records', 'Today\'s records', 'Read back what has been signed today', 'view') +
-      big('status', 'Facility status', 'Temperatures, who\'s here, the oldest deer', 'view') +
-      big('numbers', 'My numbers', 'Deer, pounds, hours and pay this week', 'view') +
-      (atDoor() ? '' : big('raisedrop', 'A deer is coming in', 'A hunter texted or rang · tell the team so someone meets them', 'alt')) +
       big('oncall', 'On call', (h.drops && h.drops.onCall ? first(h.drops.onCall.name) + ' today' : 'Nobody on call today') + ' · who covers an unclaimed drop-off', (h.drops && h.drops.onCall) ? 'view' : 'red') +
-      big('fees', 'Cold storage', 'Hang-only deer · what is owed, what is past collection', 'alt') +
-      /* Everybody, not just managers. The person who sees the last box of bags is the one at the
-         bench, and if flagging it is three screens into a manager menu it never gets flagged. */
-      big('supplies', 'Running low on something?', h.openSupplies
-        ? h.openSupplies + (h.openSupplies === 1 ? ' thing waiting' : ' things waiting') + ' · tell the managers what we need'
-        : 'Bags, gloves, sanitizer — two taps and the managers know', h.openSupplies ? 'red' : 'alt') +
-      (isMgr() ? big('sensors', 'Sensors', 'Cold storage and both MHUs · live temperatures and the record', 'view') : '') +
-      (isMgr() ? big('team', 'Team numbers', 'Every processor, this week and the season', 'view') : '') +
-      (isMgr() || /intake/i.test((st.staff && st.staff.role) || '') ? big('martin', 'Donation report', 'Rows for Martin\'s sheet', 'alt') : '') +
-      (isMgr() ? big('payments', 'Hunter payments', 'Checks owed and sent', 'alt') : '');
+      group('Look something up') +
+      big('scan', 'Scan a band', 'Point at the QR code on a band') +
+      big('status', 'Facility status', 'Temperatures, who\'s here, the oldest deer', 'view') +
+      big('records', 'Today\'s records', 'Read back what has been signed today', 'view') +
+      big('numbers', 'My numbers', 'Deer, pounds, hours and pay this week', 'view') +
+      (isMgr() ? '' : big('fees', 'Cold storage', 'Hang-only deer · what is owed, what is past collection', 'alt'));
+
+    const isIntake = /intake/i.test((st.staff && st.staff.role) || '');
+    const office = (isMgr() || isIntake)
+      ? group('Office') +
+        big('martin', 'Donation report', 'Rows for Martin’s sheet', 'alt') +
+        (isMgr() ? big('payments', 'Hunter payments', 'Checks owed and sent', 'alt') : '') +
+        (isMgr() ? big('fees', 'Cold storage', 'Hang-only deer · what is owed, what is past collection', 'alt') : '') +
+        (isMgr() ? big('team', 'Team numbers', 'Every processor, this week and the season', 'view') : '') +
+        (isMgr() ? big('sensors', 'Sensors', 'Cold storage and both MHUs · live temperatures and the record', 'view') : '')
+      : '';
 
     frame('home', '',
       (note ? '<div class="note ok">' + note + '</div>' : '') +
       '<div id="alerts">' + alertsHtml() + dropCardsHtml() + '</div><div id="push"></div>' +
       (lead ? leadCard(lead) : '') + clockStrip + mine +
-      group('Now') +
-      // The first tile should be the next thing to do, not a fixed label that is wrong every
-      // morning. Pre-op has to be signed before the line opens, so until it is, it IS the start.
-      (preopFirst ? big('preop', 'Pre-op sanitation', preopSub, preopCls) : '') +
-      big('board', 'Deer Board', 'Start here after pre-op sanitation · ' + inC + ' of ' + s.coolerCap + ' in the cooler' + (inC >= s.coolerCap ? ' · FULL' : '') + ' · start, finish and release') +
-      /* The door is one job even though it is four actions, so it gets one tile above the four.
-         Whoever is covering the counter should not have to know which of four screens the hunter
-         standing in front of them belongs to. */
-      big('desk', 'Front desk', 'Deer in, deer out, drop-offs and money \u2014 everything at the counter' +
-        (h.storage && h.storage.hanging ? ' \u00b7 ' + h.storage.hanging + ' to collect' : ''), 'alt') +
-      big('intake', 'Check in a deer', 'The front door: tag, hunter, donated or private, print the band' +
-        (bandColour(new Date()) ? ' · today\'s band: ' + bandColour(new Date()) : '')) +
-      (atDoor() ? big('raisedrop', 'A deer is coming in', 'A hunter texted or rang \u00b7 tell the team so someone meets them', 'alt') : '') +
-      big('help', 'Need help', 'Sends a notification to everyone on the team', 'red') +
-      group('Today') +
+
+      // Pre-op is a gate: until it is signed it IS the start of the day, and it sits above the
+      // work it has to come before. Once signed it drops into the day's run, ticked.
+      (preopFirst ? group('Start of shift') + big('preop', 'Pre-op sanitation', preopSub, preopCls) : '') +
+
+      group('The work') +
+      (doorFirst ? deskTile + boardTile : boardTile + deskTile) +
+
+      group('As it happens') +
       (preopFirst ? '' : big('preop', 'Pre-op sanitation' + (preop.done && !held ? ' ✓' : ''), preopSub, preopCls)) +
       big('opssop', 'Operational sanitation', 'Every line C, N or N/A. At least once a day') +
       big('daily', 'Log book', 'Sanitizer, thermometer, complaints, tight tank, cash') +
+      big('corrective', 'Corrective action', 'Write up a problem and what you did about it', 'alt') +
+      /* Everybody, not just managers. The person who sees the last box of bags is the one at the
+         bench, and if flagging it is three screens into a manager menu it never gets flagged. */
+      big('supplies', 'Running low on something?', h.openSupplies
+        ? h.openSupplies + (h.openSupplies === 1 ? ' thing waiting' : ' things waiting') + ' · tell the managers what we need'
+        : 'Bags, gloves, sanitizer — two taps and the managers know', h.openSupplies ? 'red' : 'alt') +
       big('messages', 'Messages' + (h.unread ? ' (' + h.unread + ' new)' : ''), 'Team chat and direct messages') +
+      big('help', 'Need help', 'Sends a notification to everyone on the team', 'red') +
+
+      office +
       '<button class="morebtn" id="morebtn"><span id="morearrow">' + (st.moreOpen ? '▾' : '▸') + '</span> Everything else</button>' +
       '<div id="morebox"' + (st.moreOpen ? '' : ' hidden') + '>' + more + '</div>', true);
 
@@ -557,6 +640,28 @@
       '.kindsw button.on{background:var(--green-dark);color:#fff;border-color:var(--green-dark);font-weight:700}' +
       '.kindsw button:disabled{opacity:.5}' +
       '.grp{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:20px 2px 4px}' +
+      /* Buttons inside a card need room of their own. Without this they butt straight up against
+         the text above and below them, which on a phone reads as one covering the other. */
+      '.deskrow{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}' +
+      '.deskrow .btn{flex:1 1 180px;text-align:center}' +
+      // Loud on purpose: it is the one thing on a card that cannot be put right afterwards.
+      '.tag.skull{background:#8A4B08;color:#fff}' +
+      /* ---- making a tap feel like a tap (Joe, 7 November) ----
+         "pressing on a button does not lead to instantaneous results. a lot of times we are
+         clicking the same tab repeatedly thinking it didn't click on the first try."
+
+         Two causes, both here. Nothing on this app had a pressed state, so between the finger
+         landing and the next screen painting there was no evidence at all that the tap had
+         registered — and the next screen often waits on Apps Script, which is not fast. And
+         without touch-action the browser holds every tap back a fraction of a second in case it
+         turns into a double-tap zoom, which on a cold bench reads as the app ignoring you.
+
+         The pressed state costs one frame and is the single biggest change here. */
+      'button,.big,.btn,.trow[data-out],.trow[data-pay],.seasonline,.morebtn{touch-action:manipulation;-webkit-tap-highlight-color:transparent}' +
+      '.big:active,.btn:active,.submit:active,.tabs button:active,.morebtn:active{transform:scale(.985);filter:brightness(.88)}' +
+      '.plain:active,.seasonline:active{opacity:.55}' +
+      '.trow[data-out]:active,.trow[data-pay]:active{background:var(--ok-bg,#EEF0E0)}' +
+      '.big,.btn,.submit,.plain,.morebtn,.seasonline{transition:transform .06s ease,filter .06s ease,opacity .06s ease}' +
       '.big.view{background:var(--card);color:var(--green-dark);border:2px solid var(--green)}.big.view small{opacity:.8}' +
       // the lead card: the one thing to do now, with its own button, so the commonest action is one tap
       '.lead{background:#fff;border:3px solid var(--green);border-radius:16px;padding:14px 16px 16px;margin:12px 0}' +
@@ -778,6 +883,7 @@
       '<div class="deer"><div><span class="band">' + esc(d.Band) + '</span> ' +
       '<span class="tag ' + (d.Type === 'Donated' ? 'don">DONATED' : 'prv">' + (isCold ? 'COLD STORAGE' : 'PRIVATE')) + '</span>' + (d['DDP deer'] === 'Yes' ? '<span class="tag">DDP</span>' : '') +
       (d.Type !== 'Donated' && d['Pork fat added'] === 'Yes' ? '<span class="tag">+ PORK FAT</span>' : '') +
+      (d['Skull kept'] === 'Yes' ? '<span class="tag skull">KEEP THE SKULL</span>' : '') +
       (d.pending ? '<span class="pill wait">not sent yet</span>' : '') +
       (u ? '<span class="pill" style="background:' + u.colour + ';color:#fff;font-weight:700">' + u.level.toUpperCase() + '</span>' : '') +
       '<div class="status">' + (bc ? swatch(bc) + ' · ' : '') +
@@ -791,6 +897,14 @@
       (d.Status === 'Voided' ? '<div class="note bad"><b>Voided</b>' + (d['Void reason'] ? ': ' + esc(d['Void reason']) : '') +
         (d['Voided by'] ? ' · ' + esc(d['Voided by']) : '') + '</div>' : '') +
       (d.Cuts && d.Status !== 'Released' ? '<div class="note ok"><b>Cuts:</b> ' + esc(d.Cuts) + '</div>' : '') +
+      /* Loud, and on every card, because it is read by whoever is about to take the head off and
+         the cost of missing it cannot be undone. It stays visible after release too, so a hunter
+         who comes back for the rack can be answered from the record. */
+      (d['Skull kept'] === 'Yes'
+        ? '<div class="note warn" style="font-size:17px"><b>Keep the skull and antlers.</b> ' +
+          (d.Status === 'Released' ? 'It went with the deer.' :
+            'Tag the head with ' + esc(band(d.Band)) + ' at the skinning station and set it aside — it does not go in the waste barrel.') +
+          '</div>' : '') +
       (owe && live && !owe.settled
         ? '<div class="note bad" style="font-size:17px"><b>$' + owe.owing + ' owing</b>' +
           (owe.paid ? ' of $' + owe.price + ' ($' + owe.paid + ' paid)' : '') +
@@ -837,6 +951,12 @@
         '<label for="e_address">Mailing address</label><input id="e_address" type="text" value="' + esc(d['Hunter mailing address'] || '') + '">' +
         '<div class="grid2"><div><label for="e_deer">Deer</label><select id="e_deer">' + opts(['Doe', 'Button buck', 'Sub-legal adult male', 'Antlered buck'], d['Deer']) + '</select></div>' +
         '<div><label for="e_points">Antler points</label><input id="e_points" type="number" inputmode="numeric" min="0" step="1" value="' + esc(d['Antler points'] || '') + '"></div></div>' +
+        // A hunter changes his mind about the rack, and he is usually standing there when he does.
+        (/antlered/i.test(d['Deer'] || '') && d.Type !== 'Cold storage'
+          ? '<label for="e_skull">Skull and antlers</label><select id="e_skull">' +
+            opts(['Yes', 'No'], d['Skull kept']) + '</select>' +
+            '<p class="status">Yes keeps the head for the hunter. Once it has gone out with the waste, changing this to Yes does not bring it back.</p>'
+          : '') +
         '<div class="grid2"><div><label for="e_takenWith">Taken with</label><select id="e_takenWith">' + opts(['Archery', 'Shotgun slug', 'Muzzleloader', 'Not known'], d['Taken with']) + '</select></div>' +
         '<div><label for="e_ammunition">Ammunition</label><select id="e_ammunition">' + opts(['Lead', 'Non-lead', 'Not known'], d['Ammunition']) + '</select></div></div>' +
         '<label for="e_notes">Notes</label><input id="e_notes" type="text" value="' + esc(d['Notes'] || '') + '">' +
@@ -844,7 +964,10 @@
       void: () => '<p class="status">The row stays on the record and is marked voided, with your name and the reason on it. It stops counting in the cooler, on this board, in the totals and on the Donation report. Nothing is deleted.</p>' +
         (d['First pack #'] && d['Last pack #'] ? '<p class="note bad">This deer was packaged: <b>' + esc(d['First pack #']) + ' to ' + esc(d['Last pack #']) + '</b>. Voiding it frees those package numbers, and nothing renumbers the deer that came after. Fix the numbering by hand before the next drop-off.</p>' : '') +
         '<label for="vr">Why</label><input id="vr" type="text" placeholder="Duplicate of 1017202601, checked in twice">',
-      skin: () => '<p class="status">Records who skinned this deer. The $' + esc(s.skinRate || 25) +
+      skin: () => (d['Skull kept'] === 'Yes'
+          ? '<div class="note warn" style="font-size:17px"><b>This hunter wants the skull and antlers.</b> ' +
+            'Tag the head with ' + esc(band(d.Band)) + ' and set it aside before you carry on.</div>' : '') +
+        '<p class="status">Records who skinned this deer. The $' + esc(s.skinRate || 25) +
         ' skinning premium goes to whoever is named here, whether or not they process it.</p>' +
         (isMgr() ? '<label>Skinned by</label><select id="sk">' + (st.home.staff || []).map(x => '<option value="' + esc(x.number) + '"' + (x.number === st.staff.number ? ' selected' : '') + '>' + esc(x.name + ' (' + x.number + ')') + '</option>').join('') + '</select>'
           : '<p class="status">Skinned by: <b>' + esc(st.staff.name + ' (' + st.staff.number + ')') + '</b></p>') +
@@ -879,6 +1002,9 @@
               '<input id="fup" type="text" placeholder="Card machine down, paying Thursday">'
             : '<br>If it has to go on now, a manager can start it with a reason.') + '</div>'
         : '') +
+        (d['Skull kept'] === 'Yes' && !d['Skinner']
+          ? '<div class="note warn" style="font-size:17px"><b>This hunter wants the skull and antlers.</b> ' +
+            'The head comes off here — tag it with ' + esc(band(d.Band)) + ' and set it aside, do not bin it.</div>' : '') +
         '<div class="note warn" style="font-size:17px">Tag confirmation number: <b>' + esc(d['MassWildlife confirmation'] || 'none recorded') + '</b></div>' +
         '<label class="choice"><input id="f0" type="checkbox"> The confirmation number on the deer\'s tag matches</label>' +
         (d['Skinner name'] ? '<div class="note ok">Skinned by <b>' + esc(d['Skinner name']) + '</b>' + (d['Skinned at'] ? ' · ' + esc(d['Skinned at']) : '') + '. The skinning premium is theirs.</div><input id="f8" type="checkbox" checked hidden>'
@@ -944,7 +1070,10 @@
         (fatOn ? ', and \u201cContains pork\u201d where pork fat was added' : '') + '</label>' +
         (d.Type === 'Private' ? '<label class="choice"><input id="f6" type="checkbox"> Grinder cleared before the next hunter\'s deer, so no meat is mixed</label>' : '') +
         '<p class="status">Same food-safety steps for every deer. Full clean-down of the grinder and equipment at least once a day, signed off on the next morning\'s pre-op record.</p>',
-      release: () => '<label>Released to</label><select id="f1"><option value="">Choose…</option><option>Hunter pickup</option>' +
+      release: () => (d['Skull kept'] === 'Yes'
+          ? '<div class="note warn" style="font-size:17px"><b>The skull and antlers go with him.</b> ' +
+            'It is tagged ' + esc(band(d.Band)) + '. Do not let him leave without it.</div>' : '') +
+        '<label>Released to</label><select id="f1"><option value="">Choose…</option><option>Hunter pickup</option>' +
         (s.pantries || []).map(p => '<option>' + esc(p) + '</option>').join('') + '<option value="other">Other…</option></select>' +
         '<input id="f3" type="text" placeholder="Who?" hidden style="margin-top:8px">' +
         '<label>Pounds out</label><input id="f2" type="number" inputmode="decimal" min="0" value="' + esc(d['Pounds packaged'] || '') + '">' +
@@ -1015,6 +1144,9 @@
         const fields = ['firstName', 'lastName', 'customerId', 'phone', 'email', 'address', 'confirmation', 'deer', 'points', 'takenWith', 'ammunition', 'notes'];
         const changes = {};
         fields.forEach(k => { changes[k] = v('e_' + k).trim(); });
+        // Only sent when the question was on the form at all, so a correction to a doe cannot
+        // write a skull answer onto a deer that never had one.
+        if (document.getElementById('e_skull')) changes.skull = v('e_skull').trim();
         if (!changes.firstName && !changes.lastName) return err('A deer needs a hunter’s name on it.');
         // Live, like a void: the duplicate check and the Martin flag both need the whole log, and
         // replaying a blind correction from a phone that was offline is how records get worse.
@@ -1157,6 +1289,13 @@
         : '<label class="choice" id="porkbox" hidden><input id="pork" type="checkbox"> <span>Add pork fat to the ground (' + esc(s.fatPrivate || 10) + '%), <b>+$' + esc(s.porkAddOn || 20) + '</b>. Local-farm pork fat, as available. Without it, the grind is all venison.</span></label>') +
       '<label for="deer">Deer</label><select id="deer"><option value="">Choose…</option><option>Doe</option><option>Button buck</option><option>Sub-legal adult male</option><option>Antlered buck</option></select>' +
       '<div id="ptsbox" hidden><label for="pts">Points <span class="hint">count every point 1 inch and longer</span></label><input id="pts" type="number" inputmode="numeric" min="1" max="40" step="1" style="max-width:140px"></div>' +
+      /* Antlered bucks only, and deliberately not a tickbox. The head comes off at the skinning
+         station and otherwise goes out with the waste, so an unanswered question reads as "no"
+         and a rack ends up in the barrel. A rack in the barrel does not come back. Asking the
+         hunter while he is standing there costs two seconds (Joe, 7 November). */
+      '<div id="skullbox" hidden><label>Does he want the skull and antlers back?</label>' +
+      '<label class="choice"><input type="radio" name="skull" value="Yes"> <span><b>Yes</b> — keep the head. It is tagged with the band and set aside at the skinning station.</span></label>' +
+      '<label class="choice"><input type="radio" name="skull" value="No"> <span><b>No</b> — the head goes out with the waste.</span></label></div>' +
       // Only the hunter knows this, so it is asked at the door. It decides how hard the wound
       // channel is trimmed later, and it is the one thing that makes the lead question answerable.
       '<div class="grid2"><div><label for="tw">Taken with</label><select id="tw"><option value="">Choose\u2026</option><option>Archery</option><option>Shotgun slug</option><option>Muzzleloader</option><option>Not known</option></select></div>' +
@@ -1214,7 +1353,20 @@
         .filter(x => x.length === 10 && x.indexOf(pre) === 0).map(x => parseInt(x.slice(8), 10) || 0);
       return pre + ('0' + (Math.max(0, ...used) + 1)).slice(-2);
     };
-    document.getElementById('deer').onchange = () => { document.getElementById('ptsbox').hidden = v('deer') !== 'Antlered buck'; };
+    /* The skull question only arises where the head is going to come off. A hang-only deer is
+       never skinned here — it goes back to the hunter whole, antlers and all — so asking would
+       invite a "No" that could get a rack binned that was never ours to bin. */
+    const skullAsked = () => v('deer') === 'Antlered buck' &&
+      ((document.querySelector('input[name=type]:checked') || {}).value || '') !== 'Cold storage';
+    const syncSkull = () => {
+      const show = skullAsked();
+      document.getElementById('ptsbox').hidden = v('deer') !== 'Antlered buck';
+      document.getElementById('skullbox').hidden = !show;
+      // Changing away clears the answer, so it cannot be saved against a doe because somebody
+      // picked the wrong line and then corrected it.
+      if (!show) document.querySelectorAll('input[name=skull]').forEach(r => { r.checked = false; });
+    };
+    document.getElementById('deer').onchange = syncSkull;
     if (!document.getElementById('mrow-css')) { const c = document.createElement('style'); c.id = 'mrow-css';
       c.textContent = '.mrow{width:100%;table-layout:fixed;border-collapse:collapse;margin:10px 0;font-size:15px}.mrow th{text-align:left;font-weight:600;font-size:14px;color:var(--muted);padding:7px 8px 7px 0;width:45%;vertical-align:top;white-space:normal}.mrow td{padding:7px 0;border-bottom:1px solid var(--line);text-align:left;white-space:normal;overflow-wrap:anywhere}.mrow th{border-bottom:1px solid var(--line)}';
       document.head.appendChild(c); }
@@ -1358,6 +1510,7 @@
       pb.hidden = t !== 'Private';
       if (t === 'Private') showPrivBox();
       if (t === 'Cold storage') checkFee();
+      syncSkull();
     });
     // The add-on moves the price, so the figure the hunter is being quoted has to move with it.
     { const pk = document.getElementById('pork'); if (pk) pk.onchange = showPrivBox; }
@@ -1424,6 +1577,10 @@
       if (!v('deer')) return err('Choose doe, button buck, sub-legal adult male or antlered buck.');
       const pts = parseInt(v('pts'), 10);
       if (v('deer') === 'Antlered buck' && !(pts >= 1 && pts <= 40)) return err('Count the points 1 inch and longer and enter the number.');
+      const skullPick = (document.querySelector('input[name=skull]:checked') || {}).value;
+      if (skullAsked() && !skullPick) {
+        return err('Ask him whether he wants the skull and antlers back. Once the head goes out with the waste it is gone, so this one is not left blank.');
+      }
       if (!v('fn') || !v('ln')) return err('Enter the hunter\'s first and last name.');
       const lic = v('lic').replace(/\D/g, '');
       if (lic && (lic.length < 5 || lic.length > 8)) return err('The MassWildlife customer ID is 5 to 8 digits.');
@@ -1451,6 +1608,7 @@
       if (type !== 'Donated' && coolerCount() >= S().coolerCap) return err('The cooler is full. Hold private and cold-storage deer until there\'s room.');
       const noCall = document.getElementById('nocallout');
       const f = { band: b, iap: iap === 'Yes', type, deer: v('deer'), points: v('deer') === 'Antlered buck' ? pts : '', firstName: v('fn'), lastName: v('ln'), customerId: lic, hunterPhone: v('ph'), confirmation: v('cf'), takenWith: v('tw'), ammunition: v('am'),
+        skull: skullAsked() ? skullPick === 'Yes' : undefined,
         notCallout: !!(noCall && noCall.checked),
         cuts: type === 'Private' ? readCuts() : '',
         address: (type === 'Donated' && !noAddr) ? v('ad1') + ', ' + v('adt') + ', ' + (v('ads') || 'MA').toUpperCase() + ' ' + v('adz') : '',
@@ -2136,15 +2294,39 @@
           : '') +
       '</div>' +
 
+      /* From here down, the screen runs in the order the counter meets it: somebody on their way,
+         somebody at the door, the money on deer already here, then a deer going back out. It used
+         to run arrivals, departures, drop-offs, which asked whoever was covering the door on a
+         Saturday to hold the sequence in their head rather than read it off the screen. */
+
+      group('1 · On their way') +
+      (d.drops.length
+        ? '<div class="card"><b>Open drop-offs (' + d.drops.length + ')</b>' +
+          '<div class="status">Somebody texted the line and is on their way. ' +
+          (d.onCall ? 'On call today: ' + esc(d.onCall.name || d.onCall.number) + '.' : 'Nobody is on call today.') + '</div>' +
+          d.drops.map(o => '<div class="trow"><div><b>' + esc(o.hunter || 'A hunter') + '</b>' +
+            '<div class="status">' + esc(o.when || '') + (o.callout ? ' · call-out' : '') +
+            (o.claimedName ? ' · ' + esc(o.claimedName) + ' is going' : ' · nobody has claimed it') + '</div></div></div>').join('') +
+          '<div class="deskrow"><button class="btn alt" data-go2="raisedrop">Another one is coming in</button>' +
+          '<button class="btn ghost" data-go2="oncall">On call and drop-offs</button></div></div>'
+        : '<div class="card"><p class="status">Nobody has texted the line. ' +
+          (d.onCall ? 'On call today: ' + esc(d.onCall.name || d.onCall.number) + '.' : 'Nobody is on call today.') + '</p>' +
+          '<div class="deskrow"><button class="btn alt" data-go2="raisedrop">A deer is coming in</button>' +
+          '<button class="btn ghost" data-go2="oncall">On call and drop-offs</button></div></div>') +
+
+      /* The buttons now sit in their own row with space around them. They used to run straight on
+         from the heading with no margin at all, so on a phone they jammed against the text above
+         and below and read as though they were covering it (Joe, 6 November). */
+      group('2 · At the door') +
       '<div class="card"><b>A deer is here</b>' +
-      '<button class="btn" data-go2="intake">Check a deer in</button>' +
-      '<button class="btn" data-go2="raisedrop">A deer is coming in</button>' +
-      '<div class="status">Donated and privately processed deer are never turned away. Only hang-only deer wait for space.</div></div>' +
+      '<div class="status">Donated and privately processed deer are never turned away. Only hang-only deer wait for space.</div>' +
+      '<div class="deskrow"><button class="btn" data-go2="intake">Check a deer in</button></div></div>' +
 
       /* Money still out on deer that are here. It sits above the collection list because this is
          the one the counter can do something about while the hunter is still in front of them. */
       ((d.unpaid || []).length
-        ? '<div class="card"><b>Waiting on payment (' + d.unpaid.length + ')</b>' +
+        ? group('3 · Still owing') +
+          '<div class="card"><b>Waiting on payment (' + d.unpaid.length + ')</b>' +
           '<div class="status">Custom processing is paid before the deer is cut. Tap one to take the money.</div>' +
           d.unpaid.map(x => '<div class="trow" data-pay="' + esc(x.band) + '"><div><b>' + esc(x.hunter || 'no name') + '</b>' +
             '<div class="status">' + esc(x.band) + ' · ' + esc(x.deer || 'deer') + ' · ' +
@@ -2154,21 +2336,12 @@
           '</div>'
         : '') +
 
+      group(((d.unpaid || []).length ? '4' : '3') + ' \u00b7 Going back out') +
       '<div class="card"><b>Collecting a deer (' + d.collect.length + ')</b>' +
       (d.collect.length
         ? '<div class="status">Tap the deer they came for \u2014 cold storage and finished processing together, longest waiting first.</div>' + d.collect.map(row).join('')
         : '<p class="status">Nothing waiting to be collected.</p>') +
       '</div>' +
-
-      (d.drops.length
-        ? '<div class="card"><b>Open drop-offs (' + d.drops.length + ')</b>' +
-          '<div class="status">Somebody texted the line and is on their way. ' +
-          (d.onCall ? 'On call today: ' + esc(d.onCall.name || d.onCall.number) + '.' : 'Nobody is on call today.') + '</div>' +
-          d.drops.map(o => '<div class="trow"><div><b>' + esc(o.hunter || 'A hunter') + '</b>' +
-            '<div class="status">' + esc(o.when || '') + (o.callout ? ' \u00b7 call-out' : '') +
-            (o.claimedName ? ' \u00b7 ' + esc(o.claimedName) + ' is going' : ' \u00b7 nobody has claimed it') + '</div></div></div>').join('') +
-          '<button class="btn" data-go2="oncall">On call and drop-offs</button></div>'
-        : '') +
 
       '<div class="card"><b>What things cost</b><div class="status">' +
       'Cold storage ' + money(d.fee) + ' for ' + d.coldDays + ' days, then ' + money(d.weekFee) + ' a week. ' +
@@ -2223,6 +2396,8 @@
       esc(x.hunter || 'no name') + ' · ' + esc(x.deer || 'deer') +
       (x.confirmation ? ' · ' + esc(x.confirmation) : '') +
       (priv ? ' · finished ' + esc(x.since) : ' · in ' + x.daysHeld + ' days') + '</div>' +
+      (x.skull ? '<div class="note warn" style="font-size:17px"><b>The skull and antlers go with him.</b> ' +
+        'It is tagged ' + esc(band) + ' at the skinning station. Do not let him leave without it.</div>' : '') +
       breakdown +
       (!priv && !d.open && d.passCallout
         ? '<label class="choice"><input type="checkbox" id="ocnc"> <span>This collection is <b>not</b> a call-out — we were here anyway</span></label>'
