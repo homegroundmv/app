@@ -15,7 +15,7 @@
      a phone was actually running — a fix looks ineffective when the phone is still on yesterday's
      service worker, and there was no way to tell by looking. Keep this in step with VERSION in
      sw.js: it is the number somebody reads out over the phone. */
-  const APP_VERSION = 'v57';
+  const APP_VERSION = 'v58';
   const $app = document.getElementById('app');
   const KEY = 'hg-facility';
 
@@ -591,6 +591,7 @@
       group('Look something up') +
       big('scan', 'Scan a band', 'Point at the QR code on a band') +
       big('status', 'Facility status', 'Temperatures, who\'s here, the oldest deer', 'view') +
+      (isMgr() ? big('speed', 'Speed test', 'Where the waiting actually goes — run it if a screen feels slow', 'view') : '') +
       big('records', 'Today\'s records', 'Read back what has been signed today', 'view') +
       big('numbers', 'My numbers', 'Deer, pounds, hours and pay this week', 'view') +
       (isMgr() ? '' : big('fees', 'Cold storage', 'Hang-only deer · what is owed, what is past collection', 'alt'));
@@ -3137,7 +3138,57 @@
       .catch(e => { box.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal. Try again when connected.' : e.message) + '</div>'; });
   }
 
-  const GO = { supplies: () => showSupplies(), status: showStatus, board: showBoard, intake: showIntake, shifts: () => showShifts(), messages: showMessages, help: showHelp,
+  /* ---------- where the waiting actually goes ----------
+
+     Three times on 6 November I named a cause for a slow screen before measuring one, and was
+     wrong three times. This measures instead.
+
+     `ping` reaches the backend and returns without touching the spreadsheet, so its round trip is
+     everything outside our control: the trip to Google, the redirect an Apps Script web app
+     answers with, and the time Apps Script spends loading and compiling the backend before a line
+     of it runs. A real screen's time, minus that, is the only part worth working on. The two
+     numbers say which of us to blame, and there is no arguing with them. */
+  async function showSpeed() {
+    frame('speed', 'Speed test', '<div id="sp"><p class="status">Timing the connection…</p></div>');
+    const box = document.getElementById('sp');
+    const ms = async body => { const t = Date.now(); let server = 0;
+      try { const o = await call(Object.assign({ __fresh: true }, body)); server = Number(o.ms) || 0; }
+      catch (e) { return { err: e.message }; }
+      return { total: Date.now() - t, server: server }; };
+    const s = n => (n / 1000).toFixed(1) + 's';
+
+    // Twice each: the first of anything pays for waking the script up, and that is not the
+    // number anybody experiences all day.
+    const warm = await ms({ action: 'ping' });
+    if (warm.err) { box.innerHTML = '<div class="note bad">' + esc(warm.err) + '</div>'; return; }
+    const pingR = await ms({ action: 'ping' });
+    await ms({ action: 'desk' });
+    const deskR = await ms({ action: 'desk' });
+    await ms({ action: 'home' });
+    const homeR = await ms({ action: 'home' });
+
+    const overhead = pingR.total;
+    const row = (what, r) => '<div class="trow"><div><b>' + esc(what) + '</b>' +
+      '<div class="status">' + s(r.server) + ' of work in the script</div></div>' +
+      '<div class="tval" style="font-size:17px">' + s(r.total) + '</div></div>';
+    const ourShare = Math.max(0, (deskR.total - overhead));
+
+    box.innerHTML =
+      '<div class="card"><b>A round trip that does nothing</b>' +
+      '<div class="status">Reaches the backend and comes straight back without opening the spreadsheet. ' +
+      'This is the floor: the trip to Google, the redirect, and Apps Script loading the code. Nothing we write can go below it.</div>' +
+      '<div class="trow"><div><b>Doing nothing at all</b></div><div class="tval" style="font-size:19px">' + s(overhead) + '</div></div></div>' +
+      '<div class="card"><b>Real screens</b>' + row('Front desk', deskR) + row('Home', homeR) +
+      '<div class="status" style="margin-top:8px">Of the front desk’s ' + s(deskR.total) + ', <b>' + s(overhead) +
+      '</b> is the floor above and <b>' + s(ourShare) + '</b> is ours — the spreadsheet work and the data coming back.</div></div>' +
+      '<div class="note ' + (overhead > ourShare ? 'warn' : 'ok') + '">' +
+      (overhead > ourShare
+        ? '<b>Most of the wait is the platform, not the app.</b> Making the app do less would save at most ' + s(ourShare) +
+          ', and the ' + s(overhead) + ' floor would remain. Tell Joe this number rather than that a screen feels slow.'
+        : '<b>Most of the wait is the app, and that can be worked on.</b> Send Joe these figures.') + '</div>';
+  }
+
+  const GO = { supplies: () => showSupplies(), status: showStatus, speed: showSpeed, board: showBoard, intake: showIntake, shifts: () => showShifts(), messages: showMessages, help: showHelp,
     numbers: showNumbers, daily: showDaily, team: showTeam, martin: () => showMartin(), donate: showDonate, scan: () => showScan(),
     preop: showPreop, opssop: showOpSsop, corrective: () => showCorrective(), records: showRecords,
     skinning: () => showShifts(null, null, 'Skinning'),
