@@ -11,6 +11,11 @@
 (function () {
   'use strict';
   const CFG = window.HG_CONFIG || {};
+  /* Shown next to Sign out. Twice on 7 November we lost time to not knowing which copy of the app
+     a phone was actually running — a fix looks ineffective when the phone is still on yesterday's
+     service worker, and there was no way to tell by looking. Keep this in step with VERSION in
+     sw.js: it is the number somebody reads out over the phone. */
+  const APP_VERSION = 'v57';
   const $app = document.getElementById('app');
   const KEY = 'hg-facility';
 
@@ -131,7 +136,7 @@
      The list is explicit. An action not on it is never served from a cache, so anything added
      later is slow-but-correct rather than fast-but-wrong. */
   const CACHEABLE = ['desk', 'fees', 'oncall', 'drops', 'priority', 'martin', 'records', 'ssop',
-    'stats', 'team', 'shifts', 'shiftlog', 'supplies', 'threads', 'status', 'sensors', 'payments',
+    'stats', 'team', 'shifts', 'shiftlog', 'supplies', 'threads', 'status', 'sensors',
     'donations', 'tocollect', 'temprecord', 'deeredits', 'hunters'];
   const CACHE_TTL = 6 * 36e5;
   // Some of these are asked per deer, per channel or per day, so the key has to carry that.
@@ -228,6 +233,12 @@
   /* ---------- outbox: deer actions and log entries wait here until sent ---------- */
   function queue(action, fields, label) {
     st.outbox.push({ clientId: uid(), action, fields, at: stamp(), label, created: Date.now(), by: st.number });
+    /* Thrown away the moment the action is queued, not when it finishes sending. Screens are
+       redrawn immediately after a tap — openCheckout calls showDesk() on the next line — and the
+       send is still in flight at that point, so a cache left standing would repaint the deer that
+       was just handed over as still waiting. */
+    st.screens = {};
+    Object.keys(refreshedAt).forEach(k => { delete refreshedAt[k]; });
     save(); flush();
   }
   let flushing = false;
@@ -359,7 +370,7 @@
       /* Shown only after something was actually slow, and only for a few minutes. It is for
          telling somebody what happened, not decoration. */
       (st.slow && Date.now() - st.slow.at < 300000
-        ? '<div class="status" style="margin-top:4px">Last slow screen: <b>' + esc(st.slow.action) + '</b> took ' +
+        ? '<div class="note warn" style="margin-top:6px;font-size:13px">Last slow screen: <b>' + esc(st.slow.action) + '</b> took ' +
           (st.slow.total / 1000).toFixed(1) + 's · server ' + (st.slow.ms / 1000).toFixed(1) + 's' +
           (st.slow.lockMs > 300 ? ' (waiting on another request ' + (st.slow.lockMs / 1000).toFixed(1) + 's)' : '') +
           ' · connection ' + (Math.max(0, st.slow.total - st.slow.ms) / 1000).toFixed(1) + 's</div>'
@@ -406,7 +417,7 @@
     current = name;
     $app.innerHTML =
       '<header class="top"><img src="icon-192.png" alt=""><div><div class="who">' + esc(st.staff && st.staff.name) + ' · ' + esc(st.staff && st.staff.number) + '</div>' +
-      '<div class="sub">Home Ground Facility · <button class="plain" id="out" style="padding:0">Sign out</button></div></div></header>' +
+      '<div class="sub">Home Ground Facility ' + esc(APP_VERSION) + ' · <button class="plain" id="out" style="padding:0">Sign out</button></div></div></header>' +
       (noBack ? '' : '<button class="plain" id="home-btn">← Home</button>') +
       (title ? '<h1>' + title + '</h1>' : '') +
       (st.staff && st.staff.demo ? '<div class="note warn"><b>Demo sign-in.</b> Practice data: nothing here goes into the real Facility Log.</div>' : '') +
@@ -503,8 +514,7 @@
         big('status', 'Facility status', 'Cooler, oldest deer, temperatures, who\'s here', 'view') +
         big('records', 'Sanitation records', 'Pre-op, operational and corrective actions signed today', 'view') +
         group('Office') +
-        big('martin', 'Donation report', 'Donated deer for Martin\'s sheet', 'alt') +
-        big('payments', 'Hunter payments', 'Donation checks owed and sent, with mailing addresses', 'alt'), true);
+        big('martin', 'Donation report', 'Donated deer for Martin\'s sheet', 'alt'), true);
       $app.querySelectorAll('[data-go]').forEach(b => b.onclick = () => GO[b.dataset.go]());
       return;
     }
@@ -589,7 +599,6 @@
     const office = (isMgr() || isIntake)
       ? group('Office') +
         big('martin', 'Donation report', 'Rows for Martin’s sheet', 'alt') +
-        (isMgr() ? big('payments', 'Hunter payments', 'Checks owed and sent', 'alt') : '') +
         (isMgr() ? big('fees', 'Cold storage', 'Hang-only deer · what is owed, what is past collection', 'alt') : '') +
         (isMgr() ? big('team', 'Team numbers', 'Every processor, this week and the season', 'view') : '') +
         (isMgr() ? big('sensors', 'Sensors', 'Cold storage and both MHUs · live temperatures and the record', 'view') : '')
@@ -2990,11 +2999,50 @@
             : '<p class="status">A manager marks them as filled in.</p>') +
           '<div id="pkout"></div></div>';
       })() +
+      /* The W-4 chase, moved here on 7 November when Hunter payments was retired. TFMV cannot pay
+         a donating hunter until he has filed one, and the form goes automatically at check-in —
+         but only when an email was taken, and a deer dropped off out of hours arrives without its
+         hunter. So the ones nobody can email are listed separately: that is a phone call, not a
+         button, and lumping the two together is how the second kind never gets done. */
+      (() => {
+        const tx = data.tax || [];
+        if (!tx.length) return '<div class="card"><b>Tax forms</b><p class="status">Every donating hunter has had the W-4. Nothing to chase.</p></div>';
+        const can = tx.filter(x => x.email), cant = tx.filter(x => !x.email);
+        return '<div class="card"><b>W-4 not sent (' + tx.length + ')</b>' +
+          '<p class="status">Tick Free MV cannot pay a hunter until this is filed. One form covers the season.</p>' +
+          (can.length
+            ? can.map(x => '<div class="trow"><div><b>' + esc(x.hunter || 'no name') + '</b>' +
+                '<div class="status">' + esc(x.band) + ' · in ' + esc(x.dateIn) + ' · ' + esc(x.email) + '</div></div>' +
+                (isViewer() ? '' : '<button class="btn ghost" data-tax="' + esc(x.band) + '">Send it</button>') + '</div>').join('')
+            : '') +
+          (cant.length
+            ? '<div class="note warn" style="margin-top:8px"><b>' + cant.length +
+              (cant.length === 1 ? ' hunter has' : ' hunters have') + ' no email on file.</b> Nothing can be sent to them — ' +
+              'ring them, or catch them at the counter, and put the address on the record with <b>Correct the record</b>.' +
+              cant.map(x => '<div class="status">' + esc(x.hunter || 'no name') + ' · ' + esc(x.band) +
+                (x.phone ? ' · ' + esc(x.phone) : ' · no phone either') + '</div>').join('') + '</div>'
+            : '') +
+          '<div id="taxout"></div></div>';
+      })() +
       '<div class="card"><b>Everything</b><p class="status">All donated deer in Martin\'s layout, as a file that opens in Excel.</p><button class="btn ghost" id="dl">Download all</button></div>';
     if (!document.getElementById('mtab-css')) { const st_ = document.createElement('style'); st_.id = 'mtab-css';
       st_.textContent = '.mtab{border-collapse:collapse;font-size:13px;margin:8px 0;white-space:nowrap}.mtab th,.mtab td{border:1px solid var(--line);padding:4px 6px;text-align:left}.mtab th{background:var(--ok-bg)}';
       document.head.appendChild(st_); }
     const out = document.getElementById('mout');
+    // Each hunter is sent his own form, one tap at a time, so a failure names the hunter it
+    // failed for rather than leaving a batch half done with no way to tell which half.
+    $app.querySelectorAll('[data-tax]').forEach(b => b.onclick = async () => {
+      const tout = document.getElementById('taxout');
+      b.disabled = true; b.textContent = 'Sending…';
+      try {
+        const r = await call({ action: 'taxform', band: b.dataset.tax, clientId: 'tax-' + b.dataset.tax + '-' + Date.now() });
+        b.textContent = 'Sent';
+        if (tout) tout.innerHTML = '<div class="note ok">W-4 sent to ' + esc(r.to || 'the hunter') + '.</div>';
+      } catch (e) {
+        b.disabled = false; b.textContent = 'Send it';
+        if (tout) tout.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal.' : e.message) + '</div>';
+      }
+    });
     const cp = document.getElementById('mcopy');
     if (cp) cp.onclick = async () => {
       try { await navigator.clipboard.writeText(tsv); out.innerHTML = '<div class="note ok">Copied. Paste into Martin\'s sheet at the Customer ID column of the first empty row.</div>'; }
@@ -3032,62 +3080,11 @@
     };
   }
 
-  function showPayments() {
-    frame('payments', 'Hunter payments', '<div id="pay"><p class="status">Loading…</p></div>');
-    const box = document.getElementById('pay');
-    const money = n => '$' + fmt(n || 0);
-    const draw = out => {
-      const owed = out.payments.filter(p => p.status !== 'Paid'), paid = out.payments.filter(p => p.status === 'Paid');
-      const canMark = isMgr();
-      const row = (p, chk) => '<div class="trow">' + (chk ? '<label class="choice" style="margin:0"><input type="checkbox" data-band="' + esc(p.band) + '"> ' : '<div>') +
-        '<span><b>' + esc(p.hunter || '(no name)') + '</b> · ' + money(p.amount) + ' · ' + esc(p.deer) + '<br><span class="status">' +
-        esc(p.address || 'NO ADDRESS ON FILE') + (p.phone ? ' · ' + esc(p.phone) : '') + '<br>Band ' + esc(p.band) + ', in ' + esc(p.dateIn) +
-        (p.status === 'Paid' ? ' · check sent ' + esc(p.sent) + (p.note ? ' (' + esc(p.note) + ')' : '') : '') + '</span>' +
-        /* TFMV cannot pay until the hunter has filed a W-4, so an unsent form is a blocker on this
-           screen in the same way a missing address is. Shown where somebody would notice it, with
-           the send on the spot rather than two screens away. */
-        (p.status !== 'Paid' ? '<br><span class="status">' + (p.taxFormSent
-          ? 'Tax form sent ' + esc(p.taxFormSent)
-          : '<b>NO TAX FORM SENT</b>' + (p.email
-            ? ' · <button class="plain" data-tax="' + esc(p.band) + '" style="padding:0">send it to ' + esc(p.email) + '</button>'
-            : ' and no email on file — add one with Correct the record')) + '</span>' : '') +
-        '</span>' + (chk ? '</label>' : '</div>') + '</div>';
-      box.innerHTML = '<div class="tiles">' + '<div class="tile"><div class="n">' + money(out.owed) + '</div><div class="l">' + out.owedCount + (out.owedCount === 1 ? ' check' : ' checks') + ' owed</div></div>' +
-        '<div class="tile"><div class="n">' + money(out.paid) + '</div><div class="l">' + out.paidCount + (out.paidCount === 1 ? ' check' : ' checks') + ' sent</div></div></div>' +
-        '<div class="card"><p class="status">TFMV pays each donating hunter by check. Download the list for TFMV, then mark the deer paid once the checks go out.</p>' +
-        '<button class="submit" id="pdl">Download owed checks for TFMV</button><div id="pout"></div></div>' +
-        '<div class="card"><h3>Owed</h3>' + (owed.length ? owed.map(p => row(p, canMark)).join('') : '<p class="status">Nothing owed.</p>') +
-        (canMark && owed.length ? '<label for="pnote">Check number or note <span class="hint">optional</span></label><input id="pnote" type="text" maxlength="100">' +
-          '<div class="err" id="perr"></div><button class="btn" id="pmark">Mark ticked deer as paid</button>' : '') + '</div>' +
-        (paid.length ? '<div class="card"><h3>Sent</h3>' + paid.map(p => row(p, false)).join('') + '</div>' : '');
-      document.getElementById('pdl').onclick = () => {
-        const q = x => '"' + String(x == null ? '' : x).replace(/"/g, '""') + '"';
-        const head = ['Hunter', 'Hunter number', 'Mailing address', 'Phone', 'Amount ($)', 'Deer', 'Band', 'MassWildlife confirmation', 'Date in'];
-        const csv = [head].concat(owed.map(p => [p.hunter, p.hunterNumber, p.address, p.phone, p.amount, p.deer, p.band, p.confirmation, p.dateIn]))
-          .map(r => r.map(q).join(',')).join('\r\n');
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' }));
-        a.download = 'TFMV hunter checks ' + stamp().split(' ')[0].replace(/\//g, '-') + '.csv';
-        document.body.appendChild(a); a.click(); a.remove();
-        document.getElementById('pout').innerHTML = '<div class="note ok">' + owed.length + (owed.length === 1 ? ' check, ' : ' checks, ') + money(out.owed) + ', downloaded.</div>';
-      };
-      box.querySelectorAll('[data-tax]').forEach(b => b.onclick = async () => {
-        b.disabled = true; b.textContent = 'sending…';
-        try { const r = await call({ action: 'taxform', band: b.dataset.tax, clientId: 'tax-' + b.dataset.tax + '-' + Date.now() });
-          toast('Tax form sent to ' + r.to, true); draw(await call({ action: 'payments' })); }
-        catch (e) { b.disabled = false; b.textContent = 'send failed — ' + (e.offline ? 'needs signal' : e.message); }
-      });
-      const mk = document.getElementById('pmark');
-      if (mk) mk.onclick = async () => {
-        const bands = Array.from(box.querySelectorAll('input[data-band]:checked')).map(x => x.dataset.band);
-        if (!bands.length) { document.getElementById('perr').textContent = 'Tick the deer whose checks went out.'; return; }
-        mk.disabled = true;
-        try { const r = await call({ action: 'markpaid', bands, note: document.getElementById('pnote').value.trim() }); draw(r); toast(r.marked + ' marked paid.', true); }
-        catch (e) { mk.disabled = false; document.getElementById('perr').textContent = e.offline ? 'Needs signal. Try again when connected.' : e.message; }
-      };
-    };
-    call({ action: 'payments' }).then(draw).catch(e => { box.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal. Try again when connected.' : e.message) + '</div>'; });
-  }
+  /* Hunter payments was a screen here: what TFMV owed each donating hunter, and whether the
+     cheque had gone out. Retired 7 November. Home Ground does not make those payments and has
+     no sight of when TFMV makes them, so the status column was always a guess. The one part
+     worth keeping — chasing the W-4 TFMV needs before it can pay anybody — moved onto the
+     Donation report, which is the screen that already faces Martin and TFMV. */
 
   /* Running low. Anyone raises one; managers mark it ordered or received. Deliberately asks for
      almost nothing — the item, how bad it is, and optionally a word — because the price, the
@@ -3140,7 +3137,7 @@
       .catch(e => { box.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal. Try again when connected.' : e.message) + '</div>'; });
   }
 
-  const GO = { supplies: () => showSupplies(), payments: showPayments, status: showStatus, board: showBoard, intake: showIntake, shifts: () => showShifts(), messages: showMessages, help: showHelp,
+  const GO = { supplies: () => showSupplies(), status: showStatus, board: showBoard, intake: showIntake, shifts: () => showShifts(), messages: showMessages, help: showHelp,
     numbers: showNumbers, daily: showDaily, team: showTeam, martin: () => showMartin(), donate: showDonate, scan: () => showScan(),
     preop: showPreop, opssop: showOpSsop, corrective: () => showCorrective(), records: showRecords,
     skinning: () => showShifts(null, null, 'Skinning'),
