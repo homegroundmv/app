@@ -328,7 +328,9 @@
     if (redrawing) { const y = window.scrollY; requestAnimationFrame(() => window.scrollTo(0, y)); }
     else window.scrollTo(0, 0);
   }
-  function signOut(msg) { st.pin = ''; st.staff = null; st.home = {}; save(); showLogin(msg); }
+  // The cached front desk goes too: on a shared iPad the next person must not open to the last
+  // person's counter, however briefly, and the manager-only controls are drawn from it.
+  function signOut(msg) { st.pin = ''; st.staff = null; st.home = {}; st.deskCache = null; save(); showLogin(msg); }
 
   function showLogin(msg) {
     stopThread();
@@ -2254,11 +2256,34 @@
      They lived on four screens, which works for somebody who has used the app all season and
      does not work for whoever is covering the counter on the Saturday of shotgun week. Nothing
      here is a new action — it is the same ones, in the order the person at the desk meets them. */
+  /* The front desk is drawn from the last copy we were sent, straight away, and then redrawn when
+     the fresh one lands. Joe, 7 November: "clicking front desk and still having a lag for how long
+     it takes to page to load." The pressed state made the tap feel heard; this is the rest of it.
+
+     A screen that appears instantly with figures a minute old, marked as such, beats a spinner —
+     the counter is usually looking for the hunter's name in the collect list, and that does not
+     change between one minute and the next. Nothing is acted on from the cached copy: every tap
+     from here goes to the server as it always did. */
   async function showDesk() {
-    frame('desk', 'Front desk', '<div id="dk"><p class="status">Loading…</p></div>');
+    const cached = st.deskCache && st.deskCache.d;
+    if (cached) drawDesk(cached, st.deskCache.at);
+    else frame('desk', 'Front desk', '<div id="dk"><p class="status">Loading…</p></div>');
     let d;
     try { d = await call({ action: 'desk' }); }
-    catch (e) { document.getElementById('dk').innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal.' : e.message) + '</div>'; return; }
+    catch (e) {
+      const box = document.getElementById('dk');
+      const msg = esc(e.offline ? 'Needs signal.' : e.message);
+      // With something on screen already, a failed refresh is a note on top of it, not a blank page.
+      if (box) box.insertAdjacentHTML('afterbegin', '<div class="note ' + (cached ? 'warn' : 'bad') + '">' +
+        msg + (cached ? ' Showing the last copy.' : '') + '</div>');
+      return;
+    }
+    st.deskCache = { at: Date.now(), d: d }; save();
+    drawDesk(d, 0);
+  }
+
+  function drawDesk(d, cachedAt) {
+    frame('desk', 'Front desk', '<div id="dk"></div>');
     const box = document.getElementById('dk');
     const money = n => '$' + (Math.round(n * 100) / 100);
 
@@ -2279,6 +2304,11 @@
     };
 
     box.innerHTML =
+      (cachedAt
+        ? '<div class="status" style="margin:0 2px 8px">Last loaded ' +
+          (Date.now() - cachedAt < 60000 ? 'a moment ago' : Math.round((Date.now() - cachedAt) / 60000) + ' min ago') +
+          ' · checking for changes…</div>'
+        : '') +
       '<div class="card">' +
       (d.open
         ? '<div class="note ok"><b>Posted hours — open.</b> A deer arriving now is not a call-out.</div>'
