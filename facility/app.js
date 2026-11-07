@@ -15,7 +15,7 @@
      a phone was actually running — a fix looks ineffective when the phone is still on yesterday's
      service worker, and there was no way to tell by looking. Keep this in step with VERSION in
      sw.js: it is the number somebody reads out over the phone. */
-  const APP_VERSION = 'v58';
+  const APP_VERSION = 'v59';
   const $app = document.getElementById('app');
   const KEY = 'hg-facility';
 
@@ -3551,7 +3551,34 @@
   }
 
   /* ---------- start ---------- */
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  /* Register, and say so when a newer copy has taken over.
+
+     An update used to arrive silently, which meant nobody could tell whether a phone was running
+     the fix or yesterday's app — on 6 November that cost two rounds of "it still does it" against
+     a version that no longer existed. The reload is offered rather than taken: a processor may be
+     halfway through a check-in, and throwing that away to be a few minutes more current is the
+     wrong trade. Checked again whenever the app is brought back to the front, which on an iPad at
+     a bench is many times a day. */
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').then(reg => {
+      if (!reg) return;
+      const check = () => { try { reg.update(); } catch (e) {} };
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) check(); });
+      setInterval(check, 15 * 60000);
+    }).catch(() => {});
+    let reloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloading) return;
+      const el = document.getElementById('msg');
+      if (!el) { return; }
+      el.innerHTML = '<div class="note ok"><b>A newer version of the app is ready.</b> ' +
+        'Nothing is lost by reloading — anything waiting to send goes with it.' +
+        '<button class="btn" id="swgo" style="margin-top:8px">Reload now</button></div>';
+      const b = document.getElementById('swgo');
+      if (b) b.onclick = () => { reloading = true; location.reload(); };
+      window.scrollTo(0, 0);
+    });
+  }
   /* Square may have just reopened us with a payment result. Read it before anything draws, so a
      cold start after the jump still finishes the job rather than losing it. */
   const sqBack = (() => { try { return squareReturn(); } catch (e) { return null; } })();
