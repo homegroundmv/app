@@ -15,7 +15,7 @@
      a phone was actually running — a fix looks ineffective when the phone is still on yesterday's
      service worker, and there was no way to tell by looking. Keep this in step with VERSION in
      sw.js: it is the number somebody reads out over the phone. */
-  const APP_VERSION = 'v61';
+  const APP_VERSION = 'v63';
   const $app = document.getElementById('app');
   const KEY = 'hg-facility';
 
@@ -113,7 +113,7 @@
   st.hunters = st.hunters || { at: 0, list: [] };
   function save() { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { /* keep in memory */ } }
   save();
-  const S = () => st.home.settings || { coolerCap: 30, coolerAlert: 80, startBy: 72, maxHold: 120, maxAtOnce: 6, slots: [], pieceRate: 125, minWage: 15, pkgSize: 2, fatDonated: 10, fatPrivate: 10, privatePrice: 250, porkAddOn: 20, porkInStock: true, pantries: [], helpHours: 4, skinRate: 25, skinHourly: 25, otherHourly: 25, intakeFee: 10, maxSkinners: 5, mhu1Cap: 12, loneGrace: 30, preopItems: [], opItems: [] };
+  const S = () => st.home.settings || { coolerCap: 30, coolerAlert: 80, startBy: 72, maxHold: 120, maxAtOnce: 6, slots: [], pieceRate: 125, minWage: 15, pkgSize: 2, fatDonated: 10, fatPrivate: 10, privatePrice: 250, porkAddOn: 20, porkInStock: true, pantries: [], helpHours: 4, skinRate: 25, skinHourly: 25, otherHourly: 25, intakeFee: 10, maxSkinners: 5, mhu1Cap: 12, loneGrace: 30, preopItems: [], opItems: [], closeItems: [] };
   const isMgr = () => !!(st.staff && st.staff.manager);
   // Who a hunter is likely to text or ring: the published number reaches a manager or intake staff.
   const atDoor = () => isMgr() || /intake/i.test((st.staff && st.staff.role) || '');
@@ -640,6 +640,7 @@
       group('As it happens') +
       (preopFirst ? '' : big('preop', 'Pre-op sanitation' + (preop.done && !held ? ' ✓' : ''), preopSub, preopCls)) +
       big('opssop', 'Operational sanitation', 'Every line C, N or N/A. At least once a day') +
+      big('closeout', 'End-of-shift close-out', 'Waste out, drains clear. The last thing before you lock up') +
       big('daily', 'Log book', 'Sanitizer, thermometer, complaints, tight tank, cash') +
       big('corrective', 'Corrective action', 'Write up a problem and what you did about it', 'alt') +
       /* Everybody, not just managers. The person who sees the last box of bags is the one at the
@@ -920,6 +921,7 @@
      back to what has been done to it: skin-on in the cooler, skinned in MHU-1, on the table in
      MHU-2. Cold storage never leaves the cooler. */
   const PLACES = ['Cooler', 'MHU-1', 'MHU-2'];
+  const RELEASED_SHOWN = 10;       // how many released deer the board lists; the count is the true total
   const placeOf = d => {
     if (d.Type === 'Cold storage') return 'Cooler';
     if (PLACES.indexOf(d.Location) >= 0) return d.Location;
@@ -988,11 +990,14 @@
   }
   // Longest hanging on top, whatever the type or payment — the flags say the rest (Joe, 7 November).
   const byAge = list => list.slice().sort((a, b) => hoursHung(b) - hoursHung(a));
-  function drop(key, title, list, inner, cap) {
+  /* `note` replaces the right-hand summary text. The Released list uses it: "oldest 300 h" is
+     meaningless for a deer that has already gone home. */
+  function drop(key, title, list, inner, cap, note) {
     const open = boardOpen.has(key);
     const oldest = list.length ? Math.floor(Math.max.apply(null, list.map(hoursHung))) : 0;
+    const right = note != null ? note : (list.length ? 'oldest ' + oldest + ' h' : 'empty');
     return '<details class="drop" data-drop="' + esc(key) + '"' + (open ? ' open' : '') + '><summary><span><b>' + esc(title) + '</b> · ' +
-      list.length + (cap ? ' of ' + cap : '') + '</span><span class="status">' + (list.length ? 'oldest ' + oldest + ' h' : 'empty') + '</span></summary>' +
+      list.length + (cap ? ' of ' + cap : '') + '</span><span class="status">' + esc(right) + '</span></summary>' +
       '<div class="dropin">' + (inner != null ? inner : (list.length ? byAge(list).map(deerRow).join('') : '<p class="status">Nothing here.</p>')) + '</div></details>';
   }
 
@@ -1005,7 +1010,11 @@
     const cooler = at('Cooler'), m1 = at('MHU-1'), m2 = at('MHU-2');
     const hanging = all.filter(d => d.Status === 'Hanging').sort((a, b) => sortKey(a) - sortKey(b));
     const ready = all.filter(d => d.Status === 'Ready');
-    const released = all.filter(d => d.Status === 'Released').slice(-10).reverse();
+    /* Everything that has gone out, most recently released first — not by age, which for a deer
+       that has left the building only says how long it hung. Shown even when empty: a category
+       that disappears reads as a category that does not exist (Joe, 7 November). */
+    const released = all.filter(d => d.Status === 'Released')
+      .sort((a, b) => (parse(b.Released) || 0) - (parse(a.Released) || 0));
     const n = all.filter(d => d.Status === 'Hanging' || d.Status === 'Processing').length, full = n >= s.coolerCap;
     const ofType = t => cooler.filter(d => d.Type === t);
     const coolerInner =
@@ -1036,7 +1045,12 @@
       drop('MHU-1', 'MHU-1', m1, null, s.mhu1Cap || 20) +
       drop('MHU-2', 'MHU-2', m2, null, s.mhu2Cap || 20) +
       drop('Ready', 'Ready for pickup or delivery', ready) +
-      (released.length ? drop('Released', 'Released this week', released) : ''));
+      drop('Released', 'Released', released,
+        released.length ? released.slice(0, RELEASED_SHOWN).map(d => deerRow(d)).join('')
+          : '<p class="status">Nothing has gone out yet.</p>',
+        null,
+        released.length > RELEASED_SHOWN ? 'last ' + RELEASED_SHOWN + ' of ' + released.length
+          : released.length ? 'most recent first' : 'none yet'));
     document.getElementById('reload').onclick = () => refresh();
     $app.querySelectorAll('[data-bandkey]').forEach(r => r.onclick = () => {
       bandFilter = bandFilter === r.dataset.bandkey ? '' : r.dataset.bandkey; showBoard();
@@ -3349,6 +3363,7 @@
   const GO = { supplies: () => showSupplies(), status: showStatus, speed: showSpeed, board: showBoard, intake: showIntake, shifts: () => showShifts(), messages: showMessages, help: showHelp,
     numbers: showNumbers, daily: showDaily, team: showTeam, martin: () => showMartin(), donate: showDonate, scan: () => showScan(),
     preop: showPreop, opssop: showOpSsop, corrective: () => showCorrective(), records: showRecords,
+    closeout: showCloseOut,
     skinning: () => showShifts(null, null, 'Skinning'),
     sensors: showSensors, temprecord: () => showTempRecord(),
     raisedrop: showRaiseDrop, oncall: showOnCall, fees: showFees, desk: showDesk };
@@ -3373,6 +3388,13 @@
   const OP_FALLBACK = ['Employee clothing', 'Hand soap and towels', 'Hand washing procedures', 'Equipment',
     'Condensation', 'Floors', 'Walls', 'Ceilings', 'Knife sanitizer temp', 'Saw sanitizer temp',
     'Knives', 'Aprons', 'Boots', 'Garbage bins', 'Water pooling', 'Bleeding area', 'Insect control'];
+  /* The close-out list is a Settings value, so Joe can change it without a deploy. This is only the
+     fallback for a phone that has never had a payload. */
+  const CLOSE_FALLBACK = ['Waste bins emptied and taken to the dumpster', 'Nothing left in the trash cooler overnight',
+    'Floor drain grates lifted and scrubbed', 'Drain strainers emptied and scrubbed', 'Sink strainers emptied and scrubbed',
+    'Sinks and hand sinks cleaned and restocked', 'Equipment broken down and left disassembled',
+    'Knives and saws cleaned and sanitized', 'Meat lugs washed and racked', 'Floors squeegeed with no standing water',
+    'Cooler and MHU doors shut'];
   /* Pre-op is three lists now: what both units share, then MHU #1 (the rail, skinning and sanitary
      dressing) and MHU #2 (band saw, grinder, stuffer, sealer). Keyed "unit|item" because the same
      name can sit in both rooms, and a flat list meant signing for a band saw that is not in the
@@ -3387,6 +3409,7 @@
   const preopLabel = k => String(k).split('|').slice(1).join('|');
   const preopGroup = k => String(k).split('|')[0] || 'Both units';
   const opItems = () => { const x = S().opItems; return x && x.length ? x : OP_FALLBACK; };
+  const closeItems = () => { const x = S().closeItems; return x && x.length ? x : CLOSE_FALLBACK; };
   const nowHM = () => { const d = new Date(); return d.getHours() + ':' + pad(d.getMinutes()); };
   const myInitials = () => String((st.staff && st.staff.name) || '').trim().split(/\s+/)
     .map(w => (w[0] || '').toUpperCase()).join('').slice(0, 4);
@@ -3497,6 +3520,10 @@
       if (blank.length) return err('Still to mark: ' + blank.slice(0, 4).map(label).join(', ') + (blank.length > 4 ? ' and ' + (blank.length - 4) + ' more' : '') + '.');
       const bad = items.filter(it => state[it].status === cfg.badValue);
       const held = bad.filter(it => cfg.heldTest(state[it]));
+      // A record can want more than "every line marked" — the close-out wants a reason on any line
+      // that was not done. Caught here as well as on the server, so the answer is instant.
+      const extra = cfg.extraCheck ? cfg.extraCheck(items, state, label) : '';
+      if (extra) return err(extra);
       queue(cfg.action, { initials, time: document.getElementById('stm').value, items: state }, cfg.title);
       // The callback writes a message a person reads, so it gets names rather than keys.
       cfg.done(bad.map(label), held.map(label));
@@ -3540,6 +3567,31 @@
     });
   }
 
+  /* End-of-shift close-out. The third use of lineRecord. Done / No / N/A rather than C / N / N/A,
+     because this is a list of jobs rather than a judgement of conditions, and a line marked No has
+     to say why: waste or a drain left overnight is the thing the pest control programme exists to
+     prevent, so "no" on its own is not a record of anything. */
+  function showCloseOut() {
+    lineRecord({
+      name: 'closeout', title: 'Close-out', formTitle: 'End-of-Shift Close-Out Record', action: 'closeout',
+      items: closeItems,
+      choices: [['Done', 'Done', 'good'], ['No', 'No', 'bad'], ['N/A', 'N/A', 'na']],
+      goodValue: 'Done', badValue: 'No', badWord: 'not done', heldWord: 'to write up',
+      heldTest: () => true,
+      intro: 'Last thing before you lock up. Walk it, do it, then mark it. Anything marked No needs a reason, and the managers are told straight away.',
+      allLabel: 'Mark every line Done', allWhy: 'change any line you did not get to.',
+      saveLabel: 'Sign and close out',
+      fixHtml: () => '<b>Not done</b><p class="status" style="margin:2px 0 0">Say why. Waste or a drain left overnight needs a corrective action record too.</p>' +
+        '<input type="text" data-note placeholder="Why not?" maxlength="200">',
+      extraCheck: (items, state, label) => {
+        const why = items.filter(it => state[it].status === 'No' && !String(state[it].note || '').trim());
+        return why.length ? 'Say why it was not done: ' + why.map(label).join(', ') + '.' : '';
+      },
+      done: bad => showHome(!bad.length ? 'Closed out. Everything done \u2014 thank you.'
+        : 'Close-out saved. <b>' + bad.length + ' not done: ' + esc(bad.join(', ')) + '.</b> The managers have been told. Fill in a corrective action record if waste or a drain was left.'),
+    });
+  }
+
   /* Sanitation Corrective Action Form: Parts I, II and III, as on the paper. */
   function showCorrective(linked) {
     ssopCss();
@@ -3549,6 +3601,11 @@
       '<div class="card">' + masthead('Sanitation Corrective Action Form') + '<div class="sign"><div><label for="cd">Date</label><input id="cd" type="text" value="' + esc(stamp().split(' ')[0]) + '" readonly></div>' +
       '<div><label for="ct">Time</label><input id="ct" type="time" value="' + esc(nowHM().replace(/^(\d):/, '0$1:')) + '"></div></div>' +
       '<label for="ci">Your initials</label><input id="ci" type="text" maxlength="4" autocapitalize="characters" value="' + esc(myInitials()) + '">' +
+      /* The form asked what you did about it and never what it was. The SOP has named this since
+         5 November: Part 1 records "what was found, what was done, what prevents it returning".
+         It sits above the parts because it is the first thing you know (Joe, 7 November). */
+      '<label for="cf">What was found?</label><p class="why">The problem itself, in your words. Where it was and what you saw.</p>' +
+      '<textarea id="cf" maxlength="1000" placeholder="Mouse droppings behind the hand sink"></textarea>' +
       '<label>Which part of the form is this?</label>' +
       '<label class="choice"><input type="checkbox" id="pI"> <span><b>Part I</b> — the building and the site<div class="hint">Walls, floors, ceilings and other surfaces food does not touch</div></span></label>' +
       '<label class="choice"><input type="checkbox" id="pII"> <span><b>Part II</b> — pre-op sanitation, no product involved<div class="hint">Found before any deer was on the table</div></span></label>' +
@@ -3583,6 +3640,7 @@
       const v = id => (document.getElementById(id).value || '').trim();
       const initials = v('ci').toUpperCase();
       if (!initials) return err('Put your initials on the record.');
+      if (!v('cf')) return err('Say what was found. The record has to state the problem, not only the fix.');
       const parts = ['I', 'II', 'III'].filter(k => document.getElementById('p' + k).checked);
       if (!parts.length) return err('Choose which part of the form this is.');
       if (parts.indexOf('I') >= 0 && !v('i1')) return err('Part I: say what you did to correct it.');
@@ -3595,7 +3653,7 @@
         if (ynv.iii4 === 'Yes' && !v('iii5')) return err('Part III: say what the measures were.');
         if (!ynv.iii6) return err('Part III: was the SSOP re-evaluated and modified?');
       }
-      queue('corrective', { initials, time: v('ct'), parts, linked: linked || '',
+      queue('corrective', { initials, time: v('ct'), parts, linked: linked || '', found: v('cf'),
         i1: v('i1'), i2: v('i2'), ii1: v('ii1'), ii2: v('ii2'),
         iii1: v('iii1'), iii2: ynv.iii2 || '', iii3: v('iii3'), iii4: ynv.iii4 || '', iii5: v('iii5'),
         iii6: ynv.iii6 || '', iii7: v('iii7') }, 'Corrective action');
@@ -3610,12 +3668,13 @@
     let out;
     try { out = await call({ action: 'ssop' }); }
     catch (e) { document.getElementById('rc').innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal.' : e.message) + '</div>'; return; }
-    const lines = (f, showFix) => f.lines.map(l => '<div class="ln' + (/^(U|N)$/.test(l.status) ? ' n' : '') + '">' +
+    const lines = (f, showFix) => f.lines.map(l => '<div class="ln' + (/^(U|N|No)$/.test(l.status) ? ' n' : '') + '">' +
       esc(l.status) + ' · ' + esc(l.item) + (l.note ? ' — ' + esc(l.note) : '') +
       (showFix && /^U$/.test(l.status) ? ' [' + FIXES.filter(x => l[x[0]]).map(x => x[1]).join(', ') + (l.released ? '' : ' — NOT RELEASED') + ']' : '') + '</div>').join('');
     const form = (f, showFix) => '<div class="rec"><b>' + esc(f.time || '') + ' · ' + esc(f.initials) + '</b>' +
       '<div class="status">' + esc(f.staff) + '</div>' + lines(f, showFix) + '</div>';
     const corr = c => '<div class="rec"><b>' + esc(c.time) + ' · Part ' + esc(c.parts) + ' · ' + esc(c.initials) + '</b>' +
+      (c.found ? '<div class="ln n">Found: ' + esc(c.found) + '</div>' : '') +
       ['i1', 'i2', 'ii1', 'ii2', 'iii1', 'iii3', 'iii5', 'iii7'].filter(k => c[k]).map(k => '<div class="ln">' + esc(c[k]) + '</div>').join('') +
       (c.iii2 ? '<div class="ln">Sanitary conditions restored: ' + esc(c.iii2) + ' · Prevent recurrence: ' + esc(c.iii4) + ' · SSOP re-evaluated: ' + esc(c.iii6) + '</div>' : '') + '</div>';
     document.getElementById('rc').innerHTML =
@@ -3624,6 +3683,8 @@
       (out.preop.length ? out.preop.map(f => form(f, true)).join('') : '<div class="note bad">No pre-op record today. Nothing should be on the table until there is one.</div>') + '</div>' +
       '<div class="card">' + masthead('Processing Operational Sanitation Record') +
       (out.op.length ? out.op.map(f => form(f, false)).join('') : '<p class="status">No record yet today.</p>') + '</div>' +
+      '<div class="card">' + masthead('End-of-Shift Close-Out Record') +
+      ((out.closeout && out.closeout.length) ? out.closeout.map(f => form(f, false)).join('') : '<p class="status">Not closed out yet today.</p>') + '</div>' +
       '<div class="card">' + masthead('Sanitation Corrective Action Form') +
       (out.corrective.length ? out.corrective.map(corr).join('') : '<p class="status">None today.</p>') + '</div>';
   }
