@@ -15,7 +15,7 @@
      a phone was actually running — a fix looks ineffective when the phone is still on yesterday's
      service worker, and there was no way to tell by looking. Keep this in step with VERSION in
      sw.js: it is the number somebody reads out over the phone. */
-  const APP_VERSION = 'v63';
+  const APP_VERSION = 'v64';
   const $app = document.getElementById('app');
   const KEY = 'hg-facility';
 
@@ -570,6 +570,18 @@
 
     // Pre-op is a gate, so it says what to do. It only turns red once a deer is on the table without it.
     const preopCls = held ? 'red' : preop.done ? 'view' : processing ? 'red' : '';
+    /* The close-out reads like the pre-op record: a tick when it is signed, the time and initials
+       underneath, and red with the lines named when something was left. Without this nobody can
+       tell from the home screen whether the place was closed out, which was the point of having
+       the record at all. `big()` escapes the subtitle, so it is plain text here. */
+    const closeout = h.closeoutToday || {};
+    const closeoutLeft = (closeout.notDone || []).length;
+    const closeoutSub = closeout.done
+      ? (closeoutLeft
+          ? closeoutLeft + ' not done: ' + (closeout.notDone || []).join(', ')
+          : 'Closed out ' + (closeout.time || '') + ' by ' + (closeout.initials || ''))
+      : 'Waste out, drains clear. The last thing before you lock up';
+    const closeoutCls = closeoutLeft ? 'red' : closeout.done ? 'view' : '';
     // Unsigned pre-op moves to the top of Now and out of Today, so it is never below the work it
     // has to come before. A held line is a different problem and stays where it is, in red.
     const preopFirst = !preop.done && !held;
@@ -640,7 +652,7 @@
       group('As it happens') +
       (preopFirst ? '' : big('preop', 'Pre-op sanitation' + (preop.done && !held ? ' ✓' : ''), preopSub, preopCls)) +
       big('opssop', 'Operational sanitation', 'Every line C, N or N/A. At least once a day') +
-      big('closeout', 'End-of-shift close-out', 'Waste out, drains clear. The last thing before you lock up') +
+      big('closeout', 'End-of-shift close-out' + (closeout.done && !closeoutLeft ? ' \u2713' : ''), closeoutSub, closeoutCls) +
       big('daily', 'Log book', 'Sanitizer, thermometer, complaints, tight tank, cash') +
       big('corrective', 'Corrective action', 'Write up a problem and what you did about it', 'alt') +
       /* Everybody, not just managers. The person who sees the last box of bags is the one at the
