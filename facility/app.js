@@ -15,7 +15,7 @@
      a phone was actually running — a fix looks ineffective when the phone is still on yesterday's
      service worker, and there was no way to tell by looking. Keep this in step with VERSION in
      sw.js: it is the number somebody reads out over the phone. */
-  const APP_VERSION = 'v64';
+  const APP_VERSION = 'v66';
   const $app = document.getElementById('app');
   const KEY = 'hg-facility';
 
@@ -618,24 +618,41 @@
     const more =
       group('Booking') +
       big('shifts', 'Book your time', 'Processing · up to ' + s.maxAtOnce + ' at once') +
-      big('skinning', 'Book skinning time', 'Inside MHU #1' + (h.skinRoom ? ' · room for ' + h.skinRoom.room + ' more' : ''), 'alt') +
+      big('skinning', 'Book skinning time', 'Skinned in MHU #1' + (h.skinRoom ? ' · hanging space for ' + h.skinRoom.room + ' more' : ''), 'alt') +
       big('oncall', 'On call', (h.drops && h.drops.onCall ? first(h.drops.onCall.name) + ' today' : 'Nobody on call today') + ' · who covers an unclaimed drop-off', (h.drops && h.drops.onCall) ? 'view' : 'red') +
-      group('Look something up') +
-      big('scan', 'Scan a band', 'Point at the QR code on a band') +
+      group('Numbers and records') +
       big('status', 'Facility status', 'Temperatures, who\'s here, the oldest deer', 'view') +
-      (isMgr() ? big('speed', 'Speed test', 'Where the waiting actually goes — run it if a screen feels slow', 'view') : '') +
       big('records', 'Today\'s records', 'Read back what has been signed today', 'view') +
       big('numbers', 'My numbers', 'Deer, pounds, hours and pay this week', 'view') +
-      (isMgr() ? '' : big('fees', 'Cold storage', 'Hang-only deer · what is owed, what is past collection', 'alt'));
+      (isMgr() ? big('team', 'Team numbers', 'Every processor, this week and the season', 'view') : '') +
+      (isMgr() ? big('sensors', 'Sensors', 'Cold storage and both MHUs · live temperatures and the record', 'view') : '') +
+      big('fees', 'Cold storage', 'Hang-only deer · what is owed, what is past collection', 'alt') +
+      (isMgr() ? big('speed', 'Speed test', 'Where the waiting actually goes — run it if a screen feels slow', 'view') : '');
 
     const isIntake = /intake/i.test((st.staff && st.staff.role) || '');
     const office = (isMgr() || isIntake)
-      ? group('Office') +
+      ? group('Managers') +
         big('martin', 'Donation report', 'Rows for Martin’s sheet', 'alt') +
-        (isMgr() ? big('fees', 'Cold storage', 'Hang-only deer · what is owed, what is past collection', 'alt') : '') +
-        (isMgr() ? big('team', 'Team numbers', 'Every processor, this week and the season', 'view') : '') +
-        (isMgr() ? big('sensors', 'Sensors', 'Cold storage and both MHUs · live temperatures and the record', 'view') : '')
+        big('daily', 'Log book', 'Sanitizer, thermometer, complaints, tight tank, cash')
       : '';
+
+    /* "Tell someone" — the three tiles whose job is to reach another person, behind one tap so the
+       work above them is not buried. The count rides on the header, because a group that hides an
+       unread message is worse than no group. Need help is deliberately NOT in here: it is the
+       injury and food-safety-stop button and it stays one tap away, in the open. */
+    const tellBadge = (h.unread ? ' (' + h.unread + ' new)' : '') +
+      (h.openSupplies ? ' · ' + h.openSupplies + ' to order' : '');
+    const tell =
+      '<button class="morebtn" id="tellbtn"><span id="tellarrow">' + (st.tellOpen ? '▾' : '▸') + '</span> Tell someone' + tellBadge + '</button>' +
+      '<div id="tellbox"' + (st.tellOpen ? '' : ' hidden') + '>' +
+      big('supplies', 'Running low on something?', h.openSupplies
+        ? h.openSupplies + (h.openSupplies === 1 ? ' thing waiting' : ' things waiting') + ' · tell the managers what we need'
+        : 'Bags, gloves, sanitizer — two taps and the managers know', h.openSupplies ? 'red' : 'alt') +
+      big('messages', 'Messages' + (h.unread ? ' (' + h.unread + ' new)' : ''), 'Team chat and direct messages') +
+      /* Everybody, not just managers: the person who finds the problem is usually at the bench,
+         and the operational sanitation screen sends them straight here. */
+      big('corrective', 'Corrective action', 'Write up a problem and what you did about it', 'alt') +
+      '</div>';
 
     frame('home', '',
       (note ? '<div class="note ok">' + note + '</div>' : '') +
@@ -648,27 +665,25 @@
 
       group('The work') +
       (doorFirst ? deskTile + boardTile : boardTile + deskTile) +
+      big('scan', 'Scan a band', 'Taking a deer out of the cooler — opens the move, or the collection') +
 
       group('As it happens') +
       (preopFirst ? '' : big('preop', 'Pre-op sanitation' + (preop.done && !held ? ' ✓' : ''), preopSub, preopCls)) +
       big('opssop', 'Operational sanitation', 'Every line C, N or N/A. At least once a day') +
       big('closeout', 'End-of-shift close-out' + (closeout.done && !closeoutLeft ? ' \u2713' : ''), closeoutSub, closeoutCls) +
-      big('daily', 'Log book', 'Sanitizer, thermometer, complaints, tight tank, cash') +
-      big('corrective', 'Corrective action', 'Write up a problem and what you did about it', 'alt') +
-      /* Everybody, not just managers. The person who sees the last box of bags is the one at the
-         bench, and if flagging it is three screens into a manager menu it never gets flagged. */
-      big('supplies', 'Running low on something?', h.openSupplies
-        ? h.openSupplies + (h.openSupplies === 1 ? ' thing waiting' : ' things waiting') + ' · tell the managers what we need'
-        : 'Bags, gloves, sanitizer — two taps and the managers know', h.openSupplies ? 'red' : 'alt') +
-      big('messages', 'Messages' + (h.unread ? ' (' + h.unread + ' new)' : ''), 'Team chat and direct messages') +
       big('help', 'Need help', 'Sends a notification to everyone on the team', 'red') +
 
+      tell +
       office +
       '<button class="morebtn" id="morebtn"><span id="morearrow">' + (st.moreOpen ? '▾' : '▸') + '</span> Everything else</button>' +
       '<div id="morebox"' + (st.moreOpen ? '' : ' hidden') + '>' + more + '</div>', true);
 
     $app.querySelectorAll('[data-go]').forEach(b => b.onclick = () => GO[b.dataset.go]());
     wireDrops(document.getElementById('alerts'));
+    const tb = document.getElementById('tellbtn');
+    if (tb) tb.onclick = () => { st.tellOpen = !st.tellOpen; save();
+      document.getElementById('tellbox').hidden = !st.tellOpen;
+      document.getElementById('tellarrow').textContent = st.tellOpen ? '▾' : '▸'; };
     const mb = document.getElementById('morebtn');
     mb.onclick = () => { st.moreOpen = !st.moreOpen; save();
       document.getElementById('morebox').hidden = !st.moreOpen;
@@ -932,12 +947,22 @@
      (Joe). Location is now a field set by "Move to"; a deer that has never been moved falls
      back to what has been done to it: skin-on in the cooler, skinned in MHU-1, on the table in
      MHU-2. Cold storage never leaves the cooler. */
-  const PLACES = ['Cooler', 'MHU-1', 'MHU-2'];
+  /* In the order hanging space actually fills (Joe, 7 November). Skin-on carcasses wait in the
+     receiving cooler container. One is pulled, skinned in the front section of MHU-1, rinsed with
+     hot water and sprayed with carcass wash, then hung in the COOLER PORTION OF MHU-2. Only when
+     that is full do skinned deer go into the cooler portion of MHU-1. Each unit's non-cooler
+     portion is where processors work, which is why MHU-1 is kept clearer: it is the room you skin
+     in. Listing them Cooler, MHU-2, MHU-1 puts the likeliest destination at the top of the move
+     list and reads down the board in the order a deer travels. */
+  const PLACES = ['Cooler', 'MHU-2', 'MHU-1'];
   const RELEASED_SHOWN = 10;       // how many released deer the board lists; the count is the true total
   const placeOf = d => {
     if (d.Type === 'Cold storage') return 'Cooler';
     if (PLACES.indexOf(d.Location) >= 0) return d.Location;
-    return d.Status === 'Processing' ? 'MHU-2' : d['Skinner'] ? 'MHU-1' : 'Cooler';
+    /* Never moved, so read it from what has been done to it: skin on means it is still in the
+       receiving cooler, and once skinned it hangs in MHU-2. This used to guess MHU-1 for a skinned
+       deer, which was the wrong unit — MHU-2 fills first. */
+    return (d.Status === 'Processing' || d['Skinner']) ? 'MHU-2' : 'Cooler';
   };
   let boardQuery = '';             // what is typed in the board's search box
   /* Where a deer is in the process, in words, for the search box. */
@@ -1054,8 +1079,8 @@
       bandKeyHtml() +
       (bandFilter ? '<div class="note ok">Showing ' + esc(bandFilter) + ' bands only. <button class="plain" id="clearband" style="padding:0">Show them all</button></div>' : '') +
       drop('Cooler', 'Cooler', cooler, coolerInner) +
-      drop('MHU-1', 'MHU-1', m1, null, s.mhu1Cap || 20) +
       drop('MHU-2', 'MHU-2', m2, null, s.mhu2Cap || 20) +
+      drop('MHU-1', 'MHU-1', m1, null, s.mhu1Cap || 20) +
       drop('Ready', 'Ready for pickup or delivery', ready) +
       drop('Released', 'Released', released,
         released.length ? released.slice(0, RELEASED_SHOWN).map(d => deerRow(d)).join('')
@@ -1213,7 +1238,7 @@
     const byLast = d.Type === 'Donated' && firstPack > 0;
     // Donated, on the bench, and no number drawn yet. The one state the finish form cannot answer.
     const needsPack = d.Type === 'Donated' && !firstPack;
-    const owe = owedOn(d);
+    const owe = owedOn(d), isCold = d.Type === 'Cold storage';
     const v = id => (document.getElementById(id) || {}).value || '';
     const opts = (list, cur) => ['<option value=""></option>'].concat(list.map(x =>
       '<option' + (String(cur) === x ? ' selected' : '') + '>' + esc(x) + '</option>')).join('');
@@ -1246,9 +1271,12 @@
       void: () => '<p class="status">The row stays on the record and is marked voided, with your name and the reason on it. It stops counting in the cooler, on this board, in the totals and on the Donation report. Nothing is deleted.</p>' +
         (d['First pack #'] && d['Last pack #'] ? '<p class="note bad">This deer was packaged: <b>' + esc(d['First pack #']) + ' to ' + esc(d['Last pack #']) + '</b>. Voiding it frees those package numbers, and nothing renumbers the deer that came after. Fix the numbering by hand before the next drop-off.</p>' : '') +
         '<label for="vr">Why</label><input id="vr" type="text" placeholder="Duplicate of 1017202601, checked in twice">',
+      /* There used to be a warning here that a skin-on carcass should not go into MHU-2. That was
+         wrong: unskinned carcasses go into MHU-2 by design, and MHU-2 is filled before MHU-1
+         (Joe, 7 November). A warning nobody should heed teaches people to dismiss the ones that
+         matter, so it is gone rather than softened. */
       move: () => '<p class="status">Where is ' + esc(d['Hunter name'] || band(d.Band)) + ' now? Records who moved it and when.</p>' +
-        PLACES.filter(p => p !== placeOf(d)).map(p => '<label class="choice"><input type="radio" name="mv" value="' + p + '"> <span><b>' + p + '</b>' +
-          (p === 'MHU-2' && !d['Skinner'] ? ' <span class="hint">not skinned yet: skin-on carcasses do not go in while breakdown is under way</span>' : '') + '</span></label>').join(''),
+        PLACES.filter(p => p !== placeOf(d)).map(p => '<label class="choice"><input type="radio" name="mv" value="' + p + '"> <span><b>' + p + '</b></span></label>').join(''),
       skin: () => (d['Skull kept'] === 'Yes'
           ? '<div class="note warn" style="font-size:17px"><b>This hunter wants the skull and antlers.</b> ' +
             'Tag the head with ' + esc(band(d.Band)) + ' and set it aside before you carry on.</div>' : '') +
@@ -1358,7 +1386,7 @@
       release: () => (d['Skull kept'] === 'Yes'
           ? '<div class="note warn" style="font-size:17px"><b>The skull and antlers go with him.</b> ' +
             'It is tagged ' + esc(band(d.Band)) + '. Do not let him leave without it.</div>' : '') +
-        '<label>Released to</label><select id="f1"><option value="">Choose…</option><option>Hunter pickup</option>' +
+        '<label>Released to</label><select id="f1"><option value="">Choose…</option><option' + (isCold ? ' selected' : '') + '>Hunter pickup</option>' +
         (s.pantries || []).map(p => '<option>' + esc(p) + '</option>').join('') + '<option value="other">Other…</option></select>' +
         '<input id="f3" type="text" placeholder="Who?" hidden style="margin-top:8px">' +
         '<label>Pounds out</label><input id="f2" type="number" inputmode="decimal" min="0" value="' + esc(d['Pounds packaged'] || '') + '">' +
@@ -1989,7 +2017,24 @@
   let pendingBand = (location.hash.match(/[#&]d=([^&]+)/) || [])[1] || null;
   if (pendingBand) { pendingBand = band(decodeURIComponent(pendingBand)); history.replaceState(null, '', location.pathname + location.search); }
   let shownBand = null;
-  function showDeer(b) {
+  /* What a scan is FOR, from 8 November: taking a deer out of the cooler (Joe). Urgency is read
+     off the band colour and the board, so the scan no longer needs to be a lookup.
+
+     It opens the deer's own card with the right form already open rather than writing anything by
+     itself. That matters: bands hang inches apart in a dim cooler and a camera grabs whichever it
+     sees first, so the hunter's name, the type and where it is now are on screen above the form,
+     and a person still presses Save. It also keeps one door for the money — a cold-storage deer
+     goes out through the release form, which asks who collected it, rather than a second quiet
+     path around the front desk. */
+  const outAction = d => {
+    if (!d || d.Status === 'Released' || d.Status === 'Voided') return '';
+    if (d.Type === 'Cold storage') return d.Status === 'Hanging' ? 'release' : '';
+    if (d.Status === 'Ready') return 'release';
+    if (d.Status === 'Hanging' || d.Status === 'Processing') return 'move';
+    return '';
+  };
+
+  function showDeer(b, fromScan) {
     b = band(b); shownBand = b;
     const d = deerList().filter(x => band(x.Band) === b).pop();
     if (!d) {
@@ -2009,15 +2054,23 @@
     const c = $app.querySelector('[data-band]');
     c.querySelectorAll('[data-a]').forEach(x => x.onclick = () => act(x.dataset.a, d, c.querySelector('.form'), () => showDeer(b)));
     document.getElementById('ds').onclick = () => showScan();
+    // Arrived from a scan: open the form for what you are plainly about to do. Clicking the real
+    // button rather than calling act() keeps the clock-in nudge and everything else that hangs
+    // off it.
+    if (fromScan) {
+      const auto = outAction(d);
+      const btn = auto && c.querySelector('[data-a="' + auto + '"]');
+      if (btn) btn.click();
+    }
   }
   let scanStream = null;
   function stopScan() { if (scanStream) { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; } }
   async function showScan() {
-    frame('scan', 'Scan a band', '<div class="card"><p class="status">Point the camera at the QR code on the band.</p>' +
+    frame('scan', 'Scan a band', '<div class="card"><p class="status">Point the camera at the QR code on the band. For a deer coming out of the cooler this opens the move straight away; a hang-only deer opens the collection form. Check the name before you save \u2014 bands hang close together.</p>' +
       '<video id="sv" playsinline muted style="width:100%;border-radius:12px;background:#000"></video><canvas id="sc" hidden></canvas><div id="sm"></div>' +
       '<label for="sb">Or type the band number</label><input id="sb" type="text" autocapitalize="characters"><button class="btn" id="sg" style="margin-top:8px">Open</button></div>');
     const msg = h => { document.getElementById('sm').innerHTML = h; };
-    document.getElementById('sg').onclick = () => { const v = document.getElementById('sb').value.trim(); if (v) { stopScan(); showDeer(v); } };
+    document.getElementById('sg').onclick = () => { const v = document.getElementById('sb').value.trim(); if (v) { stopScan(); showDeer(v, true); } };
     try {
       await loadQR();
       scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
@@ -2030,7 +2083,7 @@
         cv.width = v.videoWidth; cv.height = v.videoHeight; cx.drawImage(v, 0, 0);
         const r = window.jsQR(cx.getImageData(0, 0, cv.width, cv.height).data, cv.width, cv.height, { inversionAttempts: 'dontInvert' });
         const m = r && String(r.data).match(/[#&]d=([^&]+)/);
-        if (m) { stopScan(); return showDeer(decodeURIComponent(m[1])); }
+        if (m) { stopScan(); return showDeer(decodeURIComponent(m[1]), true); }
         if (r) msg('<div class="note warn">That QR code isn\'t a Home Ground band.</div>');
       }
       requestAnimationFrame(tick);
@@ -2095,9 +2148,16 @@
       '<div class="tabs"><button data-kind="Processing"' + (skinning ? '' : ' class="on"') + '>Processing</button>' +
       '<button data-kind="Skinning"' + (skinning ? ' class="on"' : '') + '>Skinning</button></div>' +
       (msg ? '<div class="note ' + (msg.bad ? 'bad' : 'ok') + '">' + esc(msg.text) + '</div>' : '') +
+      /* The limit on skinning ahead is hanging space for the skinned carcass, which is MHU-2's
+         cooler portion first and MHU-1's after it — not MHU #1 alone, which is what this used to
+         say. The split is shown because the person reading it is deciding where to put the next
+         one. */
       (skinning ? '<div class="note ' + (room.room <= 0 ? 'bad' : room.room <= 2 ? 'warn' : 'ok') + '">' +
-        (room.room <= 0 ? '<b>MHU #1 is full</b> at ' + room.hanging + ' skinned deer. Nothing more can be skinned ahead until some are processed.'
-          : 'MHU #1 is holding <b>' + room.hanging + ' of ' + room.cap + '</b> skinned deer: room for ' + room.room + ' more.') + '</div>' : '') +
+        (room.room <= 0 ? '<b>Nowhere to hang another carcass.</b> MHU-2 and MHU-1 are holding ' + room.hanging +
+            ' between them. Nothing more can be skinned ahead until some are processed.'
+          : 'Hanging space: <b>' + room.hanging + ' of ' + room.cap + '</b> used' +
+            (room.mhu2 === undefined ? '' : ' (MHU-2 ' + room.mhu2 + ', MHU-1 ' + room.mhu1 + ')') +
+            ' · room for ' + room.room + ' more.') + '</div>' : '') +
       '<div class="card"><b>Your bookings</b>' + (mine.length ? mine.map(x => '<div class="who"><div>' + esc(dayName(x.date)) + ' · ' + t12(x.starts) + '–' + t12(x.ends) +
         (x.kind === 'Skinning' ? ' <span class="tag">SKINNING</span>' : '') + '</div>' +
         '<button class="btn ghost" data-cancel="' + esc(x.id) + '">Cancel</button></div>').join('') : '<div class="status">None booked.</div>') +
