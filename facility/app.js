@@ -15,7 +15,7 @@
      a phone was actually running — a fix looks ineffective when the phone is still on yesterday's
      service worker, and there was no way to tell by looking. Keep this in step with VERSION in
      sw.js: it is the number somebody reads out over the phone. */
-  const APP_VERSION = 'v66';
+  const APP_VERSION = 'v68';
   const $app = document.getElementById('app');
   const KEY = 'hg-facility';
 
@@ -626,14 +626,17 @@
       big('numbers', 'My numbers', 'Deer, pounds, hours and pay this week', 'view') +
       (isMgr() ? big('team', 'Team numbers', 'Every processor, this week and the season', 'view') : '') +
       (isMgr() ? big('sensors', 'Sensors', 'Cold storage and both MHUs · live temperatures and the record', 'view') : '') +
-      big('fees', 'Cold storage', 'Hang-only deer · what is owed, what is past collection', 'alt') +
       (isMgr() ? big('speed', 'Speed test', 'Where the waiting actually goes — run it if a screen feels slow', 'view') : '');
 
     const isIntake = /intake/i.test((st.staff && st.staff.role) || '');
     const office = (isMgr() || isIntake)
       ? group('Managers') +
         big('martin', 'Donation report', 'Rows for Martin’s sheet', 'alt') +
-        big('daily', 'Log book', 'Sanitizer, thermometer, complaints, tight tank, cash')
+        big('daily', 'Log book', 'Sanitizer, thermometer, complaints, tight tank, cash') +
+        /* Managers only, and moved here on 7 November: cold storage fees have not been approved or
+           announced yet (Joe), so what is owed is not a figure anyone at the counter should be
+           quoting to a hunter. */
+        (isMgr() ? big('fees', 'Cold storage', 'Hang-only deer · what is owed, what is past collection', 'alt') : '')
       : '';
 
     /* "Tell someone" — the three tiles whose job is to reach another person, behind one tap so the
@@ -3258,7 +3261,12 @@
           (can.length
             ? can.map(x => '<div class="trow"><div><b>' + esc(x.hunter || 'no name') + '</b>' +
                 '<div class="status">' + esc(x.band) + ' · in ' + esc(x.dateIn) + ' · ' + esc(x.email) + '</div></div>' +
-                (isViewer() ? '' : '<button class="btn ghost" data-tax="' + esc(x.band) + '">Send it</button>') + '</div>').join('')
+                /* Blake sends the W-4 for TFMV, so a hunter can already have it without anything
+                   on our side saying so, and the chase list was naming people who had had it
+                   (Joe, 7 November). Two taps, because the rows are a list of names and a mis-tap
+                   on the wrong one takes a hunter off the chase who still needs chasing. */
+                (isViewer() ? '' : '<button class="btn ghost" data-tax="' + esc(x.band) + '">Send it</button>' +
+                  ' <button class="btn ghost" data-taxdone="' + esc(x.band) + '" data-armed="0">Already sent</button>') + '</div>').join('')
             : '') +
           (cant.length
             ? '<div class="note warn" style="margin-top:8px"><b>' + cant.length +
@@ -3285,6 +3293,27 @@
         if (tout) tout.innerHTML = '<div class="note ok">W-4 sent to ' + esc(r.to || 'the hunter') + '.</div>';
       } catch (e) {
         b.disabled = false; b.textContent = 'Send it';
+        if (tout) tout.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal.' : e.message) + '</div>';
+      }
+    });
+    /* Marking it already sent writes the same column the email writes, so the hunter drops off
+       the chase either way — but the row records which of the two happened and who said so. */
+    $app.querySelectorAll('[data-taxdone]').forEach(b => b.onclick = async () => {
+      const tout = document.getElementById('taxout');
+      if (b.dataset.armed !== '1') {
+        $app.querySelectorAll('[data-taxdone]').forEach(o => { o.dataset.armed = '0'; o.textContent = 'Already sent'; });
+        b.dataset.armed = '1'; b.textContent = 'Sure?';
+        if (tout) tout.innerHTML = '<div class="note warn">Tap again to take this hunter off the chase. Only do it if you know they have had the W-4 — from Blake, or at the counter.</div>';
+        return;
+      }
+      b.disabled = true; b.textContent = 'Marking…';
+      try {
+        const r = await call({ action: 'taxsent', band: b.dataset.taxdone });
+        b.textContent = 'Marked';
+        const row = b.closest('.trow'); if (row) { const s0 = row.querySelector('[data-tax]'); if (s0) s0.remove(); }
+        if (tout) tout.innerHTML = '<div class="note ok">' + esc(r.to || 'That hunter') + ' taken off the chase — marked as already having the form.</div>';
+      } catch (e) {
+        b.disabled = false; b.dataset.armed = '0'; b.textContent = 'Already sent';
         if (tout) tout.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal.' : e.message) + '</div>';
       }
     });
