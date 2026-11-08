@@ -15,7 +15,7 @@
      a phone was actually running — a fix looks ineffective when the phone is still on yesterday's
      service worker, and there was no way to tell by looking. Keep this in step with VERSION in
      sw.js: it is the number somebody reads out over the phone. */
-  const APP_VERSION = 'v59';
+  const APP_VERSION = 'v61';
   const $app = document.getElementById('app');
   const KEY = 'hg-facility';
 
@@ -344,7 +344,7 @@
     redrawing = !!quiet;
     try {
       if (current === 'home') showHome();
-      else if (current === 'board' && !document.querySelector('.form input, .form select')) showBoard();
+      else if (current === 'board' && !document.querySelector('.form input, .form select') && !boardQuery) showBoard();
       else if (current === 'donate' && !document.querySelector('.form input, .form select, #lic2:focus')) showDonate();
       else if (current === 'deer' && shownBand && !document.querySelector('.form input, .form select')) showDeer(shownBand);
       /* The fetched screens redraw themselves by being opened again, which is what happens when
@@ -398,6 +398,7 @@
         Status: 'Hanging', pending: true });
       if (!d) return;
       d.pending = true;
+      if (x.action === 'move') { d.Location = f.to; }
       if (x.action === 'skin') { d['Skinner'] = f.skinner || st.staff.number; d['Skinner name'] = f.skinnerName || st.staff.name; d['Skinned at'] = x.at; d['Skinned at station'] = 'Yes'; }
       if (x.action === 'start') {
         if (f.skinned && !d['Skinner']) { d['Skinner'] = f.skinner || f.processor || st.staff.number; d['Skinner name'] = f.processorName || st.staff.name; d['Skinned at'] = x.at; }
@@ -457,6 +458,23 @@
 
   /* ---------- home ---------- */
   function hoursHung(d) { const t = parse(d.Intake); return t ? Math.max(0, (Date.now() - t) / 36e5) : 0; }
+  /* A finish time for a one-tap clock-in: the end of today's booking, otherwise four hours from now.
+     The lone-worker watchdog needs one, but asking for it on every clock-in was the friction that
+     made people skip the clock (Joe, 7 November). It is shown on the clock card and can be changed. */
+  function finishGuess() {
+    const now = nowMin(), b = st.home && st.home.bookedEnd;
+    const bm = /^\d{1,2}:\d{2}$/.test(String(b || '')) ? Number(String(b).split(':')[0]) * 60 + Number(String(b).split(':')[1]) : 0;
+    return fromHM(bm > now + 15 ? bm : Math.min(23 * 60 + 45, now + 240));
+  }
+  // Clock in with no questions. Used by the clock card and by the nudge on Skin it / Start processing.
+  async function clockInNow() {
+    const out = await call({ action: 'clock', dir: 'in', expected: finishGuess() });
+    st.home.clockedIn = out.clockedIn; st.home.week = out.week;
+    st.home.expectedOut = out.expectedOut || ''; st.home.clockKind = out.kind || '';
+    if (out.onSite) st.home.onSite = out.onSite;
+    save();
+    return out;
+  }
   function coolerCount() { return deerList().filter(d => d.Status === 'Hanging' || d.Status === 'Processing').length; }
 
   /* ---------- home: what needs doing, then the day, then everything else ----------
@@ -521,7 +539,7 @@
 
     const lead = h.clockedIn ? leadDeer() : null;
     const clockStrip = h.clockedIn
-      ? '<div class="card strip"><div class="deer"><div><b>Clocked in' + (h.clockKind && h.clockKind !== 'Processing' ? ' · ' + esc(h.clockKind.toLowerCase()) : '') + '</b>' +
+      ? '<div class="card strip"><div class="deer"><div><b>Clocked in' + (isMgr() ? ' · ' + ((h.clockKind || 'Other') === 'Other' ? 'management' : 'skinning/processing') : '') + '</b>' +
         '<div class="status">Since ' + esc(when(h.clockedIn)) + (h.expectedOut ? ' · finishing by ' + t12(h.expectedOut) : '') +
         (next ? ' · next booking ' + esc(dayName(next.date).split(',')[0]) + ' ' + t12(next.starts) : '') + '</div>' +
         (here.length ? '<div class="status">Also here: ' + esc(here.map(x => x.name).join(', ')) + '</div>' : '') +
@@ -529,14 +547,16 @@
         (alone ? '<div class="note warn"><b>You are the only one clocked in.</b> Keep your phone on you.</div>' : '') +
         (h.expectedOut ? '<div class="status">You get a nudge ' + esc(s.loneGrace || 30) + ' minutes after ' + t12(h.expectedOut) +
           ' if you have not clocked out, and the managers hear at ' + esc(s.mgrGrace || 60) + ' minutes.</div>' : '') +
-        /* What you are doing right now, and a tap to change it. Hours are paid by kind — the
-           hourly rate for management, nothing hourly for processing because the $125 a deer has
-           already paid for those hours — so a shift that is really two jobs has to say so. */
-        '<div class="kindsw"><span class="status">Right now:</span>' +
-        [['Other', 'Management'], ['Processing', 'Processing'], ['Skinning', 'Skinning']].map(k =>
-          '<button type="button" data-kind="' + k[0] + '"' +
-          (((h.clockKind || 'Other') === k[0]) ? ' class="on"' : '') + '>' + esc(k[1]) + '</button>').join('') +
-        '</div>' +
+        /* What you are doing right now, and a tap to change it — managers only (Joe, 7 November).
+           A processor's pay is the deer: $125 a deer processed and $25 a deer skinned, read off
+           the board, so a processor just clocks in and out. A manager's day is two jobs paid two
+           ways — management by the hour, skinning and processing by the deer — so a manager says
+           which one the hours belong to. */
+        (isMgr() ? '<div class="kindsw"><span class="status">Right now:</span>' +
+          [['Other', 'Management'], ['Processing', 'Skinning/Processing']].map(k =>
+            '<button type="button" data-kind="' + k[0] + '"' +
+            (((h.clockKind || 'Other') === k[0] || (k[0] === 'Processing' && h.clockKind === 'Skinning')) ? ' class="on"' : '') + '>' + esc(k[1]) + '</button>').join('') +
+          '</div>' : '') +
         '<button class="plain" id="still">Still here: change my finish time</button>' +
         '<button class="plain" id="fixclock">Correct a clock-out time</button><div id="clock-err" class="err"></div></div>'
       : '<div class="card"><div class="deer"><div><b>Not clocked in</b>' +
@@ -586,7 +606,7 @@
     const more =
       group('Booking') +
       big('shifts', 'Book your time', 'Processing · up to ' + s.maxAtOnce + ' at once') +
-      big('skinning', 'Book skinning time', 'Behind MHU #1' + (h.skinRoom ? ' · room for ' + h.skinRoom.room + ' more' : ''), 'alt') +
+      big('skinning', 'Book skinning time', 'Inside MHU #1' + (h.skinRoom ? ' · room for ' + h.skinRoom.room + ' more' : ''), 'alt') +
       big('oncall', 'On call', (h.drops && h.drops.onCall ? first(h.drops.onCall.name) + ' today' : 'Nobody on call today') + ' · who covers an unclaimed drop-off', (h.drops && h.drops.onCall) ? 'view' : 'red') +
       group('Look something up') +
       big('scan', 'Scan a band', 'Point at the QR code on a band') +
@@ -677,8 +697,8 @@
     document.getElementById('clock').onclick = e => {
       const b = e.target;
       if (h.clockedIn) return sendClock(b, { action: 'clock', dir: 'out' });
-      askFinish('When do you expect to finish?', 'If you end up on your own, this is the time Joe gets a push about. You can change it any time.',
-        (t, bb) => sendClock(bb, { action: 'clock', dir: 'in', expected: t }));
+      // One tap. The finish time is filled in and shown on the card, with "change my finish time" under it.
+      sendClock(b, { action: 'clock', dir: 'in', expected: finishGuess() });
     };
     const still = document.getElementById('still');
     /* Forgetting to clock out is the normal failure, not the rare one, and the honest fix is to
@@ -690,7 +710,7 @@
       try {
         const out = await call({ action: 'switchkind', kind: b.dataset.kind });
         st.home.clockKind = out.kind; st.home.clockedIn = out.clockedIn; st.home.week = out.week; save();
-        showHome(out.unchanged ? '' : 'Now on ' + (out.kind === 'Other' ? 'management' : out.kind.toLowerCase()) + ' time.');
+        showHome(out.unchanged ? '' : 'Now on ' + (out.kind === 'Other' ? 'management' : 'skinning/processing') + ' time.');
       } catch (e) {
         $app.querySelectorAll('[data-kind]').forEach(x => { x.disabled = false; });
         clockErr('<div class="err">' + esc(e.offline ? 'Needs signal to switch.' : e.message) + '</div>');
@@ -894,46 +914,157 @@
     };
   }
 
+  /* Where a deer physically is. Until 7 November the board had one "Hanging" list, which lumped
+     the receiving cooler in with both MHUs, and it ran in priority order rather than by place
+     (Joe). Location is now a field set by "Move to"; a deer that has never been moved falls
+     back to what has been done to it: skin-on in the cooler, skinned in MHU-1, on the table in
+     MHU-2. Cold storage never leaves the cooler. */
+  const PLACES = ['Cooler', 'MHU-1', 'MHU-2'];
+  const placeOf = d => {
+    if (d.Type === 'Cold storage') return 'Cooler';
+    if (PLACES.indexOf(d.Location) >= 0) return d.Location;
+    return d.Status === 'Processing' ? 'MHU-2' : d['Skinner'] ? 'MHU-1' : 'Cooler';
+  };
+  let boardQuery = '';             // what is typed in the board's search box
+  /* Where a deer is in the process, in words, for the search box. */
+  function stageOf(d) {
+    if (d.Status === 'Voided') return 'Voided' + (d['Void reason'] ? ': ' + d['Void reason'] : '');
+    if (d.Status === 'Released') return 'Released ' + (d.Released || '') + (d['Released to'] ? ' to ' + d['Released to'] : '');
+    if (d.Status === 'Ready') return 'Packaged, ready for pickup or delivery' + (d['First pack #'] ? ' · packs ' + d['First pack #'] + '–' + (d['Last pack #'] || '') : '');
+    if (d.Status === 'Processing') return 'Being processed' + (d.Butcher ? ' by ' + d.Butcher : '') + ' · started ' + (d['Processing started'] || '');
+    if (d.Type === 'Cold storage') return 'Cold storage only, waiting for the hunter';
+    return (d['Skinner'] ? 'Skinned' + (d['Skinner name'] ? ' by ' + d['Skinner name'] : '') + ', waiting to be processed' : 'Checked in, skin on, waiting to be skinned');
+  }
+  const whereOf = d => d.Status === 'Hanging' || d.Status === 'Processing' ? placeOf(d) : d.Status === 'Ready' ? 'Out of the cooler' : '';
+  // Hunter ID, confirmation number, name or band — any part of any of them, case and spaces ignored.
+  function searchDeer(q) {
+    const k = String(q || '').toLowerCase().replace(/\s+/g, '');
+    if (k.length < 2) return [];
+    return deerList().filter(d => ['Hunter number', 'MassWildlife confirmation', 'Hunter name', 'Band']
+      .some(f => String(d[f] || '').toLowerCase().replace(/\s+/g, '').indexOf(k) >= 0))
+      .sort((a, b) => (a.Status === 'Released' || a.Status === 'Voided') - (b.Status === 'Released' || b.Status === 'Voided') || hoursHung(b) - hoursHung(a));
+  }
+  /* The board carries this week's deer; the server searches the whole season. Local hits show at
+     once, the server's follow a moment later for anything older (Joe, 7 November). */
+  let farHits = { q: '', deer: [], busy: false };
+  function searchHtml(q) {
+    if (String(q || '').replace(/\s+/g, '').length < 2) return '';
+    const near = searchDeer(q), seen = new Set(near.map(d => band(d.Band)));
+    const far = farHits.q === q ? farHits.deer.filter(d => !seen.has(band(d.Band))).map(d => Object.assign({ far: true }, d)) : [];
+    const hits = near.concat(far);
+    const busy = farHits.busy && farHits.q === q ? '<p class="status">Looking through the rest of the season…</p>' : '';
+    if (!hits.length) return busy || '<p class="status">No deer matches “' + esc(q) + '”.</p>';
+    return hits.slice(0, 20).map(d => {
+      const bc = colourOf(d), w = whereOf(d);
+      return (d.far ? '<div class="hit">' : '<button type="button" class="hit" data-hit="' + esc(d.Band) + '">') +
+        '<span class="dot" style="background:' + (bc ? hexFor(bc) : '#fff') + '"></span>' +
+        '<span class="dwho"><b>' + esc(d['Hunter name'] || '—') + (w ? ' · ' + esc(w) : '') + '</b>' +
+        '<span class="status">' + esc(stageOf(d)) + '</span>' +
+        '<span class="status">' + esc(d['Hunter number'] || '') + ' · ' + esc(d['MassWildlife confirmation'] || 'no confirmation #') + ' · ' + esc(d.Type || '') +
+        (d.far ? ' · band ' + esc(d.Band) : '') + '</span></span>' + (d.far ? '</div>' : '</button>');
+    }).join('') + (hits.length > 20 ? '<p class="status">' + (hits.length - 20) + ' more: type more of it.</p>' : '') + busy;
+  }
+  const boardOpen = new Set();     // which dropdowns are open, kept through the 45-second redraws
+  const boardDeer = new Set();     // which deer rows are expanded to their full card
+
+  // One line per deer: band colour, hunter, confirmation, hours — and the flags that change what you do.
+  function deerRow(d) {
+    const s = S(), h = hoursHung(d), bc = colourOf(d), isCold = d.Type === 'Cold storage', owe = owedOn(d);
+    const flags =
+      (d.Status === 'Processing' ? '<span class="tag">ON THE TABLE</span>' : '') +
+      (!isCold && h >= s.maxHold ? '<span class="tag red">OVER MAX HOLD</span>'
+        : !isCold && urgentDeer(d) ? '<span class="tag red">NEAR MAX HOLD</span>'
+        : !isCold && h >= s.startBy ? '<span class="tag amb">START NEXT</span>' : '') +
+      (owe && !owe.settled ? '<span class="tag red">UNPAID</span>' : '') +
+      (d['Skull kept'] === 'Yes' ? '<span class="tag skull">SKULL</span>' : '') +
+      (d.pending ? '<span class="pill wait">not sent yet</span>' : '');
+    const open = boardDeer.has(d.Band);
+    return '<div class="drow' + (open ? ' open' : '') + '"><button type="button" class="drowbtn" data-row="' + esc(d.Band) + '">' +
+      '<span class="dot" style="background:' + (bc ? hexFor(bc) : '#fff') + '" title="' + esc(bc || '') + '"></span>' +
+      '<span class="dwho"><b>' + esc(d['Hunter name'] || d['Hunter number'] || '—') + '</b>' +
+      '<span class="status">' + esc(d['MassWildlife confirmation'] || 'no confirmation #') + (flags ? ' ' : '') + '</span>' + flags + '</span>' +
+      '<span class="dh">' + Math.floor(h) + ' h</span></button>' +
+      (open ? deerCard(d) : '') + '</div>';
+  }
+  // Longest hanging on top, whatever the type or payment — the flags say the rest (Joe, 7 November).
+  const byAge = list => list.slice().sort((a, b) => hoursHung(b) - hoursHung(a));
+  function drop(key, title, list, inner, cap) {
+    const open = boardOpen.has(key);
+    const oldest = list.length ? Math.floor(Math.max.apply(null, list.map(hoursHung))) : 0;
+    return '<details class="drop" data-drop="' + esc(key) + '"' + (open ? ' open' : '') + '><summary><span><b>' + esc(title) + '</b> · ' +
+      list.length + (cap ? ' of ' + cap : '') + '</span><span class="status">' + (list.length ? 'oldest ' + oldest + ' h' : 'empty') + '</span></summary>' +
+      '<div class="dropin">' + (inner != null ? inner : (list.length ? byAge(list).map(deerRow).join('') : '<p class="status">Nothing here.</p>')) + '</div></details>';
+  }
+
   function showBoard() {
     const s = S();
     const all = deerList();
     const keep = list => bandFilter ? list.filter(d => colourOf(d) === bandFilter) : list;
-    /* Donated, then custom processing, then cold storage \u2014 except that a carcass near the
-       maximum hold jumps the lot, because spoilage is not a preference to be traded off. */
-    const hanging = keep(all.filter(d => d.Status === 'Hanging')).sort((a, b) => sortKey(a) - sortKey(b));
-    const proc = keep(all.filter(d => d.Status === 'Processing'));
+    const inside = keep(all.filter(d => d.Status === 'Hanging' || d.Status === 'Processing'));
+    const at = p => inside.filter(d => placeOf(d) === p);
+    const cooler = at('Cooler'), m1 = at('MHU-1'), m2 = at('MHU-2');
+    const hanging = all.filter(d => d.Status === 'Hanging').sort((a, b) => sortKey(a) - sortKey(b));
     const ready = all.filter(d => d.Status === 'Ready');
     const released = all.filter(d => d.Status === 'Released').slice(-10).reverse();
-    const n = hanging.length + proc.length, full = n >= s.coolerCap;
-    const card = deerCard;
-    const section = (title, list, empty) => '<h2>' + title + ' (' + list.length + ')</h2>' + (list.length ? list.map(card).join('') : '<p class="status">' + empty + '</p>');
+    const n = all.filter(d => d.Status === 'Hanging' || d.Status === 'Processing').length, full = n >= s.coolerCap;
+    const ofType = t => cooler.filter(d => d.Type === t);
+    const coolerInner =
+      drop('Cooler/Donated', 'Donated', ofType('Donated')) +
+      drop('Cooler/Private', 'Private', ofType('Private')) +
+      drop('Cooler/Cold storage', 'Cold storage only', ofType('Cold storage'));
     frame('board', 'Deer Board',
-      '<div class="card"><b>In the cooler: ' + n + ' of ' + s.coolerCap + '</b>' +
+      '<div class="card"><b>In the cooler and MHUs: ' + n + ' of ' + s.coolerCap + '</b>' +
       (full ? '<div class="note bad">Cooler is full. Hold private intakes until a deer is processed.</div>'
         : n >= Math.ceil(s.coolerCap * s.coolerAlert / 100) ? '<div class="note warn">Getting full. Process the oldest deer first.</div>' : '') +
       (() => {
         const up = hanging.filter(d => d.Type !== 'Cold storage')[0];
         if (!up) return '<div class="status">Nothing waiting to be processed.</div>';
-        return '<div class="note' + (urgentDeer(up) ? ' bad' : ' ok') + '"><b>Next up: ' + esc(up.Band) + '</b> \u00b7 ' +
-          esc(rankName(rankOf(up))) + ' \u00b7 ' + Math.round(hoursHung(up)) + ' h hung' +
-          (urgentDeer(up) ? ' \u2014 <b>near the maximum hold, so it goes first whatever its priority</b>'
-            : unpaidDeer(up) ? ' \u2014 <b>unpaid</b>, so it cannot be started until the money is in' : '') +
+        return '<div class="note' + (urgentDeer(up) ? ' bad' : ' ok') + '"><b>Next up: ' + esc(up['Hunter name'] || up.Band) + '</b> · ' +
+          esc(placeOf(up)) + ' · ' + esc(rankName(rankOf(up))) + ' · ' + Math.round(hoursHung(up)) + ' h hung' +
+          (urgentDeer(up) ? ' — <b>near the maximum hold, so it goes first whatever its priority</b>'
+            : unpaidDeer(up) ? ' — <b>unpaid</b>, so it cannot be started until the money is in' : '') +
           '</div>';
       })() +
-      '<div class="status"><b>Donated first, then custom processing, then cold storage</b> \u2014 oldest first within each. A custom-processing deer that has not been paid for goes behind the ones that have. A deer within 24 h of the ' + s.maxHold + '-hour maximum hold jumps the queue. Amber: ' + s.startBy + ' hours hung, start processing. Red: over the maximum hold, tell Joe.</div>' +
+      '<div class="status">Each list runs longest-hanging first. Tap a deer for its card. Amber: ' + s.startBy + ' hours hung, start processing. Red: over the maximum hold, tell Joe.</div>' +
       '<button class="plain" id="reload">Refresh now</button></div>' +
+      '<div class="card"><label for="bsearch">Find a deer <span class="hint">hunter ID, confirmation # or name</span></label>' +
+      '<input id="bsearch" type="text" enterkeyhint="search" autocomplete="off" value="' + esc(boardQuery) + '" placeholder="1690575, MY4M3P or Bellabuono">' +
+      '<div id="bhits">' + searchHtml(boardQuery) + '</div></div>' +
       bandKeyHtml() +
       (bandFilter ? '<div class="note ok">Showing ' + esc(bandFilter) + ' bands only. <button class="plain" id="clearband" style="padding:0">Show them all</button></div>' : '') +
-      section('Hanging', hanging, bandFilter ? 'No ' + bandFilter + ' bands hanging.' : 'Nothing hanging.') +
-      section('Being processed', proc, 'Nothing on the table.') +
-      section('Ready for pickup or delivery', ready, 'Nothing waiting.') +
-      (released.length ? section('Released this week', released, '') : ''));
+      drop('Cooler', 'Cooler', cooler, coolerInner) +
+      drop('MHU-1', 'MHU-1', m1, null, s.mhu1Cap || 20) +
+      drop('MHU-2', 'MHU-2', m2, null, s.mhu2Cap || 20) +
+      drop('Ready', 'Ready for pickup or delivery', ready) +
+      (released.length ? drop('Released', 'Released this week', released) : ''));
     document.getElementById('reload').onclick = () => refresh();
     $app.querySelectorAll('[data-bandkey]').forEach(r => r.onclick = () => {
       bandFilter = bandFilter === r.dataset.bandkey ? '' : r.dataset.bandkey; showBoard();
     });
     const cb = document.getElementById('clearband');
     if (cb) cb.onclick = () => { bandFilter = ''; showBoard(); };
+    const bs = document.getElementById('bsearch'), bh = document.getElementById('bhits');
+    const wireHits = () => bh.querySelectorAll('[data-hit]').forEach(x => x.onclick = () => showDeer(x.dataset.hit));
+    let timer = null;
+    const paint = () => { if (bs.value === boardQuery) { bh.innerHTML = searchHtml(boardQuery); wireHits(); } };
+    bs.oninput = () => {
+      boardQuery = bs.value; clearTimeout(timer);
+      const q = boardQuery;
+      if (q.replace(/\s+/g, '').length >= 2) {
+        farHits = { q: q, deer: [], busy: true };
+        timer = setTimeout(() => call({ action: 'finddeer', q: q })
+          .then(out => { if (farHits.q === q) farHits = { q: q, deer: (out && out.deer) || [], busy: false }; paint(); })
+          .catch(() => { if (farHits.q === q) farHits.busy = false; paint(); }), 450);
+      }
+      paint();
+    };
+    wireHits();
+    $app.querySelectorAll('details.drop').forEach(x => x.addEventListener('toggle', e => {
+      e.stopPropagation(); if (x.open) boardOpen.add(x.dataset.drop); else boardOpen.delete(x.dataset.drop);
+    }));
+    $app.querySelectorAll('[data-row]').forEach(r => r.onclick = () => {
+      const b = r.dataset.row; if (boardDeer.has(b)) boardDeer.delete(b); else boardDeer.add(b); showBoard();
+    });
     $app.querySelectorAll('[data-band]').forEach(c => c.querySelectorAll('[data-a]').forEach(b => b.onclick = () => act(b.dataset.a, all.find(d => d.Band === c.dataset.band), c.querySelector('.form'))));
   }
 
@@ -966,6 +1097,8 @@
       : d.Status === 'Processing' ? (mineOrMgr ? (d.Type === 'Donated' && !d['First pack #'] ? '<button class="btn alt" data-a="grind">Get package numbers</button> ' : '') + '<button class="btn" data-a="finish">Finished</button>' : '')
       : d.Status === 'Ready' ? '<button class="btn alt" data-a="release">Release</button>' : '';
     // A duplicate or a mistaken entry is not deleted, it is voided: the row stays and says so.
+    const moveBtn = !isViewer() && !isCold && (d.Status === 'Hanging' || d.Status === 'Processing')
+      ? ' <button class="btn ghost" data-a="move">Move to…</button>' : '';
     const voidBtn = !isViewer() && isMgr() && d.Status !== 'Voided'
       ? ' <button class="btn ghost" data-a="void">Void this check-in</button>' : '';
     /* A typo in what the hunter said at the door is a typo, not a different deer. Correcting it is
@@ -1022,10 +1155,27 @@
       (d['First pack #'] && d['Last pack #'] ? '<div class="note ok"><b>Package numbers ' + esc(d['First pack #']) + '–' + esc(d['Last pack #']) + '</b> (MassWildlife)</div>'
         : d['First pack #'] ? '<div class="note warn" style="font-size:17px">Label the 2 lb packages in order from <b>' + esc(d['First pack #']) + '</b>: ' + esc(d['First pack #']) + ', ' + esc(('000' + (parseInt(d['First pack #'], 10) + 1)).slice(-4)) + ', …</div>' : '') +
       (d.Status === 'Released' ? '<div class="status">Released ' + esc(d.Released) + ' to ' + esc(d['Released to']) + '</div>' : '') +
-      '<div class="actions">' + payBtn + act + (live && !isViewer() ? '<button class="btn ghost" data-a="print">Print band</button>' : '') + editBtn + undoBtn + voidBtn + '</div><div class="form"></div></div>';
+      '<div class="actions">' + payBtn + act + moveBtn + (live && !isViewer() ? '<button class="btn ghost" data-a="print">Print band</button>' : '') + editBtn + undoBtn + voidBtn + '</div><div class="form"></div></div>';
   }
 
+  /* Starting work while clocked out is how hours go missing: nobody forgets to clock in on purpose,
+     they forget because the deer is in front of them. So the two actions that mean "I am working
+     now" ask first, with one tap to clock in and carry on. A manager recording someone else's
+     skinning, or anyone who really is not on the clock, can carry on without (Joe, 7 November). */
+  let clockNudged = false;
   function act(kind, d, box, after) {
+    if ((kind === 'skin' || kind === 'start') && !isViewer() && !st.home.clockedIn && !clockNudged && box) {
+      box.innerHTML = '<div class="note warn" style="font-size:17px"><b>You\'re not clocked in.</b> Clock in now and carry on?</div>' +
+        '<div class="err" id="cnerr"></div>' +
+        '<button class="btn" id="cnin">Clock in and carry on</button> <button class="btn ghost" id="cnskip">Carry on without</button>';
+      document.getElementById('cnskip').onclick = () => { clockNudged = true; act(kind, d, box, after); clockNudged = false; };
+      document.getElementById('cnin').onclick = async e => {
+        e.target.disabled = true;
+        try { await clockInNow(); act(kind, d, box, after); }
+        catch (x) { e.target.disabled = false; document.getElementById('cnerr').textContent = x.offline ? 'Clocking in needs signal. Carry on without and tell Joe the time.' : x.message; }
+      };
+      return;
+    }
     if (kind === 'print') return printBand(d);
     if (kind === 'grind') return grind(d, box, after);
     if (kind === 'undo') return askUndo(d, box, after);
@@ -1070,6 +1220,9 @@
       void: () => '<p class="status">The row stays on the record and is marked voided, with your name and the reason on it. It stops counting in the cooler, on this board, in the totals and on the Donation report. Nothing is deleted.</p>' +
         (d['First pack #'] && d['Last pack #'] ? '<p class="note bad">This deer was packaged: <b>' + esc(d['First pack #']) + ' to ' + esc(d['Last pack #']) + '</b>. Voiding it frees those package numbers, and nothing renumbers the deer that came after. Fix the numbering by hand before the next drop-off.</p>' : '') +
         '<label for="vr">Why</label><input id="vr" type="text" placeholder="Duplicate of 1017202601, checked in twice">',
+      move: () => '<p class="status">Where is ' + esc(d['Hunter name'] || band(d.Band)) + ' now? Records who moved it and when.</p>' +
+        PLACES.filter(p => p !== placeOf(d)).map(p => '<label class="choice"><input type="radio" name="mv" value="' + p + '"> <span><b>' + p + '</b>' +
+          (p === 'MHU-2' && !d['Skinner'] ? ' <span class="hint">not skinned yet: skin-on carcasses do not go in while breakdown is under way</span>' : '') + '</span></label>').join(''),
       skin: () => (d['Skull kept'] === 'Yes'
           ? '<div class="note warn" style="font-size:17px"><b>This hunter wants the skull and antlers.</b> ' +
             'Tag the head with ' + esc(band(d.Band)) + ' and set it aside before you carry on.</div>' : '') +
@@ -1077,7 +1230,7 @@
         ' skinning premium goes to whoever is named here, whether or not they process it.</p>' +
         (isMgr() ? '<label>Skinned by</label><select id="sk">' + (st.home.staff || []).map(x => '<option value="' + esc(x.number) + '"' + (x.number === st.staff.number ? ' selected' : '') + '>' + esc(x.name + ' (' + x.number + ')') + '</option>').join('') + '</select>'
           : '<p class="status">Skinned by: <b>' + esc(st.staff.name + ' (' + st.staff.number + ')') + '</b></p>') +
-        '<label class="choice"><input id="k1" type="checkbox"> Skinned and head removed at the station behind MHU #1</label>' +
+        '<label class="choice"><input id="k1" type="checkbox"> Skinned and head removed inside MHU #1</label>' +
         '<label class="choice"><input id="k2" type="checkbox"> Antimicrobial spray applied</label>',
       /* Money on a private deer, taken wherever the deer happens to be. The same two ways as every
          other charge in the app: hand it to Square on this device, or write down how they paid.
@@ -1114,7 +1267,7 @@
         '<div class="note warn" style="font-size:17px">Tag confirmation number: <b>' + esc(d['MassWildlife confirmation'] || 'none recorded') + '</b></div>' +
         '<label class="choice"><input id="f0" type="checkbox"> The confirmation number on the deer\'s tag matches</label>' +
         (d['Skinner name'] ? '<div class="note ok">Skinned by <b>' + esc(d['Skinner name']) + '</b>' + (d['Skinned at'] ? ' · ' + esc(d['Skinned at']) : '') + '. The skinning premium is theirs.</div><input id="f8" type="checkbox" checked hidden>'
-          : '<label class="choice"><input id="f8" type="checkbox"> Skinned and head removed at the station behind MHU #1 <span class="hint">You get the $' + esc(s.skinRate || 25) + ' skinning premium for it</span></label>') +
+          : '<label class="choice"><input id="f8" type="checkbox"> Skinned and head removed inside MHU #1 <span class="hint">You get the $' + esc(s.skinRate || 25) + ' skinning premium for it</span></label>') +
         (d['Antimicrobial spray'] === 'Yes' ? '<input id="f9" type="checkbox" checked hidden>'
           : '<label class="choice"><input id="f9" type="checkbox"> Antimicrobial spray applied in MHU #1</label>') +
         (isMgr() ? '<label>Processor</label><select id="fp">' + (st.home.staff || []).map(x => '<option value="' + esc(x.number) + '"' + (x.number === st.staff.number ? ' selected' : '') + '>' + esc(x.name + ' (' + x.number + ')') + '</option>').join('') + '</select>'
@@ -1281,8 +1434,14 @@
           .catch(e => { btn.disabled = false; err(e.offline ? 'Needs signal to void a check-in.' : e.message); });
         return;
       }
+      if (kind === 'move') {
+        const pick = document.querySelector('input[name="mv"]:checked');
+        if (!pick) return err('Choose where it went.');
+        queue('move', { band: d.Band, to: pick.value }, 'Move ' + d.Band + ' to ' + pick.value);
+        toast((d['Hunter name'] || d.Band) + ' moved to ' + pick.value + '.', true);
+      }
       if (kind === 'skin') {
-        if (!document.getElementById('k1').checked) return err('Skin it and remove the head at the station behind MHU #1, then tick the box.');
+        if (!document.getElementById('k1').checked) return err('Skin it and remove the head inside MHU #1, then tick the box.');
         if (!document.getElementById('k2').checked) return err('Apply the antimicrobial spray, then tick the box.');
         const who = isMgr() ? v('sk') : st.staff.number;
         const wn = ((st.home.staff || []).find(x => x.number === who) || st.staff).name;
@@ -1304,7 +1463,7 @@
           if (!v('fup').trim()) return err('$' + owe.owing + ' is still owing. Say why it is being started unpaid.');
         }
         if (!document.getElementById('f0').checked) return err('Check the confirmation number on the tag first. If it doesn\'t match, stop and tell Joe.');
-        if (!document.getElementById('f8').checked) return err('Skin it and remove the head at the station behind MHU #1, then tick the box.');
+        if (!document.getElementById('f8').checked) return err('Skin it and remove the head inside MHU #1, then tick the box.');
         if (!document.getElementById('f9').checked) return err('Apply the antimicrobial spray in MHU #1, then tick the box.');
         const naW = document.getElementById('f1na').checked, wv = num(v('f1'));
         if (!naW) {
@@ -1446,7 +1605,7 @@
       '<div><label for="wa">Weighed as</label><select id="wa"><option value="Field dressed">Field dressed</option><option value="Not dressed">Not dressed</option></select></div></div>' +
       '<label class="choice"><input id="fd" type="checkbox"> Field dressed within 4 hours of the shot (or the air stayed below 37°F)</label>' +
       '<label class="choice"><input id="ddp" type="checkbox"> Taken under a deer damage permit (DDP)</label>' +
-      '<p class="status">The deer hangs in the receiving cooler skin-on, head-on. It\'s skinned and the head removed at the station behind MHU #1 when processing starts.</p>' +
+      '<p class="status">The deer hangs in the receiving cooler skin-on, head-on. It\'s skinned and the head removed inside MHU #1 when processing starts.</p>' +
       '<label for="nt">Notes</label><textarea id="nt"></textarea>' +
       '<div class="err" id="err"></div><button class="submit" id="save">Check in and print band</button>' +
       '<button class="btn ghost" id="away" style="width:100%">Turn this deer away instead</button><div id="awaybox"></div></div>');
@@ -1920,7 +2079,7 @@
       (skinning ? 'skinners' : 'processors') + ' booked at the same moment' +
       (skinning ? ', and skinning places are separate from processing places' : '') +
       '. Cancel any time before you start. Clock in when you arrive.' +
-      (skinning ? ' Skinning is paid at $' + esc(s2().skinRate || 25) + ' a deer, or $' + esc(s2().skinHourly || 25) + ' an hour for the time you book, whichever is more.' : '') +
+      (skinning ? ' Skinning is paid at $' + esc(s2().skinRate || 25) + ' a deer skinned.' : '') +
       '</div></div>' +
       '<div class="chips">' + data.days.map(d => {
         const peak = Math.max(0, ...d.counts);
@@ -2690,8 +2849,7 @@
       '<div class="tiles">' + tile(w.deer, 'Deer processed') + tile(w.skinned === undefined ? '—' : w.skinned, 'Deer skinned') +
       tile(fmt(w.hours), 'Hours clocked') + tile(w.hours ? '$' + fmt(w.perHour) : '—', 'Per hour') + '</div>' +
       row('Processing', '$' + fmt(w.pay), w.deer + ' deer at $' + s.pieceRate) +
-      (w.skinPay ? row('Skinning', '$' + fmt(w.skinPay), (w.skinned || 0) + ' deer at $' + (s.skinRate || 25) +
-        (w.skinHours ? ', or ' + fmt(w.skinHours) + ' h at $' + (s.skinHourly || 25) + ' — whichever is more' : '')) : '') +
+      (w.skinPay ? row('Skinning', '$' + fmt(w.skinPay), (w.skinned || 0) + ' deer at $' + (s.skinRate || 25)) : '') +
       (w.intakePay ? row('At the door', '$' + fmt(w.intakePay), (w.paidIntakes === undefined ? (w.intakes || 0) : w.paidIntakes) + ' deer at $' + (s.intakeFee || 10) +
         (w.turnedAway ? ', including ' + w.turnedAway + ' turned away' : '')) : '') +
       (w.otherPay ? row('Other time', '$' + fmt(w.otherPay), fmt(w.otherHours) + ' h at $' + (s.otherHourly || 25) + ' (cleaning, training, no booking)') : '') +

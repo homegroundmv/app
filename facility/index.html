@@ -112,6 +112,23 @@
     #label .lt { font-size: 14pt; font-weight: 800; letter-spacing: 1px; }
   }
 
+.drop { background: var(--card); border: 1px solid var(--line); border-radius: 14px; margin: 12px 0; }
+.drop > summary { list-style: none; display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 16px; font-size: 18px; cursor: pointer; }
+.drop > summary::-webkit-details-marker { display: none; }
+.drop > summary::before { content: '\25B8'; margin-right: 8px; }
+.drop[open] > summary::before { content: '\25BE'; }
+.drop > summary > span:first-child { flex: 1; }
+.dropin { padding: 0 10px 10px; }
+.dropin .drop { margin: 8px 0; background: var(--paper); }
+.drow { border-top: 1px solid var(--line); }
+.drowbtn { display: flex; align-items: center; gap: 8px; width: 100%; background: none; border: 0; padding: 12px 6px; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.dwho { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.dwho .tag { align-self: flex-start; }
+.dh { font-size: 18px; font-weight: 800; white-space: nowrap; }
+.tag.red { background: var(--bad); color: #fff; }
+.tag.amb { background: #D99A00; color: #fff; }
+.hit { display: flex; align-items: center; gap: 8px; width: 100%; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin: 8px 0 0; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.drow.open .card { margin: 4px 0 12px; }
 </style>
 </head>
 <body>
