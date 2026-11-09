@@ -11,43 +11,18 @@
 (function () {
   'use strict';
   const CFG = window.HG_CONFIG || {};
-  /* Shown next to Sign out. Twice on 7 November we lost time to not knowing which copy of the app
-     a phone was actually running — a fix looks ineffective when the phone is still on yesterday's
-     service worker, and there was no way to tell by looking. Keep this in step with VERSION in
-     sw.js: it is the number somebody reads out over the phone. */
-  const APP_VERSION = 'v68';
+  /* The constants and pure helpers live in core.js, loaded before this file. If it did not
+     load there is no sensible way to carry on, and a blank screen on a phone in a cooler is
+     the worst possible way to find out, so say it plainly and stop. */
+  if (!window.HG_CORE) {
+    document.body.innerHTML = '<div style="padding:24px;font:16px system-ui">' +
+      '<b>The app did not load completely.</b><br><br>core.js is missing. ' +
+      'Close the app and open it again. If it keeps happening, tell Joe.</div>';
+    return;
+  }
+  const { APP_VERSION, KEY, esc, pad, stamp, parse, uid, band, num, r1, fmt, isoDate, dayName, nowMin, fromHM, hm2, t12, when, hhmm, splitName, first, BAND_HEX, hexFor } = window.HG_CORE;
   const $app = document.getElementById('app');
-  const KEY = 'hg-facility';
 
-  /* ---------- helpers ---------- */
-  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const pad = n => String(n).padStart(2, '0');
-  const stamp = d => { d = d || new Date(); return (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear() + ' ' + d.getHours() + ':' + pad(d.getMinutes()); };
-  const parse = s => { const m = String(s || '').match(/(\d+)\/(\d+)\/(\d{4})(?:\s+(\d+):(\d+)(?::(\d+))?)?/); return m ? new Date(+m[3], m[1] - 1, +m[2], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0)) : null; };
-  const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-  const band = s => String(s || '').trim().toUpperCase().replace(/\s+/g, '');
-  const num = v => { const n = Number(v); return isFinite(n) ? n : 0; };
-  const r1 = n => Math.round(n * 10) / 10;
-  const fmt = n => r1(n).toLocaleString('en-US');
-  const isoDate = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
-  const dayName = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }); };
-  const nowMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
-  const fromHM = n => Math.floor(n / 60) + ':' + pad(n % 60);
-  const hm2 = hm => { const [h, m] = String(hm).split(':').map(Number); return pad(h) + ':' + pad(m || 0); };
-  const t12 = hm => { const [h, m] = String(hm).split(':').map(Number); const ap = h >= 12 ? 'pm' : 'am'; const hh = h % 12 || 12; return hh + (m ? ':' + pad(m) : '') + ' ' + ap; };
-  const when = t => { const d = parse(t); return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : esc(t); };
-  // "11/3/2026 17:05" to "17:05", the half of a stamp the clock screens care about.
-  const hhmm = s => { const m = String(s || '').match(/\b(\d{1,2}):(\d{2})\b/); return m ? m[1] + ':' + m[2] : ''; };
-  /* Rows checked in before the name was split in two carry only the one "Hunter name". The
-     correction form has to open on those as well, or the deer that most need correcting are the
-     ones that cannot be.
-     Last word is the surname, matching how the backend splits the same string. */
-  const splitName = n => { const p = String(n || '').trim().split(/\s+/); return p.length < 2 ? { first: p[0] || '', last: '' } : { first: p.slice(0, -1).join(' '), last: p[p.length - 1] }; };
-  const first = n => String(n || '').trim().split(/\s+/)[0] || '';
-  // Intake band colour: the roll in the printer changes every day through a 5-colour cycle (Settings), so no two deer
-  // in the cooler share a colour (a deer hangs at most 5 days).
-  const BAND_HEX = { 'aqua': '#00B5B8', 'yellow': '#F5D000', 'orange': '#F57C00', 'day glow green': '#39E046', 'day glow pink': '#FF4FA8' };
-  const hexFor = name => BAND_HEX[String(name || '').toLowerCase()] || '#999';
   function bandColour(when) {
     const s = S(), list = s.bandColours && s.bandColours.length ? s.bandColours : ['Aqua', 'Yellow', 'Orange', 'Day Glow Green', 'Day Glow Pink'];
     const d = when instanceof Date ? when : parse(when), b = String(s.bandStart || '2026-11-01').split('-').map(Number);
