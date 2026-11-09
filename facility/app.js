@@ -700,11 +700,16 @@
        inside the Front desk, and a processor who never touches the counter opened to it every
        morning (Joe, 6 November).
 
-       Now the sequence is the same for everyone — clock in, start of shift, the work, as it
-       happens, the office — and only the ORDER of the two work tiles changes with the role,
+       Now the sequence is the same for everyone — clock in, start of shift, the work, the daily
+       duties, the office — and only the ORDER of the two work tiles changes with the role,
        because the first thing on the screen should be the thing that person is about to do.
        Checking a deer in lives at the Front desk and nowhere else: one door for the counter,
-       one for the floor. */
+       one for the floor.
+
+       Scanning a band left the home screen on 9 November (Joe): a scan is how you pick the deer
+       the hunter came for, so it belongs in the Front desk's "Going back out" card beside the
+       collection list, not as a tile of its own. The floor still reaches any deer from the Deer
+       Board, and a deer's own card still offers "Scan another band". */
 
     const doorFirst = atDoor() && !isMgr();      // Intake: the counter IS the job
     const boardTile = big('board', 'Deer Board',
@@ -781,9 +786,8 @@
 
       group('The work') +
       (doorFirst ? deskTile + boardTile : boardTile + deskTile) +
-      big('scan', 'Scan a band', 'Taking a deer out of the cooler — opens the move, or the collection') +
 
-      group('As it happens') +
+      group('Your daily duties') +
       (preopFirst ? '' : big('preop', 'Pre-op sanitation' + (preop.done && !held ? ' ✓' : ''), preopSub, preopCls)) +
       big('opssop', 'Operational sanitation', 'Every line C, N or N/A. At least once a day') +
       big('closeout', 'End-of-shift close-out' + (closeout.done && !closeoutLeft ? ' \u2713' : ''), closeoutSub, closeoutCls) +
@@ -1741,7 +1745,11 @@
       '<label>What is happening to this deer?</label>' +
       '<label class="choice"><input type="radio" name="type" value="Donated"> <span><b>Donated</b> (Share the Harvest). TFMV mails the hunter a check: $' + esc(s.payDoe || 150) + ' a doe, $' + esc(s.payBuck || 100) + ' a buck (any male deer).</span></label>' +
       '<label class="choice"><input type="radio" name="type" value="Private"> <span><b>Private</b>: processed for the hunter, $' + esc(s.privatePrice || 250) + '.</span></label>' +
-      '<label class="choice"><input type="radio" name="type" value="Cold storage"> <span><b>Cold storage only</b>: the hunter hangs it and collects it. Not processed. <b>$' + esc(s.coldFee || 35) + '</b>, covering ' + esc(s.coldDays || 7) + ' days \u2014 then $' + esc(s.coldWeekFee || 50) + ' a week. Free if they donate a deer this season.</span></label>' +
+      '<label class="choice"><input type="radio" name="type" value="Cold storage"> <span><b>Cold storage only</b>: the hunter hangs it and collects it. Not processed. ' +
+        (s.coldCharging
+          ? '<b>$' + esc(s.coldFee || 50) + '</b>, covering ' + esc(s.coldDays || 7) + ' days \u2014 then $' + esc(s.coldWeekFee || 50) + ' a week. Free if they donate a deer this season.'
+          : '<b>Free at the moment</b> \u2014 still collected within ' + esc(s.coldDays || 7) + ' days.') +
+        '</span></label>' +
       '<div id="feebox" hidden></div>' +
       '<div id="privbox" hidden></div>' +
       (s.porkInStock === false ? '<p class="status" id="porkbox" hidden>Pork fat add-on: not available right now. The grind will be all venison.</p>'
@@ -1995,11 +2003,20 @@
             : '';
         const forfeitAt = (s.coldDays || 7) + (s.coldForfeitDays || 7);
         const late = out.open === false;
+        /* Charging is held until the TFMV agreement is reached (Joe, 9 Nov). While it is, nothing
+           about money appears on this screen at all: no price, no call-out, no "paying now". A
+           number quoted and then not taken is worse than no number, and the person at the door
+           should not have to explain a charge nobody is collecting. The collection deadline and
+           the forfeiture term stay, because those are not about the money. */
         fb.innerHTML = gate +
-          '<div class="note"><b>$' + (s.coldFee || 50) + '</b> covers ' + (s.coldDays || 7) + ' days, then $' +
-          (s.coldWeekFee || 50) + ' a week. They get a text on day ' + (s.coldRemindDays || 5) +
-          ' to collect within 48 hours. <b>Free if they donate a deer this season.</b></div>' +
-          (late && s.coldPassCallout
+          (s.coldCharging
+            ? '<div class="note"><b>$' + (s.coldFee || 50) + '</b> covers ' + (s.coldDays || 7) + ' days, then $' +
+              (s.coldWeekFee || 50) + ' a week. They get a text on day ' + (s.coldRemindDays || 5) +
+              ' to collect within 48 hours. <b>Free if they donate a deer this season.</b></div>'
+            : '<div class="note ok"><b>No charge for cold storage at the moment.</b> Tell them it is free for now. ' +
+              'They still get a text on day ' + (s.coldRemindDays || 5) + ' to collect within 48 hours, and the ' +
+              'deer still has to come out of the cooler.</div>') +
+          (s.coldCharging && late && s.coldPassCallout
             ? '<div class="note warn"><b>Outside posted hours, so the $' + (s.calloutFee || 40) +
               ' call-out is added</b> — somebody came in specially for this deer. Tick below if it was not a special trip.' +
               '<label class="choice"><input type="checkbox" id="nocallout"> <span>Not a call-out — we were here anyway</span></label></div>'
@@ -2007,11 +2024,13 @@
           /* Payment is DUE at collection, not now. "Bill it and chase them" was the wrong frame:
              it made an unpaid deer sound like a debt going bad on the day it arrived, when in
              fact nothing is late until they come back for it. They may pay early if they want to. */
-          '<label for="feemethod">Paying now? <span class="hint">Optional — it is due when they collect the deer</span></label>' +
-          '<select id="feemethod">' +
-          '<option value="">Due at collection</option>' +
-          (s.payMethods || ['Cash', 'Card (Square)', 'Check']).map(x => '<option>Paying now — ' + esc(x) + '</option>').join('') +
-          '</select>' +
+          (s.coldCharging
+            ? '<label for="feemethod">Paying now? <span class="hint">Optional — it is due when they collect the deer</span></label>' +
+              '<select id="feemethod">' +
+              '<option value="">Due at collection</option>' +
+              (s.payMethods || ['Cash', 'Card (Square)', 'Check']).map(x => '<option>Paying now — ' + esc(x) + '</option>').join('') +
+              '</select>'
+            : '') +
           '<p class="status">Say it out loud at the counter: uncollected after ' + forfeitAt +
           ' days and the deer is donated. It is on the drop-off slip and they have to agree to it, ' +
           'or it does not bind.</p>';
@@ -2792,7 +2811,7 @@
       (d.open
         ? '<div class="note ok"><b>Posted hours — open.</b> A deer arriving now is not a call-out.</div>'
         : '<div class="note warn"><b>Outside posted hours.</b> Anyone coming in for a deer now is a call-out: Home Ground pays ' +
-          money(d.calloutFee) + (d.passCallout ? ', and it is added to a hang-only hunter\'s charge.' : '.') +
+          money(d.calloutFee) + (d.passCallout && d.charging ? ', and it is added to a hang-only hunter\'s charge.' : '.') +
           (d.nextWindow ? ' Next open: ' + esc(d.nextWindow.day + ' ' + d.nextWindow.start) + '.' : '') + '</div>') +
       '<div class="tiles">' + tile(d.today.in, 'In today') + tile(d.today.out, 'Out today') +
       tile(d.cooler.inCooler + '/' + d.cooler.cap, 'Cooler') + tile(d.collect.length, 'To collect') + '</div>' +
@@ -2846,16 +2865,22 @@
         : '') +
 
       group(((d.unpaid || []).length ? '4' : '3') + ' \u00b7 Going back out') +
+      /* The scan lives here as of 9 November (Joe). Tapping the deer off the list is the normal
+         way; scanning the band is the same job done from the band in the hunter's hand, which is
+         faster when the list is long and surer when two hunters share a surname. It is also the
+         door to a cooler move, so it stays available even with nothing waiting to collect. */
       '<div class="card"><b>Collecting a deer (' + d.collect.length + ')</b>' +
       (d.collect.length
         ? '<div class="status">Tap the deer they came for \u2014 cold storage and finished processing together, longest waiting first.</div>' + d.collect.map(row).join('')
         : '<p class="status">Nothing waiting to be collected.</p>') +
-      '</div>' +
+      '<div class="deskrow"><button class="btn ghost" data-go2="scan">Scan a band instead</button></div></div>' +
 
       '<div class="card"><b>What things cost</b><div class="status">' +
-      'Cold storage ' + money(d.fee) + ' for ' + d.coldDays + ' days, then ' + money(d.weekFee) + ' a week. ' +
-      'Private processing ' + money(d.privatePrice) + ', paid before the deer is cut. Donating is free and waives cold storage. ' +
-      (d.passCallout ? 'Outside posted hours adds ' + money(d.calloutFee) + ' per trip.' : '') +
+      (d.charging
+        ? 'Cold storage ' + money(d.fee) + ' for ' + d.coldDays + ' days, then ' + money(d.weekFee) + ' a week. '
+        : '<b>Cold storage is free at the moment</b> \u2014 nothing is charged for hanging a deer until the Tick Free MV agreement is settled. Deer still come out within ' + d.coldDays + ' days. ') +
+      'Private processing ' + money(d.privatePrice) + ', paid before the deer is cut. Donating is free' + (d.charging ? ' and waives cold storage' : '') + '. ' +
+      (d.passCallout && d.charging ? 'Outside posted hours adds ' + money(d.calloutFee) + ' per trip.' : '') +
       '</div></div>' +
       '<div id="outbox"></div>';
 
@@ -2908,7 +2933,7 @@
       (x.skull ? '<div class="note warn" style="font-size:17px"><b>The skull and antlers go with him.</b> ' +
         'It is tagged ' + esc(band) + ' at the skinning station. Do not let him leave without it.</div>' : '') +
       breakdown +
-      (!priv && !d.open && d.passCallout
+      (!priv && !d.open && d.passCallout && d.charging
         ? '<label class="choice"><input type="checkbox" id="ocnc"> <span>This collection is <b>not</b> a call-out — we were here anyway</span></label>'
         : '') +
       '<label for="octo">Who is collecting it?</label><input id="octo" type="text" autocomplete="off" value="' + esc(x.hunter || '') + '">' +
@@ -3003,10 +3028,16 @@
         '<div class="tval" style="font-size:17px">' + (x.waived ? '—' : money(x.owing)) + '</div></div>';
     };
     box.innerHTML =
-      '<div class="card"><b>What cold storage costs</b><div class="status">' +
-      money(d.fee) + ' a deer, covering ' + d.coldDays + ' days. ' + money(d.weekFee) +
-      ' for each week after that, or part of one. The hunter is texted on day ' + d.remindDays +
-      ' to collect within 48 hours. Donating a deer this season makes it free; private processing includes it.</div>' +
+      (d.charging
+        ? '<div class="card"><b>What cold storage costs</b><div class="status">' +
+          money(d.fee) + ' a deer, covering ' + d.coldDays + ' days. ' + money(d.weekFee) +
+          ' for each week after that, or part of one. The hunter is texted on day ' + d.remindDays +
+          ' to collect within 48 hours. Donating a deer this season makes it free; private processing includes it.</div>'
+        : '<div class="card"><b>Cold storage is free at the moment</b><div class="status">' +
+          'Charging is held until the Tick Free MV agreement is reached, so nothing is owed on any deer below. ' +
+          'The agreed price is ' + money(d.fee) + ' for ' + d.coldDays + ' days and ' + money(d.weekFee) +
+          ' a week after that, and it switches on in Settings when the agreement is signed. ' +
+          'The hunter is still texted on day ' + d.remindDays + ' to collect within 48 hours.</div>') +
       '<div class="tiles">' + tile(d.deer.length, 'Hanging now') + tile(money(d.owingTotal), 'Owing') +
       tile(d.overdueCount, 'Past collection') + tile(money(d.takenThisSeason), 'Taken this season') + '</div>' +
       (d.gate && !d.gate.ok
