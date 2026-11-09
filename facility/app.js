@@ -757,15 +757,23 @@
 
       // Pre-op is a gate: until it is signed it IS the start of the day, and it sits above the
       // work it has to come before. Once signed it drops into the day's run, ticked.
-      (preopFirst ? group('Start of shift') + big('preop', 'Pre-op sanitation', preopSub, preopCls) : '') +
+      (preopFirst ? group('Do this first') + big('preop', 'Pre-op sanitation', preopSub, preopCls) : '') +
 
       group('The work') +
       (doorFirst ? deskTile + boardTile : boardTile + deskTile) +
 
-      group('Your daily duties') +
-      (preopFirst ? '' : big('preop', 'Pre-op sanitation' + (preop.done && !held ? ' ✓' : ''), preopSub, preopCls)) +
+      /* The three headings say WHEN, which is the question somebody actually has at seven in the
+         morning; "Pre-op / Operational / Close-out" are the names of the records, which answers a
+         different one (Joe, 9 Nov). "Do this first" is also what the hoist above is called, so the
+         unsigned gate and the signed, ticked version read as the same thing in two places.
+         Not "before leaving": the close-out is the lock-up, once a day, and a processor knocking
+         off at two in the afternoon should not think it is theirs. */
+      (preopFirst ? '' : group('Do this first') +
+        big('preop', 'Pre-op sanitation' + (preop.done && !held ? ' ✓' : ''), preopSub, preopCls)) +
+      group('Do this mid shift') +
       big('opssop', 'Operational sanitation', 'Every line C, N or N/A. At least once a day') +
-      big('closeout', 'End-of-shift close-out' + (closeout.done && !closeoutLeft ? ' \u2713' : ''), closeoutSub, closeoutCls) +
+      group('Before you lock up') +
+      big('closeout', 'Close-out' + (closeout.done && !closeoutLeft ? ' \u2713' : ''), closeoutSub, closeoutCls) +
 
       tell +
       office +
@@ -1312,6 +1320,56 @@
      they forget because the deer is in front of them. So the two actions that mean "I am working
      now" ask first, with one tap to clock in and carry on. A manager recording someone else's
      skinning, or anyone who really is not on the clock, can carry on without (Joe, 7 November). */
+  /* ---- the pre-op gate, at the bench ----
+     A deer is processed in the unit it is hanging in, and skinning always happens in MHU #1's
+     front room, so which record has to be signed is known without asking anybody (Joe, 9 Nov).
+     The server enforces the same rule - an action queued offline replays through it - and this
+     copy exists so the person at the bench is told why before they fill a form in, rather than
+     after they press send. There is no override, deliberately. */
+  const PRE_UNIT = { 'MHU-1': 'MHU #1', 'MHU-2': 'MHU #2', 'Cooler': 'MHU #1' };
+  const preopState = () => st.home.preopToday || {};
+  const unitReady = u => !!((preopState().ready || {})[u]);
+  const few = l => (l || []).slice(0, 3).join(', ') + ((l || []).length > 3 ? ' and ' + (l.length - 3) + ' more' : '');
+  const unitWhy = u => {
+    const p = preopState(), b = (p.units || {})['Both units'], x = (p.units || {})[u];
+    if (!p.done) return 'No pre-op sanitation record has been signed today.';
+    if (b && (b.held || []).length) return 'Pre-op: ' + few(b.held) + ' is still not released, so nothing should be using it.';
+    if (b && !b.complete) return 'The pre-op record is not finished \u2014 ' + few(b.missing) + ' still unanswered.';
+    if (!x) return '';
+    if ((x.held || []).length) return u + ': ' + few(x.held) + ' is still not released, so nothing should be using it.';
+    if (!x.complete) return u + '\u2019s pre-op is not finished \u2014 ' + few(x.missing) + ' still unanswered.';
+    return '';
+  };
+  /* One unit, never two: a carcass in MHU #2 is skinned by definition, so a blank Skinner is a
+     records gap rather than an unskinned deer, and it must not put MHU #1's record in front of
+     somebody working in MHU #2 (Joe, 9 Nov). */
+  const unitsNeeded = (kind, d) => kind === 'skin' ? ['MHU #1'] : [PRE_UNIT[placeOf(d)] || 'MHU #1'];
+  const preopBlock = (kind, d) => {
+    const need = unitsNeeded(kind, d).filter(u => !unitReady(u));
+    if (!need.length) return null;
+    const u = need[0], other = u === 'MHU #1' ? 'MHU #2' : 'MHU #1';
+    /* "Is it still in MHU-1?" is only worth asking when the OTHER unit is signed off, because
+       that is the one case where an unrecorded move is the likely explanation. Asked on every
+       start it would be clicked through, and a prompt people dismiss by reflex is worse than no
+       prompt at all - it trains the habit you need broken when it matters (Joe, 9 Nov). */
+    return { unit: u, other: other, why: unitWhy(u),
+      stale: kind === 'start' && unitReady(other) && PRE_UNIT[placeOf(d)] === u };
+  };
+  const preopStop = (g, d, box, after) => {
+    if (!box) return toast(g.why, false);
+    box.innerHTML = '<div class="note bad" style="font-size:17px"><b>' + esc(g.why) + '</b>' +
+      (g.stale ? '<br><br>' + esc(band(d.Band)) + ' is on the board in <b>' + esc(placeOf(d)) + '</b>, and ' +
+        esc(g.other) + '\u2019s pre-op is signed. If the deer has been moved, record the move on the deer board first.' : '') +
+      '</div>' +
+      '<button class="btn" id="pgpre">Go to ' + esc(g.unit) + '\u2019s pre-op</button> ' +
+      (g.stale ? '<button class="btn alt" id="pgmove">Move it</button> ' : '') +
+      '<button class="btn ghost" id="pgback">Back</button>';
+    document.getElementById('pgpre').onclick = () => GO.preop();
+    const mv = document.getElementById('pgmove');
+    if (mv) mv.onclick = () => act('move', d, box, after);
+    document.getElementById('pgback').onclick = () => { box.innerHTML = ''; if (after) after(); };
+  };
+
   let clockNudged = false;
   function act(kind, d, box, after) {
     if ((kind === 'skin' || kind === 'start') && !isViewer() && !st.home.clockedIn && !clockNudged && box) {
@@ -1325,6 +1383,10 @@
         catch (x) { e.target.disabled = false; document.getElementById('cnerr').textContent = x.offline ? 'Clocking in needs signal. Carry on without and tell Joe the time.' : x.message; }
       };
       return;
+    }
+    if ((kind === 'skin' || kind === 'start') && !isViewer()) {
+      const g = preopBlock(kind, d);
+      if (g) return preopStop(g, d, box, after);
     }
     if (kind === 'print') return printBand(d);
     if (kind === 'grind') return grind(d, box, after);
