@@ -49,6 +49,12 @@
     background: var(--green); color: #fff; font-size: 19px; font-weight: 700; cursor: pointer; }
   .submit:disabled { opacity: .5; }
   .note { border-radius: 10px; padding: 12px 14px; margin: 12px 0; font-size: 15px; }
+  /* Sits over the page, bottom of the viewport: visible wherever the person has scrolled to,
+     so nothing has to move them to show them a message. Thumb-height on a phone, and it never
+     eats a tap — pointer-events stay off. */
+  #toast { position: fixed; left: 12px; right: 12px; bottom: 16px; z-index: 60; pointer-events: none; }
+  #toast:empty { display: none; }
+  #toast .note { margin: 0; box-shadow: 0 6px 24px rgba(0, 0, 0, .28); }
   .note.warn { background: var(--warn-bg); color: var(--warn); }
   .note.bad { background: var(--bad-bg); color: var(--bad); }
   .note.ok { background: var(--ok-bg); color: var(--green-dark); }
@@ -134,6 +140,10 @@
 <body>
 <div id="label"></div>
 <main id="app"><p class="center status">Loading…</p></main>
+<!-- Messages land here, over the page, instead of at the top of it. See toast() in app.js:
+     a message pinned to the top of a long screen had to drag the reader up to be seen, which is
+     what threw people back to the first card mid-job (Joe, 8 November). -->
+<div id="toast" aria-live="polite"></div>
 <script src="config.js"></script>
 <script src="push.js"></script>
 <script src="app.js"></script>

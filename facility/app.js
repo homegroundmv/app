@@ -317,7 +317,25 @@
      So a background redraw now: waits until the screen has been left alone for a few seconds,
      does nothing at all if the data came back the same, and keeps the scroll position. A redraw
      the person asked for by tapping something is unaffected. */
-  let lastTouch = 0, pointerDown = false, homeSig = '', redrawing = false;
+  let lastTouch = 0, pointerDown = false, homeSig = '', redrawing = false, formPaused = false;
+
+  /* A form somebody is ACTUALLY using: focused, or with something typed, chosen or ticked in it.
+     The test used to be "does any form input exist on this screen", which froze the whole board —
+     every deer, every count, every hour — for as long as one card had a form open, even an
+     untouched one nobody was looking at. A released deer still sitting there offering Undo and
+     Void is worse than losing an empty form (Joe, 8 November). Prefilled values do count as in
+     use: a release form carries real figures the moment it opens. */
+  function formInUse() {
+    const els = document.querySelectorAll('.form input, .form select, .form textarea');
+    for (let i = 0; i < els.length; i++) {
+      const el = els[i];
+      if (el === document.activeElement) return true;
+      if (el.type === 'hidden') continue;
+      if (el.type === 'checkbox' || el.type === 'radio') { if (el.checked) return true; continue; }
+      if ((el.value || '').trim() !== '') return true;
+    }
+    return false;
+  }
   // Cheap, order-independent enough for "did anything change?", and far cheaper than diffing.
   const sigOf = o => { const s = JSON.stringify(o) || ''; let h = 5381;
     for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
@@ -343,13 +361,18 @@
     if (deferred) { clearTimeout(deferred); deferred = null; }
     redrawing = !!quiet;
     try {
+      const busy = formInUse();
+      formPaused = busy && (current === 'board' || current === 'donate' || current === 'deer');
       if (current === 'home') showHome();
-      else if (current === 'board' && !document.querySelector('.form input, .form select') && !boardQuery) showBoard();
-      else if (current === 'donate' && !document.querySelector('.form input, .form select, #lic2:focus')) showDonate();
-      else if (current === 'deer' && shownBand && !document.querySelector('.form input, .form select')) showDeer(shownBand);
+      else if (current === 'board' && !busy && !boardQuery) showBoard();
+      else if (current === 'donate' && !busy && !document.querySelector('#lic2:focus')) showDonate();
+      else if (current === 'deer' && shownBand && !busy) showDeer(shownBand);
       /* The fetched screens redraw themselves by being opened again, which is what happens when
          the real answer arrives behind the cached one. Never while something is half typed. */
       else if (GO[current] && !document.querySelector('input:focus, select:focus, textarea:focus')) GO[current]();
+      /* Nothing repainted the strip, because nothing repainted — so say it here, or a held screen
+         looks exactly like a screen with no news. */
+      if (formPaused) status();
     } finally { redrawing = false; }
   }
   // Exposed so the tests can fire the 45-second poll's redraw without waiting 45 seconds for it.
@@ -358,28 +381,108 @@
   document.addEventListener('visibilitychange', () => { if (!document.hidden) flush(); });
   setInterval(() => { if (!document.hidden && (current === 'home' || current === 'board' || current === 'donate')) { flush(); if (!flushing) refresh(true); } }, 45000);
 
+  /* How long ago, in words. For the queue list: "4 minutes ago" tells somebody whether an entry
+     is stuck or just made, which a clock time does not. */
+  const sinceWords = ms => {
+    const m = Math.floor((Date.now() - ms) / 60000);
+    if (!(ms > 0) || m < 1) return 'just now';
+    if (m < 60) return m + (m === 1 ? ' minute ago' : ' minutes ago');
+    const h = Math.floor(m / 60);
+    if (h < 24) return h + (h === 1 ? ' hour ago' : ' hours ago');
+    const d = Math.floor(h / 24);
+    return d + (d === 1 ? ' day ago' : ' days ago');
+  };
+
   function status() {
     const el = document.getElementById('sync');
     if (!el) return;
     const waiting = st.outbox.filter(x => !x.error), bad = st.outbox.filter(x => x.error);
-    el.innerHTML = (waiting.length ? '<span class="pill wait">' + waiting.length + ' waiting to send</span> ' +
-      (navigator.onLine ? '' : '<span class="status">No signal. They\'ll send on their own.</span>')
-      : '<span class="pill">Everything sent</span> <span class="status">Updated ' + esc(st.synced || '—') + '</span>') +
+    /* The count alone told you something was stuck without telling you WHAT, which is how a deer
+       sat unsent on a phone all morning with nobody able to say which one. Tapping it opens the
+       list (Joe, 8 November). */
+    const queue = waiting.length
+      ? '<button class="plain" id="qbtn"><span class="pill wait">' + waiting.length + ' waiting to send</span>' +
+        ' <span class="status">' + (st.queueOpen ? 'hide' : 'what’s waiting?') + '</span></button> ' +
+        (navigator.onLine ? '' : '<span class="status">No signal. They\'ll send on their own.</span>') +
+        '<div id="qbox"' + (st.queueOpen ? '' : ' hidden') + ' style="margin-top:6px">' +
+        waiting.map(i => '<div class="trow"><div><b>' + esc(i.label || i.action) + '</b><br>' +
+          '<span class="status">' + esc(sinceWords(i.created)) +
+          (i.by && i.by !== st.number
+            ? ' · entered by ' + esc(i.by) + ', so it waits until they sign in on this device'
+            : '') + '</span></div></div>').join('') +
+        '<p class="status">Nothing here is lost. Each one sends itself as soon as there is signal, ' +
+        'and the deer it belongs to already shows on the board marked <b>not sent yet</b>.</p>' +
+        '<button class="btn ghost" id="qnow">Try sending now</button></div>'
+      /* Offline with an empty outbox used to read "Everything sent", which is true and still
+         misleading: nothing is coming IN either, so the screen is frozen at whatever it last
+         fetched. Say so. */
+      : (navigator.onLine
+          ? '<span class="pill">Everything sent</span> <span class="status">Updated ' + esc(st.synced || '—') + '</span>'
+          : '<span class="pill wait">No signal</span> <span class="status">Nothing is updating. Last fetched ' +
+            esc(st.synced || '—') + '</span>');
+    el.innerHTML = queue +
+      /* A refused entry is a real deer somebody typed in at the door. This used to offer one
+         button — "Remove it" — with no confirmation and no way to put right whatever was wrong,
+         so the obvious tap destroyed the record. Twice, on 8 November. Now it says what to do
+         first, and discarding asks. */
+      /* Everything the person typed is still sitting in this entry — the refusal never deleted it,
+         it only stopped it being sent. So the first offer is to send it again, which is the whole
+         record recovered without anybody retyping it, and is what rescues an entry refused by a
+         rule that has since been fixed. */
       bad.map(i => '<div class="note bad">' + esc(i.label) + ' was not accepted: ' + esc(i.error) +
-        ' <button class="plain" data-drop="' + esc(i.clientId) + '">Remove it</button></div>').join('') +
+        '<br><span class="status">Everything typed is still here. Put right whatever it objected to, then send it again.</span><br>' +
+        '<button class="btn" data-retry="' + esc(i.clientId) + '" style="margin-top:6px">Send it again</button> ' +
+        '<button class="plain" data-drop="' + esc(i.clientId) + '">Discard it</button></div>').join('') +
       /* Shown only after something was actually slow, and only for a few minutes. It is for
          telling somebody what happened, not decoration. */
+      /* Say it out loud when the screen is deliberately holding still, so a frozen board is never
+         mistaken for a quiet one. */
+      (formPaused ? '<div class="note warn" style="margin-top:6px;font-size:13px">Holding this screen still while you fill that form in. It updates again as soon as you save or cancel.</div>' : '') +
       (st.slow && Date.now() - st.slow.at < 300000
         ? '<div class="note warn" style="margin-top:6px;font-size:13px">Last slow screen: <b>' + esc(st.slow.action) + '</b> took ' +
           (st.slow.total / 1000).toFixed(1) + 's · server ' + (st.slow.ms / 1000).toFixed(1) + 's' +
           (st.slow.lockMs > 300 ? ' (waiting on another request ' + (st.slow.lockMs / 1000).toFixed(1) + 's)' : '') +
           ' · connection ' + (Math.max(0, st.slow.total - st.slow.ms) / 1000).toFixed(1) + 's</div>'
         : '');
-    el.querySelectorAll('[data-drop]').forEach(b => b.onclick = () => { st.outbox = st.outbox.filter(x => x.clientId !== b.dataset.drop); save(); status(); });
+    el.querySelectorAll('[data-drop]').forEach(b => b.onclick = () => {
+      const it = st.outbox.find(x => x.clientId === b.dataset.drop);
+      const what = it ? (it.label || it.action) : 'this entry';
+      // Name what goes, and make it a decision rather than a reflex.
+      if (!confirm('Discard "' + what + '"?\n\nThis throws away what was typed. It cannot be got back, and if the deer is in the cooler it will have no record at all.')) return;
+      st.outbox = st.outbox.filter(x => x.clientId !== b.dataset.drop); save(); status();
+    });
+    el.querySelectorAll('[data-retry]').forEach(b => b.onclick = () => {
+      const it = st.outbox.find(x => x.clientId === b.dataset.retry);
+      if (!it) return;
+      b.disabled = true; b.textContent = 'Sending…';
+      it.error = '';          // back in the queue; flush() skips anything still carrying an error
+      save(); flush();
+    });
+    const qb = document.getElementById('qbtn');
+    if (qb) qb.onclick = () => { st.queueOpen = !st.queueOpen; save(); status(); };
+    const qn = document.getElementById('qnow');
+    /* No Remove here, deliberately. An errored entry was refused and is dead; a waiting one is a
+       real deer somebody checked in, and a tap that quietly throws it away is the last thing this
+       screen should offer. */
+    if (qn) qn.onclick = () => { qn.disabled = true; qn.textContent = 'Sending…'; flush(); };
   }
+  /* Messages used to be written into #msg at the top of the frame and the page was scrolled to
+     the top so they could be read. On a long screen — the board with two dozen deer on it — that
+     threw the reader back to the first card every time anything was saved. Joe, 8 November:
+     "randomly scrolls the user to the top of the page, quite annoying." It was not random; it was
+     every toast.
+
+     Now it lands in a fixed strip over the bottom of the viewport, visible wherever the person
+     happens to be, and NOTHING scrolls. Falls back to the old inline slot if the strip is missing,
+     so an older index.html still shows messages rather than swallowing them. */
+  let toastT = null;
   function toast(msg, ok) {
-    const el = document.getElementById('msg');
-    if (el) { el.innerHTML = '<div class="note ' + (ok ? 'ok' : 'bad') + '">' + esc(msg) + '</div>'; window.scrollTo(0, 0); }
+    const html = '<div class="note ' + (ok ? 'ok' : 'bad') + '">' + esc(msg) + '</div>';
+    const el = document.getElementById('toast');
+    if (!el) { const m = document.getElementById('msg'); if (m) m.innerHTML = html; return; }
+    el.innerHTML = html;
+    clearTimeout(toastT);
+    toastT = setTimeout(() => { if (el.innerHTML === html) el.innerHTML = ''; }, 6000);
   }
 
   // The deer as the server last sent them, with anything still waiting to send applied on top.
@@ -639,15 +742,25 @@
         (isMgr() ? big('fees', 'Cold storage', 'Hang-only deer · what is owed, what is past collection', 'alt') : '')
       : '';
 
-    /* "Tell someone" — the three tiles whose job is to reach another person, behind one tap so the
-       work above them is not buried. The count rides on the header, because a group that hides an
-       unread message is worse than no group. Need help is deliberately NOT in here: it is the
-       injury and food-safety-stop button and it stays one tap away, in the open. */
+    /* The tiles whose job is to reach another person, behind one tap so the work above them is not
+       buried. The count rides on the header, because a group that hides an unread message is worse
+       than no group.
+
+       Need help moved in here on Joe's instruction, 8 November, having been deliberately kept out
+       in the open until then. Two things carry the safety weight instead, and neither is
+       decoration: it is the FIRST tile in the group, and the button is labeled with it by name, so
+       nobody has to already know that "tell someone" is where help lives. A badge cannot do the job
+       here the way it does for messages and supplies — you need this button at the moment something
+       goes wrong, with no warning and nothing counted in advance — which is why the label carries
+       it. If this group is ever renamed, the word "help" has to survive the rename. */
     const tellBadge = (h.unread ? ' (' + h.unread + ' new)' : '') +
       (h.openSupplies ? ' · ' + h.openSupplies + ' to order' : '');
     const tell =
-      '<button class="morebtn" id="tellbtn"><span id="tellarrow">' + (st.tellOpen ? '▾' : '▸') + '</span> Tell someone' + tellBadge + '</button>' +
+      '<button class="morebtn" id="tellbtn"><span id="tellarrow">' + (st.tellOpen ? '▾' : '▸') + '</span> Need help, supplies, messages' + tellBadge + '</button>' +
       '<div id="tellbox"' + (st.tellOpen ? '' : ' hidden') + '>' +
+      /* First, always. See the note above: position and the button label are what replace being
+         out in the open. */
+      big('help', 'Need help', 'Sends a notification to everyone on the team', 'red') +
       big('supplies', 'Running low on something?', h.openSupplies
         ? h.openSupplies + (h.openSupplies === 1 ? ' thing waiting' : ' things waiting') + ' · tell the managers what we need'
         : 'Bags, gloves, sanitizer — two taps and the managers know', h.openSupplies ? 'red' : 'alt') +
@@ -674,7 +787,6 @@
       (preopFirst ? '' : big('preop', 'Pre-op sanitation' + (preop.done && !held ? ' ✓' : ''), preopSub, preopCls)) +
       big('opssop', 'Operational sanitation', 'Every line C, N or N/A. At least once a day') +
       big('closeout', 'End-of-shift close-out' + (closeout.done && !closeoutLeft ? ' \u2713' : ''), closeoutSub, closeoutCls) +
-      big('help', 'Need help', 'Sends a notification to everyone on the team', 'red') +
 
       tell +
       office +
@@ -982,7 +1094,9 @@
   function searchDeer(q) {
     const k = String(q || '').toLowerCase().replace(/\s+/g, '');
     if (k.length < 2) return [];
-    return deerList().filter(d => ['Hunter number', 'MassWildlife confirmation', 'Hunter name', 'Band']
+    /* 'Lug' included: standing in front of a grey lug, the question is "whose is this", and the
+       number on its side is the only way to ask it. */
+    return deerList().filter(d => ['Hunter number', 'MassWildlife confirmation', 'Hunter name', 'Band', 'Lug']
       .some(f => String(d[f] || '').toLowerCase().replace(/\s+/g, '').indexOf(k) >= 0))
       .sort((a, b) => (a.Status === 'Released' || a.Status === 'Voided') - (b.Status === 'Released' || b.Status === 'Voided') || hoursHung(b) - hoursHung(a));
   }
@@ -1003,6 +1117,8 @@
         '<span class="dwho"><b>' + esc(d['Hunter name'] || '—') + (w ? ' · ' + esc(w) : '') + '</b>' +
         '<span class="status">' + esc(stageOf(d)) + '</span>' +
         '<span class="status">' + esc(d['Hunter number'] || '') + ' · ' + esc(d['MassWildlife confirmation'] || 'no confirmation #') + ' · ' + esc(d.Type || '') +
+        // On the hit line, so "who is in lug 7" is answered without opening anything.
+        (d['Lug'] ? ' · <b>lug ' + esc(d['Lug']) + '</b>' : '') +
         (d.far ? ' · band ' + esc(d.Band) : '') + '</span></span>' + (d.far ? '</div>' : '</button>');
     }).join('') + (hits.length > 20 ? '<p class="status">' + (hits.length - 20) + ' more: type more of it.</p>' : '') + busy;
   }
@@ -1206,6 +1322,7 @@
         : owe && live && owe.settled
           ? '<div class="note ok">Custom processing paid: <b>$' + owe.paid + '</b>' +
             (d['Payment method'] ? ' · ' + esc(d['Payment method']) : '') + '</div>' : '') +
+      (d['Lug'] ? '<div class="note ok"><b>Lug ' + esc(d['Lug']) + '</b> — where this deer\'s trim went</div>' : '') +
       (d['First pack #'] && d['Last pack #'] ? '<div class="note ok"><b>Package numbers ' + esc(d['First pack #']) + '–' + esc(d['Last pack #']) + '</b> (MassWildlife)</div>'
         : d['First pack #'] ? '<div class="note warn" style="font-size:17px">Label the 2 lb packages in order from <b>' + esc(d['First pack #']) + '</b>: ' + esc(d['First pack #']) + ', ' + esc(('000' + (parseInt(d['First pack #'], 10) + 1)).slice(-4)) + ', …</div>' : '') +
       (d.Status === 'Released' ? '<div class="status">Released ' + esc(d.Released) + ' to ' + esc(d['Released to']) + '</div>' : '') +
@@ -1367,6 +1484,15 @@
         (d.Type === 'Donated' ? '<input id="f2" type="hidden" value="0"><input id="f3" type="hidden" value="0"></div><p class="status">Donated deer: all grind, to the state standard, on the MassWildlife label.</p>'
           : '<div><label>Intact cut packages</label><input id="f2" type="number" inputmode="numeric" min="0" step="1" value="0"></div>' +
           '<div><label>Intact cuts total (lb)</label><input id="f3" type="number" inputmode="decimal" min="0" step="0.1" value="0"></div></div>') +
+        /* Which numbered lug the trim went into. Asked at the bench, where the processor is
+           standing next to it and can read the number off the side — not reconstructed afterwards
+           from memory, which is how a deer's record came to say "in the third, untagged lug".
+           Required here, in the app, rather than refused by the server: the server takes the
+           finish either way, because bouncing the packages and the lot number back over a lug
+           number is how a record gets stranded and then thrown away. */
+        '<label for="flug">Lug number <span class="hint">the number on the lug this deer’s trim went into</span></label>' +
+        '<input id="flug" type="number" inputmode="numeric" min="1" step="1" max="' + esc(s.lugs || 24) +
+        '" value="' + esc(String(d['Lug'] || '').replace(/^0+/, '')) + '" placeholder="1 to ' + esc(s.lugs || 24) + '">' +
         '<div class="calc" id="calc"></div>' +
         (d.Type === 'Donated' && !d['First pack #'] ? '<div class="note bad">Tap <b>Get package numbers</b> before grinding, so the labels run in order.</div>' : '') +
         '<div class="note ' + (fatOn ? 'warn">Grind with <b>' + esc(fatPct) + '% pork fat</b>.' : 'ok">All-venison grind: <b>no pork fat</b>.') + '</div>' +
@@ -1392,7 +1518,12 @@
         '<label>Released to</label><select id="f1"><option value="">Choose…</option><option' + (isCold ? ' selected' : '') + '>Hunter pickup</option>' +
         (s.pantries || []).map(p => '<option>' + esc(p) + '</option>').join('') + '<option value="other">Other…</option></select>' +
         '<input id="f3" type="text" placeholder="Who?" hidden style="margin-top:8px">' +
-        '<label>Pounds out</label><input id="f2" type="number" inputmode="decimal" min="0" value="' + esc(d['Pounds packaged'] || '') + '">' +
+        /* Nothing was packaged, so there is nothing to weigh out: a cold-storage hunter is handed
+           back the whole carcass he brought in. Hidden rather than removed, so the release still
+           posts a figure and the field cannot come back as undefined. */
+        (isCold
+          ? '<input id="f2" type="hidden" value="0">'
+          : '<label>Pounds out</label><input id="f2" type="number" inputmode="decimal" min="0" value="' + esc(d['Pounds packaged'] || '') + '">') +
         /* Paid up front from 6 November, so by the time a private deer reaches this form the money
            is usually already in. Asking for it again is how a payment gets recorded twice. */
         (owe && owe.settled ? '<div class="note ok">Paid in full: <b>$' + owe.paid + '</b>' +
@@ -1559,7 +1690,13 @@
         if (!(Number(v('f4')) >= 0) || v('f4') === '') return err('Weigh the trim you discarded and enter it.');
         if (!document.getElementById('f5').checked) return err('Put the allergen sticker on every package, then tick the box. No package leaves without one.');
         if (d.Type === 'Private' && !document.getElementById('f6').checked) return err('Clear the grinder before the next hunter\'s deer goes through, then tick the box.');
-        queue('finish', { band: d.Band, groundPackages: c.pk, lastPack: byLast ? Math.round(num(v('f1'))) : '', intactPackages: ip, intactLb: c.il, total: c.total, allergen: true, woundTrim: true, trim: num(v('f4')), grinderCleared: d.Type === 'Private', noPork: !!(document.getElementById('f7') || {}).checked }, 'Finish ' + d.Band);
+        const maxLug = Number(s.lugs) || 24, lug = Math.round(num(v('flug')));
+        if (!(lug >= 1 && lug <= maxLug)) {
+          return err(v('flug').trim() === ''
+            ? 'Which lug did the trim go into? Read the number off the side of it.'
+            : 'There is no lug ' + esc(v('flug').trim()) + '. The lugs are numbered 1 to ' + maxLug + '.');
+        }
+        queue('finish', { band: d.Band, groundPackages: c.pk, lastPack: byLast ? Math.round(num(v('f1'))) : '', intactPackages: ip, intactLb: c.il, total: c.total, allergen: true, woundTrim: true, trim: num(v('f4')), lug: lug, grinderCleared: d.Type === 'Private', noPork: !!(document.getElementById('f7') || {}).checked }, 'Finish ' + d.Band);
       }
       if (kind === 'release') {
         const to = v('f1') === 'other' ? v('f3').trim() : v('f1');
