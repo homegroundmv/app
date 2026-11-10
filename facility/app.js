@@ -3411,6 +3411,21 @@
   }
 
   /* ---------- Martin's report: rows for his live MassWildlife sheet ---------- */
+  /* The guest share Martin sent Joe on 20 Oct. It is a Commonwealth SharePoint file: anyone
+     without a MassWildlife sign-in gets a wall, which is why the link says so on its face rather
+     than leaving somebody tapping it and wondering. Joe, 9 Nov: nobody knew what to do after
+     Copy rows, because the one hard step had no link behind it. */
+  const MARTIN_SHEET = 'https://massgov.sharepoint.com/:x:/r/sites/FWE-TEAMS-DFW-Wildlife/' +
+    'Shared%20Documents/Hunters%20Share%20the%20Harvest/HSH%20Logistics/Digital%20Data%20Forms/' +
+    '2026HomeGround_DataEntry.xlsx?d=w7b52c6aaa22641b7a6085371b21615c9' +
+    '&e=4%3Af75d6d83e75d44938d35d0b287b2580c&sharingv2=true&fromShare=true';
+  /* Managers only. Intake staff reach this screen and some of them \u2014 Ian \u2014 have no MassWildlife
+     sign-in at all, so the button would be a wall with their name on it. Joe, 9 Nov. */
+  const openSheetBtn = (top) => !isMgr() ? '' :
+    '<a class="btn ghost" href="' + MARTIN_SHEET + '" target="_blank" ' +
+    'rel="noopener" style="display:block;width:100%;margin-top:' + top + 'px;text-align:center;' +
+    'box-sizing:border-box;text-decoration:none">Open MassWildlife Report</a>';
+
   async function showMartin(data, note) {
     frame('martin', 'Donation report', '<div id="mbox"><p class="status">Loading…</p></div>');
     const box = document.getElementById('mbox');
@@ -3424,8 +3439,16 @@
       (n ? '<div style="overflow-x:auto"><table class="mtab"><tr>' + data.header.map(h => '<th>' + esc(h) + '</th>').join('') + '</tr>' +
         data.rows.map(r => '<tr>' + r.map(c => '<td>' + esc(c) + '</td>').join('') + '</tr>').join('') + '</table></div>' +
         (isViewer() ? '' :
-        '<ol class="status" style="padding-left:20px"><li>Tap <b>Copy rows</b>.</li><li>Open Martin\'s sheet, click the Customer ID cell of the first empty row, and paste.</li><li>Come back and tap <b>Mark as sent</b> so they aren\'t sent twice.</li></ol>' +
+        '<ol class="status" style="padding-left:20px">' +
+          '<li>Tap <b>Copy ' + n + ' row' + (n === 1 ? '' : 's') + '</b>.</li>' +
+          (isMgr()
+            ? '<li>Tap <b>Open MassWildlife Report</b> and sign in.</li>'
+            : '<li>Hand it to Joe or the facility manager. Opening MassWildlife’s report needs a state sign-in.</li>') +
+          '<li><b>Check before you paste.</b> Patrick enters deer from his own paper system, so some of these may already be on there. Find each Seal # in column E first. Any that are already present, leave out.</li>' +
+          '<li>Click the Customer ID cell of the first empty row and paste.</li>' +
+          '<li>Come back and tap <b>Mark as sent</b> so they aren’t sent twice.</li></ol>' +
         '<button class="submit" id="mcopy">Copy ' + n + ' row' + (n === 1 ? '' : 's') + '</button>' +
+        openSheetBtn(8) +
         (isMgr() ? '<button class="btn ghost" id="msent" style="width:100%;margin-top:8px">I\'ve pasted them: mark as sent</button>' : '<p class="status">A manager marks them as sent.</p>')) : '') +
       '<div id="mout"></div></div>' +
       // Martin, 1 Nov: a deer goes on his sheet as it comes in, and "the rest of the data" is
@@ -3445,8 +3468,9 @@
           '<b>H</b> Last Pack # <b>' + esc(x.lastPack || '\u2014') + '</b></div>' +
           (isMgr() ? '</label>' : '</div>') + '</div>';
         return '<div class="card"><b>Packaging to fill in (' + pk.length + ')</b>' +
-          '<p class="status">These are already on Martin\'s sheet from check-in. Find each row by its Customer ID and type the three values into columns <b>F</b>, <b>G</b> and <b>H</b>. Don\'t paste the whole row again — it would go in twice.</p>' +
+          '<p class="status">These are already on Martin\'s sheet from check-in. Find each row by its Seal # in column E and type the three values into columns <b>F</b>, <b>G</b> and <b>H</b>. Don\'t paste the whole row again — it would go in twice.</p>' +
           pk.map(row).join('') +
+          (isViewer() ? '' : openSheetBtn(8)) +
           (isViewer() ? '' : isMgr()
             ? '<button class="btn ghost" id="pksent" style="width:100%;margin-top:8px">I\'ve filled these in: mark them done</button>'
             : '<p class="status">A manager marks them as filled in.</p>') +
@@ -3524,7 +3548,7 @@
     });
     const cp = document.getElementById('mcopy');
     if (cp) cp.onclick = async () => {
-      try { await navigator.clipboard.writeText(tsv); out.innerHTML = '<div class="note ok">Copied. Paste into Martin\'s sheet at the Customer ID column of the first empty row.</div>'; }
+      try { await navigator.clipboard.writeText(tsv); out.innerHTML = '<div class="note ok">Copied. Check each Seal # against column E first — then paste at the Customer ID cell of the first empty row.</div>' + openSheetBtn(8); }
       catch (e) {
         out.innerHTML = '<p class="status">Copy didn\'t work on this device. Select the text below and copy it:</p><textarea id="mtsv" rows="4" style="width:100%">' + esc(tsv) + '</textarea>';
         const t = document.getElementById('mtsv'); t.focus(); t.select();
