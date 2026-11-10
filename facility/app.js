@@ -1883,12 +1883,13 @@
       /* A required field nobody can satisfy gets defeated, not obeyed: every donated row checked in
          before 4 November carries "Na, Na, MA 555555". A deer dropped off out of hours arrives
          without its hunter, so this will keep happening. Record the absence as a fact instead. */
-      '<label class="choice"><input id="adna" type="checkbox"> No address to hand <span class="hint">Held on Patrick’s sheet or coming later. Leaves it blank and flags it on the payment list, rather than putting something made up on a cheque.</span></label>' +
-      /* TFMV runs hunter payments through payroll, so a cheque waits on a W-4. Sending the link
-         while the hunter is standing at the counter beats chasing them for it in January. We send
-         the link and nothing else — the completed form goes to TFMV, never to us. */
-      '<label for="hem">Hunter email <span class="hint">so we can send the tax form Tick Free MV needs before paying</span></label><input id="hem" type="email" inputmode="email" autocomplete="email" autocapitalize="off">' +
-      '<label class="choice"><input id="taxf" type="checkbox" checked> Email them the tax form <span class="hint">A link to the W-4, copied to Tick Free MV. They fill it in and send it back to TFMV, not to us.</span></label></div>' +
+      '<label class="choice"><input id="adna" type="checkbox"> No address to hand <span class="hint">Held on Patrick’s sheet or coming later. Leaves it blank and flags it on the payment list, rather than putting something made up on a check.</span></label>' +
+      /* TFMV cannot pay a donating hunter until he has filed a W-9. Sending the link while he is
+         standing at the counter beats chasing him for it in January. We send the link and nothing
+         else — the completed form goes to TFMV, never to us, which matters more under a W-9 than it
+         did under the W-4 this used to send: a W-9 exists to collect a taxpayer ID number. */
+      '<label for="hem">Hunter email <span class="hint">so we can send the W-9 Tick Free MV needs before paying</span></label><input id="hem" type="email" inputmode="email" autocomplete="email" autocapitalize="off">' +
+      '<label class="choice"><input id="taxf" type="checkbox" checked> Email them the W-9 <span class="hint">A link to the form, copied to Tick Free MV. They fill it in and send it back to TFMV, not to us.</span></label></div>' +
       cutsHtml() +
       // Weighed at the door, hide and head on. Not the carcass weight, which is taken at the
       // hanging scale after skinning: two different numbers that must never be mistaken for each
@@ -3622,26 +3623,26 @@
             : '<p class="status">A manager marks them as filled in.</p>') +
           '<div id="pkout"></div></div>';
       })() +
-      /* The W-4 chase, moved here on 7 November when Hunter payments was retired. TFMV cannot pay
+      /* The W-9 chase, moved here on 7 November when Hunter payments was retired. TFMV cannot pay
          a donating hunter until he has filed one, and the form goes automatically at check-in —
          but only when an email was taken, and a deer dropped off out of hours arrives without its
          hunter. So the ones nobody can email are listed separately: that is a phone call, not a
          button, and lumping the two together is how the second kind never gets done. */
       (() => {
         const tx = data.tax || [];
-        if (!tx.length) return '<div class="card"><b>Tax forms</b><p class="status">Every donating hunter has had the W-4. Nothing to chase.</p></div>';
+        if (!tx.length) return '<div class="card"><b>Tax forms</b><p class="status">Every donating hunter has had the W-9. Nothing to chase.</p></div>';
         const can = tx.filter(x => x.email), cant = tx.filter(x => !x.email);
         /* One line a hunter, counted in hunters. It counted deer until 10 November, which put a
            man with nine donated deer on the list nine times and turned 24 phone calls into 44.
            The number in the heading is the number of people somebody has to deal with. */
         const deerNote = x => (x.deer > 1 ? x.deer + ' deer' : esc(x.bands && x.bands[0] || x.band));
-        return '<div class="card"><b>W-4 not sent (' + tx.length +
+        return '<div class="card"><b>W-9 not sent (' + tx.length +
           (tx.length === 1 ? ' hunter' : ' hunters') + ')</b>' +
           '<p class="status">Tick Free MV cannot pay a hunter until this is filed. One form covers the season, so sending it clears every deer of theirs at once.</p>' +
           (can.length
             ? can.map(x => '<div class="trow"><div><b>' + esc(x.hunter || 'no name') + '</b>' +
                 '<div class="status">' + deerNote(x) + ' · since ' + esc(x.dateIn) + ' · ' + esc(x.email) + '</div></div>' +
-                /* Blake sends the W-4 for TFMV, so a hunter can already have it without anything
+                /* Blake sends the W-9 for TFMV, so a hunter can already have it without anything
                    on our side saying so, and the chase list was naming people who had had it
                    (Joe, 7 November). Two taps, because the rows are a list of names and a mis-tap
                    on the wrong one takes a hunter off the chase who still needs chasing. */
@@ -3675,7 +3676,7 @@
            nine of them drops nine rows on the next load, and a message that said only "sent"
            would leave somebody wondering whether to send it again. */
         const cl = Number(r.cleared || 0);
-        if (tout) tout.innerHTML = '<div class="note ok">W-4 sent to ' + esc(r.to || 'the hunter') + '.' +
+        if (tout) tout.innerHTML = '<div class="note ok">W-9 sent to ' + esc(r.to || 'the hunter') + '.' +
           (cl > 1 ? ' That covers all ' + cl + ' of their donated deer.' : '') + '</div>';
       } catch (e) {
         b.disabled = false; b.textContent = 'Send it';
@@ -3689,7 +3690,7 @@
       if (b.dataset.armed !== '1') {
         $app.querySelectorAll('[data-taxdone]').forEach(o => { o.dataset.armed = '0'; o.textContent = 'Already sent'; });
         b.dataset.armed = '1'; b.textContent = 'Sure?';
-        if (tout) tout.innerHTML = '<div class="note warn">Tap again to take this hunter off the chase. Only do it if you know they have had the W-4 — from Blake, or at the counter.</div>';
+        if (tout) tout.innerHTML = '<div class="note warn">Tap again to take this hunter off the chase. Only do it if you know they have had the W-9 — from Blake, or at the counter.</div>';
         return;
       }
       b.disabled = true; b.textContent = 'Marking…';
@@ -3850,9 +3851,9 @@
   }
 
   /* Hunter payments was a screen here: what TFMV owed each donating hunter, and whether the
-     cheque had gone out. Retired 7 November. Home Ground does not make those payments and has
+     check had gone out. Retired 7 November. Home Ground does not make those payments and has
      no sight of when TFMV makes them, so the status column was always a guess. The one part
-     worth keeping — chasing the W-4 TFMV needs before it can pay anybody — moved onto the
+     worth keeping — chasing the W-9 TFMV needs before it can pay anybody — moved onto the
      Donation report, which is the screen that already faces Martin and TFMV. */
 
   /* Running low. Anyone raises one; managers mark it ordered or received. Deliberately asks for
@@ -4165,7 +4166,7 @@
 
   /* End-of-shift close-out. The third use of lineRecord. Done / No / N/A rather than C / N / N/A,
      because this is a list of jobs rather than a judgement of conditions, and a line marked No has
-     to say why: waste or a drain left overnight is the thing the pest control programme exists to
+     to say why: waste or a drain left overnight is the thing the pest control program exists to
      prevent, so "no" on its own is not a record of anything. */
   function showCloseOut() {
     lineRecord({
