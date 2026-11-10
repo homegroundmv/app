@@ -3631,11 +3631,16 @@
         const tx = data.tax || [];
         if (!tx.length) return '<div class="card"><b>Tax forms</b><p class="status">Every donating hunter has had the W-4. Nothing to chase.</p></div>';
         const can = tx.filter(x => x.email), cant = tx.filter(x => !x.email);
-        return '<div class="card"><b>W-4 not sent (' + tx.length + ')</b>' +
-          '<p class="status">Tick Free MV cannot pay a hunter until this is filed. One form covers the season.</p>' +
+        /* One line a hunter, counted in hunters. It counted deer until 10 November, which put a
+           man with nine donated deer on the list nine times and turned 24 phone calls into 44.
+           The number in the heading is the number of people somebody has to deal with. */
+        const deerNote = x => (x.deer > 1 ? x.deer + ' deer' : esc(x.bands && x.bands[0] || x.band));
+        return '<div class="card"><b>W-4 not sent (' + tx.length +
+          (tx.length === 1 ? ' hunter' : ' hunters') + ')</b>' +
+          '<p class="status">Tick Free MV cannot pay a hunter until this is filed. One form covers the season, so sending it clears every deer of theirs at once.</p>' +
           (can.length
             ? can.map(x => '<div class="trow"><div><b>' + esc(x.hunter || 'no name') + '</b>' +
-                '<div class="status">' + esc(x.band) + ' · in ' + esc(x.dateIn) + ' · ' + esc(x.email) + '</div></div>' +
+                '<div class="status">' + deerNote(x) + ' · since ' + esc(x.dateIn) + ' · ' + esc(x.email) + '</div></div>' +
                 /* Blake sends the W-4 for TFMV, so a hunter can already have it without anything
                    on our side saying so, and the chase list was naming people who had had it
                    (Joe, 7 November). Two taps, because the rows are a list of names and a mis-tap
@@ -3647,7 +3652,7 @@
             ? '<div class="note warn" style="margin-top:8px"><b>' + cant.length +
               (cant.length === 1 ? ' hunter has' : ' hunters have') + ' no email on file.</b> Nothing can be sent to them — ' +
               'ring them, or catch them at the counter, and put the address on the record with <b>Correct the record</b>.' +
-              cant.map(x => '<div class="status">' + esc(x.hunter || 'no name') + ' · ' + esc(x.band) +
+              cant.map(x => '<div class="status">' + esc(x.hunter || 'no name') + ' · ' + deerNote(x) +
                 (x.phone ? ' · ' + esc(x.phone) : ' · no phone either') + '</div>').join('') + '</div>'
             : '') +
           '<div id="taxout"></div></div>';
@@ -3666,7 +3671,12 @@
       try {
         const r = await call({ action: 'taxform', band: b.dataset.tax, clientId: 'tax-' + b.dataset.tax + '-' + Date.now() });
         b.textContent = 'Sent';
-        if (tout) tout.innerHTML = '<div class="note ok">W-4 sent to ' + esc(r.to || 'the hunter') + '.</div>';
+        /* Say how many deer it took off the chase. One form covers the season, so a hunter with
+           nine of them drops nine rows on the next load, and a message that said only "sent"
+           would leave somebody wondering whether to send it again. */
+        const cl = Number(r.cleared || 0);
+        if (tout) tout.innerHTML = '<div class="note ok">W-4 sent to ' + esc(r.to || 'the hunter') + '.' +
+          (cl > 1 ? ' That covers all ' + cl + ' of their donated deer.' : '') + '</div>';
       } catch (e) {
         b.disabled = false; b.textContent = 'Send it';
         if (tout) tout.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal.' : e.message) + '</div>';
@@ -3687,7 +3697,9 @@
         const r = await call({ action: 'taxsent', band: b.dataset.taxdone });
         b.textContent = 'Marked';
         const row = b.closest('.trow'); if (row) { const s0 = row.querySelector('[data-tax]'); if (s0) s0.remove(); }
-        if (tout) tout.innerHTML = '<div class="note ok">' + esc(r.to || 'That hunter') + ' taken off the chase — marked as already having the form.</div>';
+        const cl2 = Number(r.cleared || 0);
+        if (tout) tout.innerHTML = '<div class="note ok">' + esc(r.to || 'That hunter') + ' taken off the chase — marked as already having the form.' +
+          (cl2 > 1 ? ' All ' + cl2 + ' of their donated deer.' : '') + '</div>';
       } catch (e) {
         b.disabled = false; b.dataset.armed = '0'; b.textContent = 'Already sent';
         if (tout) tout.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal.' : e.message) + '</div>';
