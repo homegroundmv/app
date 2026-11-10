@@ -1258,10 +1258,19 @@
     const cls = d.Status !== 'Hanging' ? '' : isCold ? (h >= (s.coldDays || 5) * 24 ? ' amber' : '')
       : (h >= s.maxHold ? ' red' : h >= s.startBy ? ' amber' : '');
     const mineOrMgr = d['Processor number'] === st.staff.number || isMgr();
-    const act = isViewer() ? '' : d.Status === 'Hanging' ? (isCold ? '<button class="btn" data-a="release">Hunter collected it</button>'
+    /* The counter: taking a deer in, taking money for one, handing one back. Managers and intake
+       only (Joe, 9 Nov). Until v76 the buttons were drawn for every processor and the backend
+       accepted the action, so the rule lived in the order of the home tiles and nowhere else.
+       The server is the gate; this only stops somebody tapping a button that is going to refuse
+       them with a hunter standing there. */
+    const counter = atDoor();
+    const getSomeone = what => '<div class="note warn">' + esc(what) +
+      ' is done by a manager or whoever is on intake. Get Joe, the facility manager or the person ' +
+      'on the door — or tap <b>Need help</b> if nobody is here.</div>';
+    const act = isViewer() ? '' : d.Status === 'Hanging' ? (isCold ? (counter ? '<button class="btn" data-a="release">Hunter collected it</button>' : getSomeone('Handing a deer back'))
       : (d['Skinner'] ? '' : '<button class="btn alt" data-a="skin">Skin it</button> ') + '<button class="btn" data-a="start">Start processing</button>')
       : d.Status === 'Processing' ? (mineOrMgr ? (d.Type === 'Donated' && !d['First pack #'] ? '<button class="btn alt" data-a="grind">Get package numbers</button> ' : '') + '<button class="btn" data-a="finish">Finished</button>' : '')
-      : d.Status === 'Ready' ? '<button class="btn alt" data-a="release">Release</button>' : '';
+      : d.Status === 'Ready' ? (counter ? '<button class="btn alt" data-a="release">Release</button>' : getSomeone('Releasing a deer')) : '';
     // A duplicate or a mistaken entry is not deleted, it is voided: the row stays and says so.
     const moveBtn = !isViewer() && !isCold && (d.Status === 'Hanging' || d.Status === 'Processing')
       ? ' <button class="btn ghost" data-a="move">Move to…</button>' : '';
@@ -1283,7 +1292,9 @@
     // Money on a private deer, offered wherever the deer is: at the door, on the hook, on the
     // bench. It is first in the row because it is the thing that unblocks everything after it.
     const payBtn = (!isViewer() && owe && !owe.settled && live)
-      ? '<button class="btn alt" data-a="pay">Take $' + owe.owing + '</button> ' : '';
+      ? (counter ? '<button class="btn alt" data-a="pay">Take $' + owe.owing + '</button> '
+                 : '<div class="note warn">$' + owe.owing + ' is owing. A manager or whoever is on intake takes the payment — don’t take cash or a card yourself.</div>')
+      : '';
     return '<div class="card' + cls + (d.Type === 'Donated' ? ' donated' : '') + '" data-band="' + esc(d.Band) + '">' +
       '<div class="deer"><div><span class="band">' + esc(d.Band) + '</span> ' +
       '<span class="tag ' + (d.Type === 'Donated' ? 'don">DONATED' : 'prv">' + (isCold ? 'COLD STORAGE' : 'PRIVATE')) + '</span>' + (d['DDP deer'] === 'Yes' ? '<span class="tag">DDP</span>' : '') +
@@ -1801,6 +1812,19 @@
   function showIntake() {
     const s = S(), now = new Date();
     const todayBand = bandColour(new Date());
+    /* Stop here rather than at the end. The backend refuses a check-in from a processor (v76), and
+       finding that out after filling the whole form, with a hunter at the counter, is the worst
+       possible place to learn it. */
+    if (!isViewer() && !atDoor()) {
+      frame('intake', 'Check in a deer',
+        '<div class="note warn" style="font-size:17px"><b>Checking a deer in is done by a manager or whoever is on intake.</b>' +
+        '<br><br>It takes the hunter’s licence details and often his money, so it stays with Joe, the facility ' +
+        'manager, or the person on the door that day.</div>' +
+        '<button class="btn" data-go2="help">Need help — nobody is here</button> ' +
+        '<button class="btn ghost" data-go2="board">Back to the board</button>');
+      $app.querySelectorAll('[data-go2]').forEach(b => { b.onclick = () => GO[b.dataset.go2](); });
+      return;
+    }
     frame('intake', 'Check in a deer',
       (todayBand ? '<div class="note ok" style="font-size:17px">' + swatch(todayBand) + ' today. Make sure the <b>' + esc(todayBand) + '</b> roll is in the band printer.</div>' : '') +
       '<div class="card">' +
