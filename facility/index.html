@@ -55,6 +55,14 @@
   #toast { position: fixed; left: 12px; right: 12px; bottom: 16px; z-index: 60; pointer-events: none; }
   #toast:empty { display: none; }
   #toast .note { margin: 0; box-shadow: 0 6px 24px rgba(0, 0, 0, .28); }
+  /* "A newer version is ready." Same corner as the toast and for the same reason: the person is
+     told where they already are. It used to be a banner at the top with a scroll to match, which
+     threw whoever was mid-board back to the first card on every deploy (Joe, 9 Nov). */
+  #swbar { position: fixed; left: 12px; right: 12px; bottom: 16px; z-index: 70;
+    background: #fff; border: 1px solid var(--green); border-radius: 12px; padding: 12px 14px;
+    font-size: 15px; line-height: 1.35; box-shadow: 0 6px 24px rgba(0, 0, 0, .28); }
+  #swbar .swrow { display: flex; gap: 8px; margin-top: 10px; }
+  #swbar .swrow .btn { flex: 1; padding: 10px 14px; font-size: 15px; }
   .note.warn { background: var(--warn-bg); color: var(--warn); }
   .note.bad { background: var(--bad-bg); color: var(--bad); }
   .note.ok { background: var(--ok-bg); color: var(--green-dark); }

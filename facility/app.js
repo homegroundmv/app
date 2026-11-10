@@ -3581,6 +3581,22 @@
         openSheetBtn(8) +
         (isMgr() ? '<button class="btn ghost" id="msent" style="width:100%;margin-top:8px">I\'ve pasted them: mark as sent</button>' : '<p class="status">A manager marks them as sent.</p>')) : '') +
       '<div id="mout"></div></div>' +
+      /* Check against his sheet, before anything is pasted into it. On 9 November a hand
+         reconciliation found TWELVE of sixteen deer our tab showed as never sent were already on
+         his, entered by Patrick from his own paper system — a block paste would have put twelve
+         duplicates on a state record.
+
+         The app cannot read his SharePoint file and does not need to: the seal numbers are the
+         whole comparison, and Joe can copy a column out of Excel even on a phone. It is pasting
+         IN that is impossible there, not out. */
+      (isMgr() ? '<div class="card"><b>Check against Martin’s sheet first</b>' +
+        '<p class="status">Patrick enters deer into that sheet too, so some of ours are already on ' +
+        'it. In his sheet press <b>Ctrl+A</b> to select everything, copy, and paste it below. ' +
+        'Nothing on his sheet is sent or changed by checking — and the paste is kept, word for ' +
+        'word, as a record of how his sheet stood before anybody typed into it.</p>' +
+        '<textarea id="rcin" rows="4" style="width:100%" placeholder="Paste his whole sheet here"></textarea>' +
+        '<button class="btn alt" id="rcgo" style="width:100%;margin-top:8px">Compare</button>' +
+        '<div id="rcout"></div></div>' : '') +
       // Martin, 1 Nov: a deer goes on his sheet as it comes in, and "the rest of the data" is
       // filled in after packaging. So the second pass is three cells on a row that is already
       // there — F, G and H — not a row to paste. Without this card a deer sent at intake simply
@@ -3718,6 +3734,80 @@
         else if (rebuilt === false) o.insertAdjacentHTML('beforeend', '<p class="status">The rows copied, but our own sheet did not get tidied — run it from the sheet’s Home Ground menu when you are next in there.</p>');
       }, 4000);
     };
+    /* The comparison. Four answers come back and the order they are shown in is the order they
+       matter: what actually needs sending, what is already there and should stop being offered,
+       what we believe went across and is NOT on his sheet, and what is on his and not ours. The
+       third one is the answer nobody was checking for, and the only one that cannot be noticed by
+       reading either sheet on its own. */
+    const rcgo = document.getElementById('rcgo');
+    if (rcgo) rcgo.onclick = async () => {
+      const inp = document.getElementById('rcin'), rout = document.getElementById('rcout');
+      const raw = (inp && inp.value || '').trim();
+      if (!raw) { rout.innerHTML = '<div class="note warn">Paste his Seal # column in first.</div>'; return; }
+      rcgo.disabled = true; rcgo.textContent = 'Comparing…';
+      try {
+        const r = await call({ action: 'reconcile', seals: raw });
+        const rows = (list, extra) => list.map(x => '<div class="trow"><div><b>' + esc(x.seal || '(no seal)') + '</b> ' +
+          esc(x.hunter || '') + '<div class="status">in ' + esc(x.dateIn) + ' · ' + esc(x.band) +
+          (x.customerId ? ' · ID ' + esc(x.customerId) : ' · no Customer ID') +
+          (x.note ? ' · ' + esc(x.note) : '') + '</div></div></div>').join('') + (extra || '');
+        /* The snapshot line leads, because it is the thing that is true before anything else is
+           decided: a copy of his sheet is now on the record. */
+        let h = (r.snapshot && !r.snapshot.failed
+          ? '<div class="note ok" style="margin-top:10px"><b>His sheet is saved.</b> ' +
+            r.snapshot.rows + ' row' + (r.snapshot.rows === 1 ? '' : 's') + ' kept word for word at ' +
+            esc(r.snapshot.at) + ', in the <b>Martin Snapshots</b> tab — so anything changed on his ' +
+            'sheet from here can be put back.</div>'
+          : '<div class="note bad"><b>The snapshot did NOT save</b>' +
+            (r.snapshot && r.snapshot.failed ? ' (' + esc(r.snapshot.failed) + ')' : '') +
+            '. Nothing has been changed on his sheet, but there is no record of how it stood. ' +
+            'Copy it somewhere yourself before typing into it.</div>') +
+          '<div class="note ok" style="margin-top:10px">Compared <b>' + r.counts.ours +
+          '</b> donated deer of ours against <b>' + r.counts.theirs + '</b> seal numbers on his sheet.' +
+          (r.counts.ignored ? ' ' + r.counts.ignored + ' pasted line' + (r.counts.ignored === 1 ? '' : 's') +
+            ' did not look like a seal number and ' + (r.counts.ignored === 1 ? 'was' : 'were') + ' ignored (' +
+            esc((r.ignoredSample || []).join(', ')) + ').' : '') + '</div>';
+
+        h += r.missing.length
+          ? '<div class="card"><b>' + r.missing.length + ' to send — not on his sheet</b>' +
+            '<p class="status">These are the ones to paste. Everything else below is already handled.</p>' + rows(r.missing) + '</div>'
+          : '<div class="card"><b>Nothing to send</b><p class="status">Every donated deer we hold is on his sheet.</p></div>';
+
+        if (r.already.length) h += '<div class="card"><b>' + r.already.length +
+          ' already on his sheet, but we never marked them sent</b>' +
+          '<p class="status">Someone else entered these — Patrick keeps his own paper system. ' +
+          'Sending them again would duplicate them on a state record. Mark them so they stop being offered.</p>' +
+          rows(r.already) + '<button class="btn" id="rcmark" style="width:100%;margin-top:8px">Mark these ' +
+          r.already.length + ' as already sent</button></div>';
+
+        if (r.ghost.length) h += '<div class="card"><b>' + r.ghost.length +
+          ' we think went across and are NOT on his sheet</b>' +
+          '<p class="status">We marked these sent and they are not there. Either the row never landed, ' +
+          'or a seal number differs between the two sheets. Worth looking at one by one — nothing here ' +
+          'changes them.</p>' + rows(r.ghost) + '</div>';
+
+        if (r.dupeTheirs.length) h += '<div class="note bad">His sheet carries the same seal twice: <b>' +
+          esc(r.dupeTheirs.join(', ')) + '</b>. That is a duplicate on a state record.</div>';
+        if (r.dupeOurs.length) h += '<div class="note bad">We hold the same seal twice: <b>' +
+          esc(r.dupeOurs.map(x => x.seal + ' (' + x.band + ')').join(', ')) + '</b>.</div>';
+
+        if (r.extra.length) h += '<div class="card"><b>' + r.extra.length +
+          ' on his sheet that we do not hold</b><p class="status">Patrick’s own entries, most likely. ' +
+          'Leave them alone — but a seal here that should be one of ours means it was mis-keyed on one ' +
+          'side, and his is the one to trust.</p><p class="status">' + esc(r.extra.join(', ')) + '</p></div>';
+
+        rout.innerHTML = h;
+        const mk = document.getElementById('rcmark');
+        if (mk) mk.onclick = async () => {
+          mk.disabled = true; mk.textContent = 'Marking…';
+          try { const res = await call({ action: 'martinsent', bands: r.alreadyBands }); showMartin(res, res.marked + ' marked as already on his sheet.'); }
+          catch (e) { mk.disabled = false; mk.textContent = 'Mark these as already sent'; toast(e.offline ? 'Needs signal.' : e.message); }
+        };
+      } catch (e) {
+        rout.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Comparing needs signal.' : e.message) + '</div>';
+      } finally { rcgo.disabled = false; rcgo.textContent = 'Compare'; }
+    };
+
     const ms = document.getElementById('msent');
     if (ms) ms.onclick = async () => {
       ms.disabled = true;
@@ -4280,16 +4370,30 @@
       setInterval(check, 15 * 60000);
     }).catch(() => {});
     let reloading = false;
+    /* This used to write the notice into #msg at the top of the screen and then scrollTo(0, 0) to
+       be sure it was seen — which threw whoever was reading down the board straight back to the
+       first card, every single time a version shipped. Six shipped in one evening and Joe met it
+       six times (9 Nov): "the glitch that sends me to the top of the screen is back."
+
+       Nothing now moves the page. The notice comes up as a bar across the bottom, where it can be
+       read without going anywhere, and it waits: a reload mid-form would lose what is typed, so
+       the decision stays the person's. Not now dismisses it; the new version is already waiting
+       and arrives on the next ordinary reload either way. */
     navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (reloading) return;
-      const el = document.getElementById('msg');
-      if (!el) { return; }
-      el.innerHTML = '<div class="note ok"><b>A newer version of the app is ready.</b> ' +
-        'Nothing is lost by reloading — anything waiting to send goes with it.' +
-        '<button class="btn" id="swgo" style="margin-top:8px">Reload now</button></div>';
-      const b = document.getElementById('swgo');
-      if (b) b.onclick = () => { reloading = true; location.reload(); };
-      window.scrollTo(0, 0);
+      if (reloading || document.getElementById('swbar')) return;
+      const bar = document.createElement('div');
+      bar.id = 'swbar';
+      bar.innerHTML = '<div><b>A newer version of the app is ready.</b> Nothing is lost by ' +
+        'reloading — anything waiting to send goes with it.</div>' +
+        '<div class="swrow"><button class="btn" id="swgo">Reload now</button>' +
+        '<button class="btn ghost" id="swno">Not now</button></div>';
+      document.body.appendChild(bar);
+      // Lift the toast clear so a message and this bar never sit on top of each other.
+      const t = document.getElementById('toast');
+      if (t) t.style.bottom = '150px';
+      const close = () => { bar.remove(); if (t) t.style.bottom = ''; };
+      document.getElementById('swgo').onclick = () => { reloading = true; location.reload(); };
+      document.getElementById('swno').onclick = close;
     });
   }
   /* Square may have just reopened us with a payment result. Read it before anything draws, so a
