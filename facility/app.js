@@ -1862,6 +1862,18 @@
       '<div><label for="ln">Hunter last name</label><input id="ln" type="text" autocomplete="off"></div>' +
       '<div><label for="lic">MassWildlife customer ID <span class="hint">5 to 8 digits</span></label><input id="lic" type="text" inputmode="numeric" maxlength="8" pattern="[0-9]*"></div>' +
       '<div><label for="ph">Hunter phone</label><input id="ph" type="tel"></div>' +
+      /* UP HERE, beside the phone, and asked for EVERY deer (Joe, 10 November: "I just noticed
+         we're not collecting an email address from hunters during check-in").
+
+         The field was not missing — it was last in the hidden address block, below the mailing
+         address and the "No address to hand" tickbox, so whoever was at the door never reached it.
+         22 of this season's 24 donating hunters have no email on file; the three Patrick took in
+         properly on 9 November all do. The field worked, the placement did not.
+
+         And it is no longer donated-only. An address is worth having on any deer: the day-5 cold
+         storage reminder is emailed, and a private hunter gets told when his meat is ready. Asking
+         only on donated deer meant losing it on the two kinds where somebody is coming back. */
+      '<div><label for="hem">Hunter email <span class="hint">the W-9 goes here, and collection reminders</span></label><input id="hem" type="email" inputmode="email" autocomplete="email" autocapitalize="off"></div>' +
       '<div><label for="cf">MassWildlife confirmation number</label><input id="cf" type="text"></div>' +
       '<div><label for="sd">Date of the shot <span class="hint">the Home Ground ID is built from it</span></label><input id="sd" type="date" value="' + isoDate(now) + '" max="' + isoDate(now) + '"></div>' +
       '</div>' +
@@ -1888,8 +1900,14 @@
          standing at the counter beats chasing him for it in January. We send the link and nothing
          else — the completed form goes to TFMV, never to us, which matters more under a W-9 than it
          did under the W-4 this used to send: a W-9 exists to collect a taxpayer ID number. */
-      '<label for="hem">Hunter email <span class="hint">so we can send the W-9 Tick Free MV needs before paying</span></label><input id="hem" type="email" inputmode="email" autocomplete="email" autocapitalize="off">' +
-      '<label class="choice"><input id="taxf" type="checkbox" checked> Email them the W-9 <span class="hint">A link to the form, copied to Tick Free MV. They fill it in and send it back to TFMV, not to us.</span></label></div>' +
+      /* The hunter's own word, at the counter (Joe, 10 November). Three things can take him off the
+         W-9 chase — we emailed it, Blake already handled it, or he says it is done — and they are
+         not the same fact. This one is the weakest evidence of the three, so the record says whose
+         word it was rather than just that the form exists.
+         Ticking it stops the email: sending a link to a man who has just said he filed the form is
+         the app contradicting him. */
+      '<label class="choice"><input id="taxfiled" type="checkbox"> Hunter confirms their W-9 is filled and submitted to Tick Free MV <span class="hint">Takes them off the chase and records that they said so, at check-in. No form is emailed.</span></label>' +
+      '<label class="choice"><input id="taxf" type="checkbox" checked> Email them the W-9 <span class="hint">A link to the form, copied to Tick Free MV. They fill it in and send it back to TFMV, not to us. Needs the email address above.</span></label></div>' +
       cutsHtml() +
       // Weighed at the door, hide and head on. Not the carcass weight, which is taken at the
       // hanging scale after skinning: two different numbers that must never be mistaken for each
@@ -2033,6 +2051,15 @@
       const box = document.getElementById('arrbox'), arr = document.getElementById('arr');
       box.hidden = !e.target.checked;
       if (e.target.checked && !arr.value) arr.value = (v('sd') || isoDate(now)) + 'T12:00';
+    };
+    /* The two W-9 tickboxes are alternatives, so the screen says so rather than leaving somebody to
+       work out that a man who has filed the form does not also need a link to it. */
+    const tfl = document.getElementById('taxfiled'), tfe = document.getElementById('taxf');
+    if (tfl && tfe) tfl.onchange = () => {
+      tfe.disabled = tfl.checked;
+      if (tfl.checked) tfe.checked = false; else tfe.checked = true;
+      const lab = tfe.closest('.choice');
+      if (lab) lab.style.opacity = tfl.checked ? '0.5' : '';
     };
     /* Custom processing is settled at the door from 6 November. The deer is still taken either
        way — a hunter is never turned round over money — but it hangs rather than going on the
@@ -2182,8 +2209,14 @@
         cuts: type === 'Private' ? readCuts() : '',
         address: (type === 'Donated' && !noAddr) ? v('ad1') + ', ' + v('adt') + ', ' + (v('ads') || 'MA').toUpperCase() + ' ' + v('adz') : '',
         hunterEmail: v('hem').trim(),
-        // Only meaningful on a donated deer, and only if we actually have somewhere to send it.
-        sendTaxForm: type === 'Donated' && !!(document.getElementById('taxf') || {}).checked && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v('hem').trim()),
+        // He told us at the counter that it is already filed. Donated only — nothing else is paid
+        // by TFMV, so there is no form to have filed.
+        taxFiled: type === 'Donated' && !!(document.getElementById('taxfiled') || {}).checked,
+        // Only meaningful on a donated deer, if we have somewhere to send it, and if he has not
+        // just said it is already done.
+        sendTaxForm: type === 'Donated' && !!(document.getElementById('taxf') || {}).checked &&
+          !(document.getElementById('taxfiled') || {}).checked &&
+          /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v('hem').trim()),
         shotDate: v('sd'),
         arrived: document.getElementById('earlier').checked ? v('arr') : '',
         dressed4h: document.getElementById('fd').checked, ddp: document.getElementById('ddp').checked, skinned: false,
@@ -3643,8 +3676,8 @@
            man with nine donated deer on the list nine times and turned 24 phone calls into 44.
            The number in the heading is the number of people somebody has to deal with. */
         const deerNote = x => (x.deer > 1 ? x.deer + ' deer' : esc(x.bands && x.bands[0] || x.band));
-        return '<div class="card"><b>W-9 not sent (' + tx.length +
-          (tx.length === 1 ? ' hunter' : ' hunters') + ')</b>' +
+        return '<div class="card" id="taxcard"><b>W-9 not sent (<span id="txn">' + tx.length +
+          (tx.length === 1 ? ' hunter' : ' hunters') + '</span>)</b>' +
           '<p class="status">Tick Free MV cannot pay a hunter until this is filed. One form covers the season, so sending it clears every deer of theirs at once.</p>' +
           (can.length
             ? can.map(x => '<div class="trow"><div><b>' + esc(x.hunter || 'no name') + '</b>' +
@@ -3673,18 +3706,43 @@
     wireSheetBtns(box);
     // Each hunter is sent his own form, one tap at a time, so a failure names the hunter it
     // failed for rather than leaving a batch half done with no way to tell which half.
+    /* A hunter who has had the form comes OFF the list, there and then (Joe, 10 November: "can we
+       have them removed from the screen after the sends have gone through? page can get cluttered
+       otherwise"). It used to leave the row sitting there reading "Sent", which on a long list is
+       indistinguishable from one still to do, and the count in the heading stayed wrong until the
+       screen was reloaded.
+
+       Only on a CONFIRMED send. A row removed optimistically is a hunter nobody chases again. */
+    const taxDrop = (btn, note) => {
+      const row = btn.closest('.trow');
+      if (row) row.remove();
+      const n = document.getElementById('txn');
+      if (n) {
+        // What is left is what is still on screen: the rows with buttons plus the no-email list.
+        const left = $app.querySelectorAll('#taxcard .trow').length +
+                     $app.querySelectorAll('#taxcard .note.warn .status').length;
+        n.textContent = left + (left === 1 ? ' hunter' : ' hunters');
+      }
+      const card = document.getElementById('taxcard');
+      // Nobody left at all — say so rather than leaving a heading over an empty card.
+      if (card && !card.querySelectorAll('.trow').length && !card.querySelector('.note.warn')) {
+        card.innerHTML = '<b>Tax forms</b><p class="status">Every donating hunter has had the W-9. Nothing to chase.</p>' +
+          '<div class="note ok">' + note + '</div>';
+      }
+    };
     $app.querySelectorAll('[data-tax]').forEach(b => b.onclick = async () => {
       const tout = document.getElementById('taxout');
       b.disabled = true; b.textContent = 'Sending…';
       try {
         const r = await call({ action: 'taxform', band: b.dataset.tax, clientId: 'tax-' + b.dataset.tax + '-' + Date.now() });
-        b.textContent = 'Sent';
         /* Say how many deer it took off the chase. One form covers the season, so a hunter with
            nine of them drops nine rows on the next load, and a message that said only "sent"
            would leave somebody wondering whether to send it again. */
         const cl = Number(r.cleared || 0);
-        if (tout) tout.innerHTML = '<div class="note ok">W-9 sent to ' + esc(r.to || 'the hunter') + '.' +
-          (cl > 1 ? ' That covers all ' + cl + ' of their donated deer.' : '') + '</div>';
+        const msg = 'W-9 sent to ' + esc(r.to || 'the hunter') + '.' +
+          (cl > 1 ? ' That covers all ' + cl + ' of their donated deer.' : '');
+        taxDrop(b, msg);
+        if (tout) tout.innerHTML = '<div class="note ok">' + msg + '</div>';
       } catch (e) {
         b.disabled = false; b.textContent = 'Send it';
         if (tout) tout.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal.' : e.message) + '</div>';
@@ -3703,11 +3761,11 @@
       b.disabled = true; b.textContent = 'Marking…';
       try {
         const r = await call({ action: 'taxsent', band: b.dataset.taxdone });
-        b.textContent = 'Marked';
-        const row = b.closest('.trow'); if (row) { const s0 = row.querySelector('[data-tax]'); if (s0) s0.remove(); }
         const cl2 = Number(r.cleared || 0);
-        if (tout) tout.innerHTML = '<div class="note ok">' + esc(r.to || 'That hunter') + ' taken off the chase — marked as already having the form.' +
-          (cl2 > 1 ? ' All ' + cl2 + ' of their donated deer.' : '') + '</div>';
+        const msg2 = esc(r.to || 'That hunter') + ' taken off the chase — marked as already having the form.' +
+          (cl2 > 1 ? ' All ' + cl2 + ' of their donated deer.' : '');
+        taxDrop(b, msg2);
+        if (tout) tout.innerHTML = '<div class="note ok">' + msg2 + '</div>';
       } catch (e) {
         b.disabled = false; b.dataset.armed = '0'; b.textContent = 'Already sent';
         if (tout) tout.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal.' : e.message) + '</div>';
