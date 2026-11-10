@@ -3433,7 +3433,7 @@
         row('First Pack #', fp, fp ? '' : 'next free number when you start grinding' + (p.grinder ? '' : ' (' + esc(p.next || '0001') + ')')) +
         row('Last Pack #', '', fp ? 'worked out from the package count' : '') +
         row('Donation Type', 'whole') +
-        row('Invoice Date', '', 'the day it goes to Martin') + '</table>';
+        row('Enter Date of Bill Once Billed', '', 'MassWildlife’s own column — we leave it blank') + '</table>';
       const step = (n, t) => '<div class="grp" style="margin-top:14px">Step ' + n + ' · ' + t + '</div>';
       if (isViewer()) body += '';
       else if (d.Status === 'Hanging') body += step(1, 'Start processing') + '<button class="btn" data-a="start">Start processing</button>';
@@ -3555,7 +3555,8 @@
     const n = data.rows.length, tsv = data.rows.map(r => r.join('\t')).join('\n');
     box.innerHTML = (note ? '<div class="note ok">' + esc(note) + '</div>' : '') +
       '<div class="card"><b>' + (n ? n + ' donated deer to send' : 'Nothing new to send') + '</b>' +
-      '<p class="status">Martin\'s sheet (2026HomeGround_DataEntry) is live: rows pasted in reach him right away. Invoice Date is today, ' + esc(data.today) + '. ' +
+      '<p class="status">Martin\'s sheet (2026HomeGround_DataEntry) is live: rows pasted in reach him right away. ' +
+      'These are in his order, oldest check-in first, so they append to the bottom of his sheet as they are. ' +
       data.sentCount + ' already sent' + (data.waiting ? ' · ' + data.waiting + ' donated deer still hanging or being processed' : '') + '.</p>' +
       (n ? '<div style="overflow-x:auto"><table class="mtab"><tr>' + data.header.map(h => '<th>' + esc(h) + '</th>').join('') + '</tr>' +
         data.rows.map(r => '<tr>' + r.map(c => '<td>' + esc(c) + '</td>').join('') + '</tr>').join('') + '</table></div>' +
