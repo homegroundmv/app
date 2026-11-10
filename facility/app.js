@@ -3616,6 +3616,13 @@
           (isMgr() ? '</label>' : '</div>') + '</div>';
         return '<div class="card"><b>Packaging to fill in (' + pk.length + ')</b>' +
           '<p class="status">These are already on Martin\'s sheet from check-in. Find each row by its Seal # in column E and type the three values into columns <b>F</b>, <b>G</b> and <b>H</b>. Don\'t paste the whole row again — it would go in twice.</p>' +
+          /* Joe, 10 November: "what do I do with the blue checkmarks?" Fair question — the card
+             explained F, G and H and said nothing about the ticks, and the button underneath
+             sounds like it does the filling in rather than recording that somebody else did.
+             Pressed early it takes the deer off this card for good while his sheet is still
+             blank, so say both things plainly: what the ticks select, and that typing comes
+             first. */
+          (isMgr() ? '<p class="status"><b>Tick the ones you have actually typed in</b>, then press the button at the bottom — it records that his sheet is up to date, it does not fill it in for you. Untick anything you did not get to; it stays on this list.</p>' : '') +
           pk.map(row).join('') +
           (isViewer() ? '' : openSheetBtn(8)) +
           (isViewer() ? '' : isMgr()
