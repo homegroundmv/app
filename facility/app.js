@@ -3422,9 +3422,77 @@
   /* Managers only. Intake staff reach this screen and some of them \u2014 Ian \u2014 have no MassWildlife
      sign-in at all, so the button would be a wall with their name on it. Joe, 9 Nov. */
   const openSheetBtn = (top) => !isMgr() ? '' :
-    '<a class="btn ghost" href="' + MARTIN_SHEET + '" target="_blank" ' +
+    '<a class="btn ghost" data-mw="1" href="' + MARTIN_SHEET + '" target="_blank" ' +
     'rel="noopener" style="display:block;width:100%;margin-top:' + top + 'px;text-align:center;' +
-    'box-sizing:border-box;text-decoration:none">Open MassWildlife Report</a>';
+    'box-sizing:border-box;text-decoration:none">Open MassWildlife Report</a>' +
+    '<p class="status" style="margin-top:6px">Opens in Chrome. Microsoft refuses a sign-in inside ' +
+    'an app\u2019s built-in browser, which is why it fails from here. ' +
+    '<button class="plain" data-mwcopy="1">Copy the link</button> to paste it yourself.</p>';
+
+  /* Joe, 9 Nov: the Microsoft sign-in kept failing when the button opened the file inside the
+     app. Two separate reasons, same fix \u2014 get it into the real browser. Azure AD refuses to
+     authenticate in an embedded webview on purpose, and the in-app view has its own cookie jar,
+     so even where it is allowed Joe is signed in to nothing.
+
+     iOS has no general "open in the default browser" from a web page, so Chrome is asked for by
+     name through its own scheme (googlechromes: is the https one; googlechrome: is http). If
+     Chrome is not installed the scheme does nothing at all and no error is raised, so the only
+     way to know is to watch whether we got backgrounded. Still here after a moment means it did
+     not take, and we hand the URL to Safari instead: a plain navigation out of the app's scope
+     is the one thing iOS reliably passes to the real browser.
+
+     Everywhere else target="_blank" already lands in a proper browser window, so the anchor is
+     left to do its own job. */
+  const CHROME_WAIT = 1200;
+  /* An ordinary Safari tab is left alone on purpose. Sending it to Chrome would throw away a
+     Microsoft session that already works and ask Joe to sign in again — the opposite of the
+     point. navigator.standalone is exactly false in a real Safari tab, true in the home-screen
+     app, and undefined inside an embedded webview, which is the case that has to be diverted and
+     the one that cannot be identified any other way. */
+  const needsRealBrowser = () => {
+    const ua = navigator.userAgent || '';
+    const iOS = /iPad|iPhone|iPod/.test(ua) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (!iOS) return false;
+    if (navigator.standalone === false) {
+      try { if (matchMedia('(display-mode: browser)').matches) return false; } catch (err) {}
+    }
+    return true;
+  };
+  const openInChrome = (e) => {
+    if (!needsRealBrowser()) return;        // let the anchor open it normally
+    e.preventDefault();
+    let left = false;
+    const mark = () => { left = true; };
+    document.addEventListener('visibilitychange', mark, { once: true });
+    window.addEventListener('pagehide', mark, { once: true });
+    try { location.href = 'googlechromes://' + MARTIN_SHEET.slice(8); } catch (err) { left = false; }
+    setTimeout(() => {
+      document.removeEventListener('visibilitychange', mark);
+      window.removeEventListener('pagehide', mark);
+      if (!left && !document.hidden) location.href = MARTIN_SHEET;
+    }, CHROME_WAIT);
+  };
+
+  /* One delegated listener covers the button wherever it is drawn \u2014 the main card, the packaging
+     card, and the confirmation that is written in after a copy. */
+  const wireSheetBtns = (root) => {
+    if (!root || root.dataset.mwwired) return;
+    root.dataset.mwwired = '1';
+    root.addEventListener('click', async (e) => {
+      const open = e.target.closest && e.target.closest('[data-mw]');
+      if (open) { openInChrome(e); return; }
+      const cp = e.target.closest && e.target.closest('[data-mwcopy]');
+      if (!cp) return;
+      e.preventDefault();
+      try { await navigator.clipboard.writeText(MARTIN_SHEET); cp.textContent = 'Link copied'; }
+      catch (err) {
+        cp.insertAdjacentHTML('afterend',
+          '<textarea rows="3" style="width:100%">' + esc(MARTIN_SHEET) + '</textarea>');
+        cp.textContent = 'Select and copy:';
+      }
+    });
+  };
 
   async function showMartin(data, note) {
     frame('martin', 'Donation report', '<div id="mbox"><p class="status">Loading…</p></div>');
@@ -3511,6 +3579,7 @@
       st_.textContent = '.mtab{border-collapse:collapse;font-size:13px;margin:8px 0;white-space:nowrap}.mtab th,.mtab td{border:1px solid var(--line);padding:4px 6px;text-align:left}.mtab th{background:var(--ok-bg)}';
       document.head.appendChild(st_); }
     const out = document.getElementById('mout');
+    wireSheetBtns(box);
     // Each hunter is sent his own form, one tap at a time, so a failure names the hunter it
     // failed for rather than leaving a batch half done with no way to tell which half.
     $app.querySelectorAll('[data-tax]').forEach(b => b.onclick = async () => {
