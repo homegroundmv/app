@@ -3586,7 +3586,23 @@
     const box = document.getElementById('mbox');
     try { if (!data) data = await call({ action: 'martin' }); }
     catch (e) { box.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal. Try again when connected.' : e.message) + '</div>'; return; }
-    const n = data.rows.length, tsv = data.rows.map(r => r.join('\t')).join('\n');
+    /* \r\n between rows, not \n (Joe, 10 November: pasting into Martin's sheet "would only paste in
+       one cell"). Desktop Excel accepts a bare newline; Excel for the web wants a carriage return
+       too and drops the whole block into the one selected cell without it. It has been \n since the
+       Copy button was built, so this has been true all along — nobody had pasted into the web
+       version on a machine that got that far. */
+    const n = data.rows.length, tsv = data.rows.map(r => r.join('\t')).join('\r\n');
+    /* And an actual HTML table alongside it. Excel prefers the text/html flavour of a clipboard and
+       lays it out in cells from the table structure, rather than guessing at delimiters — which
+       takes the whole question of tabs and newlines out of play wherever ClipboardItem is
+       supported. The tab-separated text stays as the other flavour, for everything that is not
+       Excel and for browsers that refuse the richer write. */
+    const esch = x => String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const html = '<table>' + data.rows.map(r => '<tr>' + r.map(c =>
+      // Everything goes over as text: a seal number like 3R4DN9 or a pack number like 0225 must not
+      // be re-read as a number or a date on the way in, and 0225 losing its leading zeros on a
+      // state record is exactly the kind of quiet damage this whole screen exists to prevent.
+      '<td style="mso-number-format:\'\\@\'">' + esch(c) + '</td>').join('') + '</tr>').join('') + '</table>';
     box.innerHTML = (note ? '<div class="note ok">' + esc(note) + '</div>' : '') +
       '<div class="card"><b>' + (n ? n + ' donated deer to send' : 'Nothing new to send') + '</b>' +
       '<p class="status">Martin\'s sheet (2026HomeGround_DataEntry) is live: rows pasted in reach him right away. ' +
@@ -3609,7 +3625,12 @@
            finish — it rewrites both tabs from the Deer tab rather than appending, so running it
            twice or losing one costs nothing, and it does not touch what is being copied. */
         (isMgr()
-          ? '<button class="submit" id="mall">Copy ' + n + ' and open MassWildlife</button>'
+          /* "Copy 3 and open" read as a count of nothing in particular; it is rows (Joe, 10 Nov).
+             It deliberately does NOT say "and compare": this button copies OUR rows and opens his
+             sheet, and the comparison runs off HIS sheet on the clipboard, which is the opposite
+             direction and a separate tap. A button that promised to compare and did not would be
+             worse than one that reads plainly. */
+          ? '<button class="submit" id="mall">Copy ' + n + ' row' + (n === 1 ? '' : 's') + ' and open MassWildlife</button>'
           : '<button class="submit" id="mcopy">Copy ' + n + ' row' + (n === 1 ? '' : 's') + '</button>') +
         (isMgr() ? '<button class="btn ghost" id="mcopy" style="width:100%;margin-top:8px">Just copy the rows</button>' : '') +
         openSheetBtn(8) +
@@ -3628,6 +3649,14 @@
         'it. In his sheet press <b>Ctrl+A</b> to select everything, copy, and paste it below. ' +
         'Nothing on his sheet is sent or changed by checking — and the paste is kept, word for ' +
         'word, as a record of how his sheet stood before anybody typed into it.</p>' +
+        /* One tap, reading the clipboard itself (Joe, 10 November). Copying his sheet and then
+           tapping into a box and pasting is three fiddly steps on a phone, and the box is only
+           ever a staging post for something already on the clipboard. The textarea stays below as
+           the fallback: Safari and a locked-down Chrome both refuse clipboard reads, and a refused
+           read must leave somebody a way through rather than a dead button. */
+        '<button class="btn alt" id="rcclip" style="width:100%">Compare with what I just copied</button>' +
+        '<p class="status">Copy his sheet, come back, and tap that. If the browser will not let the ' +
+        'app read your clipboard, paste it in here instead.</p>' +
         '<textarea id="rcin" rows="4" style="width:100%" placeholder="Paste his whole sheet here"></textarea>' +
         '<button class="btn alt" id="rcgo" style="width:100%;margin-top:8px">Compare</button>' +
         '<div id="rcout"></div></div>' : '') +
@@ -3774,6 +3803,18 @@
     /* Copy on its own. Returns whether it worked, so the all-in-one button below can say so
        rather than claiming a clipboard it did not get. */
     const copyRows = async () => {
+      /* Write both flavours where the browser allows it, so Excel takes the table and everything
+         else takes the text. Falls back to plain text, then to a box to copy by hand — each step
+         down is a browser that refused the one above, not a failure worth reporting. */
+      try {
+        if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+          await navigator.clipboard.write([new ClipboardItem({
+            'text/html': new Blob([html], { type: 'text/html' }),
+            'text/plain': new Blob([tsv], { type: 'text/plain' }),
+          })]);
+          return true;
+        }
+      } catch (e) { /* fall through to plain text */ }
       try { await navigator.clipboard.writeText(tsv); return true; }
       catch (e) {
         out.innerHTML = '<p class="status">Copy didn\'t work on this device. Select the text below and copy it:</p><textarea id="mtsv" rows="4" style="width:100%">' + esc(tsv) + '</textarea>';
@@ -3817,6 +3858,29 @@
        what we believe went across and is NOT on his sheet, and what is on his and not ours. The
        third one is the answer nobody was checking for, and the only one that cannot be noticed by
        reading either sheet on its own. */
+    /* Read his sheet off the clipboard and run the same comparison, so the textarea is skipped
+       entirely. It drops what it reads into the box first: the reconcile keeps a verbatim snapshot
+       of his sheet, and it must be possible to see what was actually compared rather than take the
+       app's word for it. */
+    const rcclip = document.getElementById('rcclip');
+    if (rcclip) rcclip.onclick = async () => {
+      const inp = document.getElementById('rcin'), rout = document.getElementById('rcout');
+      let txt0 = '';
+      try { txt0 = await navigator.clipboard.readText(); }
+      catch (e) {
+        rout.innerHTML = '<div class="note warn"><b>This browser will not let the app read your clipboard.</b> ' +
+          'Paste his sheet into the box below and tap Compare instead.</div>';
+        if (inp) inp.focus();
+        return;
+      }
+      if (!String(txt0).trim()) {
+        rout.innerHTML = '<div class="note warn">Nothing on the clipboard. Go to his sheet, press <b>Ctrl+A</b> then copy, and tap this again.</div>';
+        return;
+      }
+      if (inp) inp.value = txt0;
+      const go = document.getElementById('rcgo');
+      if (go) go.click();
+    };
     const rcgo = document.getElementById('rcgo');
     if (rcgo) rcgo.onclick = async () => {
       const inp = document.getElementById('rcin'), rout = document.getElementById('rcout');
