@@ -663,6 +663,7 @@
     // Unsigned pre-op moves to the top of Now and out of Today, so it is never below the work it
     // has to come before. A held line is a different problem and stays where it is, in red.
     const preopFirst = !preop.done && !held;
+    const od = h.opsDuty || {};
     const preopSub = preop.done
       ? (held ? held + ' line' + (held === 1 ? '' : 's') + ' still not released — do not use it' : 'Signed ' + esc(preop.time || '') + ' by ' + esc(preop.initials || ''))
       : processing ? 'A deer is on the table — sign this now'
@@ -771,7 +772,15 @@
       (preopFirst ? '' : group('Do this first') +
         big('preop', 'Pre-op sanitation' + (preop.done && !held ? ' ✓' : ''), preopSub, preopCls)) +
       group('Do this mid shift') +
-      big('opssop', 'Operational sanitation', 'Every line C, N or N/A. At least once a day') +
+      /* When the duty is on this person the tile has to say so before they meet it as a block at
+         the bench. Red once it is live, amber while it is still coming. */
+      big('opssop', 'Operational sanitation' + (od.done ? ' ✓' : ''),
+        od.done ? 'Signed today by ' + (od.signedBy || 'someone on the crew')
+          : od.mine && od.active ? 'Yours today, since ' + t12(od.from || '') + '. No deer starts until it is signed'
+          : od.mine ? 'Yours today, from ' + t12(od.from || '')
+          : od.chosen ? 'With ' + (od.name || 'someone on the crew') + ' today'
+          : 'Every line C, N or N/A. At least once a day',
+        od.done ? 'view' : od.mine && od.active ? 'red' : od.mine ? 'alt' : '') +
       group('Before you lock up') +
       big('closeout', 'Close-out' + (closeout.done && !closeoutLeft ? ' \u2713' : ''), closeoutSub, closeoutCls) +
 
@@ -1370,6 +1379,23 @@
     document.getElementById('pgback').onclick = () => { box.innerHTML = ''; if (after) after(); };
   };
 
+  /* The day's operational sanitation duty. One person, one record, chosen by the server among
+     whoever is on the floor and standing on the fewest signed records. It blocks that person's
+     NEXT deer rather than interrupting the one in their hands (Joe, 9 Nov) — which is why this
+     sits beside the pre-op gate in act() and nowhere else. */
+  const opsDuty = () => st.home.opsDuty || {};
+  const opsStop = (box, after) => {
+    const o = opsDuty();
+    if (!box) return toast('Operational sanitation is yours today. Sign it before the next deer.', false);
+    box.innerHTML = '<div class="note bad" style="font-size:17px"><b>Operational sanitation is yours today.</b>' +
+      '<br><br>It came up at ' + esc(t12(o.from || '')) + ' and has not been signed. Walk the building, ' +
+      'mark every line C, N or N/A, and this deer starts straight after.</div>' +
+      '<button class="btn" id="odgo">Go to Operational sanitation</button> ' +
+      '<button class="btn ghost" id="odback">Back</button>';
+    document.getElementById('odgo').onclick = () => GO.opssop();
+    document.getElementById('odback').onclick = () => { box.innerHTML = ''; if (after) after(); };
+  };
+
   let clockNudged = false;
   function act(kind, d, box, after) {
     if ((kind === 'skin' || kind === 'start') && !isViewer() && !st.home.clockedIn && !clockNudged && box) {
@@ -1388,6 +1414,9 @@
       const g = preopBlock(kind, d);
       if (g) return preopStop(g, d, box, after);
     }
+    /* Starting a deer only. Skinning is left alone deliberately: a carcass that has been skinned
+       and not hung is the one thing in the building that cannot wait, and the duty can. */
+    if (kind === 'start' && !isViewer() && opsDuty().blocking) return opsStop(box, after);
     if (kind === 'print') return printBand(d);
     if (kind === 'grind') return grind(d, box, after);
     if (kind === 'undo') return askUndo(d, box, after);
