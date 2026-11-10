@@ -3562,14 +3562,22 @@
         data.rows.map(r => '<tr>' + r.map(c => '<td>' + esc(c) + '</td>').join('') + '</tr>').join('') + '</table></div>' +
         (isViewer() ? '' :
         '<ol class="status" style="padding-left:20px">' +
-          '<li>Tap <b>Copy ' + n + ' row' + (n === 1 ? '' : 's') + '</b>.</li>' +
           (isMgr()
-            ? '<li>Tap <b>Open MassWildlife Report</b> and sign in.</li>'
-            : '<li>Hand it to Joe or the facility manager. Opening MassWildlife’s report needs a state sign-in.</li>') +
+            ? '<li>Tap <b>Copy ' + n + ' and open MassWildlife</b>. It tidies our sheet, copies the rows and takes you there.</li>'
+            : '<li>Tap <b>Copy ' + n + ' row' + (n === 1 ? '' : 's') + '</b>, then hand it to Joe or the facility manager. Opening MassWildlife’s report needs a state sign-in.</li>') +
           '<li><b>Check before you paste.</b> Patrick enters deer from his own paper system, so some of these may already be on there. Find each Seal # in column E first. Any that are already present, leave out.</li>' +
           '<li>Click the Customer ID cell of the first empty row and paste.</li>' +
           '<li>Come back and tap <b>Mark as sent</b> so they aren’t sent twice.</li></ol>' +
-        '<button class="submit" id="mcopy">Copy ' + n + ' row' + (n === 1 ? '' : 's') + '</button>' +
+        /* One tap for the three fiddly things, because they were three places: the spreadsheet's
+           own menu for the rebuild, this button for the copy, and the link for the report (Joe,
+           9 Nov). The order below is forced by iOS: the handoff to Chrome only works inside a
+           direct tap, so nothing may be awaited before it. The rebuild is fired and left to
+           finish — it rewrites both tabs from the Deer tab rather than appending, so running it
+           twice or losing one costs nothing, and it does not touch what is being copied. */
+        (isMgr()
+          ? '<button class="submit" id="mall">Copy ' + n + ' and open MassWildlife</button>'
+          : '<button class="submit" id="mcopy">Copy ' + n + ' row' + (n === 1 ? '' : 's') + '</button>') +
+        (isMgr() ? '<button class="btn ghost" id="mcopy" style="width:100%;margin-top:8px">Just copy the rows</button>' : '') +
         openSheetBtn(8) +
         (isMgr() ? '<button class="btn ghost" id="msent" style="width:100%;margin-top:8px">I\'ve pasted them: mark as sent</button>' : '<p class="status">A manager marks them as sent.</p>')) : '') +
       '<div id="mout"></div></div>' +
@@ -3669,13 +3677,46 @@
         if (tout) tout.innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal.' : e.message) + '</div>';
       }
     });
-    const cp = document.getElementById('mcopy');
-    if (cp) cp.onclick = async () => {
-      try { await navigator.clipboard.writeText(tsv); out.innerHTML = '<div class="note ok">Copied. Check each Seal # against column E first — then paste at the Customer ID cell of the first empty row.</div>' + openSheetBtn(8); }
+    /* Copy on its own. Returns whether it worked, so the all-in-one button below can say so
+       rather than claiming a clipboard it did not get. */
+    const copyRows = async () => {
+      try { await navigator.clipboard.writeText(tsv); return true; }
       catch (e) {
         out.innerHTML = '<p class="status">Copy didn\'t work on this device. Select the text below and copy it:</p><textarea id="mtsv" rows="4" style="width:100%">' + esc(tsv) + '</textarea>';
         const t = document.getElementById('mtsv'); t.focus(); t.select();
+        return false;
       }
+    };
+    const cp = document.getElementById('mcopy');
+    if (cp) cp.onclick = async () => {
+      if (await copyRows()) out.innerHTML = '<div class="note ok">Copied. Check each Seal # against column E first — then paste at the Customer ID cell of the first empty row.</div>' + openSheetBtn(8);
+    };
+
+    /* The one-tap version. Order matters and is not negotiable:
+         1. the rebuild is FIRED, never awaited — iOS treats a tap as spent the moment anything is
+            awaited, and the handoff to Chrome then silently does nothing. Both tabs are rebuilt
+            from the Deer tab rather than appended to, so a lost or repeated request costs nothing,
+            and neither tab feeds what is being copied
+         2. the copy, from the rows already in hand, so there is nothing to wait for
+         3. the open, last and still inside the tap. */
+    const all = document.getElementById('mall');
+    if (all) all.onclick = async () => {
+      let rebuilt = null;
+      call({ action: 'rebuildtabs' }).then(r => { rebuilt = r; }).catch(() => { rebuilt = false; });
+      const ok = await copyRows();
+      if (!ok) return;                       // the textarea fallback is already on screen
+      out.innerHTML = '<div class="note ok"><b>' + n + ' row' + (n === 1 ? '' : 's') + ' copied.</b> ' +
+        'Check each Seal # against column E, then paste at the Customer ID cell of the first empty row. ' +
+        'Our sheet is being tidied in the background.</div>';
+      openInChrome({ preventDefault: () => {} });
+      if (!needsRealBrowser()) window.open(MARTIN_SHEET, '_blank', 'noopener');
+      // Said after the fact rather than waited on, so it can never hold up the handoff.
+      setTimeout(() => {
+        const o = document.getElementById('mout');
+        if (!o || !o.firstChild) return;
+        if (rebuilt && rebuilt.rebuilt) o.insertAdjacentHTML('beforeend', '<p class="status">Donations and Processor Totals rebuilt at ' + esc(rebuilt.at) + '.</p>');
+        else if (rebuilt === false) o.insertAdjacentHTML('beforeend', '<p class="status">The rows copied, but our own sheet did not get tidied — run it from the sheet’s Home Ground menu when you are next in there.</p>');
+      }, 4000);
     };
     const ms = document.getElementById('msent');
     if (ms) ms.onclick = async () => {
