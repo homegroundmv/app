@@ -1214,6 +1214,11 @@
       drop('Cooler/Private', 'Private', ofType('Private')) +
       drop('Cooler/Cold storage', 'Cold storage only', ofType('Cold storage'));
     frame('board', 'Deer Board',
+      /* One line, and only for the people whose duty it is — the backend sends coolerDuty as null
+         to anybody not on the counter, so a processor never sees this (Joe, 10 November). It lives
+         on the check-in page; this is the pointer to it, because the board is the screen that shows
+         the cooler. */
+      coolerDutyCard(true) +
       '<div class="card"><b>In the cooler and MHUs: ' + n + ' of ' + s.coolerCap + '</b>' +
       (full ? '<div class="note bad">Cooler is full. Hold private intakes until a deer is processed.</div>'
         : n >= Math.ceil(s.coolerCap * s.coolerAlert / 100) ? '<div class="note warn">Getting full. Process the oldest deer first.</div>' : '') +
@@ -1265,6 +1270,9 @@
       paint();
     };
     wireHits();
+    // The cooler-duty pointer is the only data-go2 the board draws; wired here because the board
+    // does not wire them generally.
+    $app.querySelectorAll('[data-go2]').forEach(b => { b.onclick = () => { if (GO[b.dataset.go2]) GO[b.dataset.go2](); }; });
     $app.querySelectorAll('details.drop').forEach(x => x.addEventListener('toggle', e => {
       e.stopPropagation(); if (x.open) boardOpen.add(x.dataset.drop); else boardOpen.delete(x.dataset.drop);
     }));
@@ -1892,6 +1900,111 @@
     CUTS.map((c, i) => '<div><label for="cut' + i + '">' + esc(c[0]) + (i > 3 ? ' size' : '') + '</label><select id="cut' + i + '"><option value="">' + (i > 3 ? 'Not needed' : 'Ground') + '</option>' +
       c[1].filter(o => o !== 'Ground').map(o => '<option>' + esc(o) + '</option>').join('') + '</select></div>').join('') + '</div></div>';
   const readCuts = () => CUTS.map((c, i) => { const v = document.getElementById('cut' + i).value; return i > 3 ? (v ? c[0] + ' ' + v : '') : c[0] + ': ' + (v || 'Ground'); }).filter(Boolean).join('; ');
+  /* ---------- the cooler duty ----------
+     Joe, 10 November, on what was happening in the cooler: deer left hanging on the CENTER rail,
+     which is the only rail carrying trolleys, so a deer left on it blocks every deer behind it from
+     coming out at all — and never gets categorized onto the donated or private side. Trolleys left
+     down the length of the container, when they can only come on and off at the entrance. Tails on
+     the floor, bags of hides and shanks, heads.
+
+     It belongs to intake, not to a shift: "this is not part of the processors duties or shift. This
+     is solely the duty of the intake manager. It lives on the deer check in page." So it is drawn
+     here and on the cooler board's one red line, and a processor never sees either — the backend
+     sends coolerDuty as null to anybody not on the counter.
+
+     It records a tick rather than the rail itself, which was Joe's choice. The app still says which
+     rail each deer belongs on, because the deer's Type already decides that and printing it costs
+     nothing; what it cannot do is tell you what is actually hanging where. */
+  function coolerDutyCard(onBoard) {
+    const cd = st.home && st.home.coolerDuty;
+    if (!cd || !cd.lines || !cd.lines.length) return '';
+    if (!cd.outstanding && !cd.waitingOnGrace) {
+      return onBoard ? '' :
+        '<p class="status">Cooler squared away' + (cd.lastDone ? ' at ' + esc(cd.lastDone) : '') +
+        (cd.lastBy ? ' by ' + esc(cd.lastBy) : '') + '.</p>';
+    }
+    /* Within the grace period this is a reminder of what to do next, not a reprimand — nobody can
+       hang a deer and clear a trolley in the time it takes to press Save (the 31 October rule:
+       the red state is for the condition being breached, not the task being outstanding). */
+    const soft = !cd.outstanding;
+    if (onBoard) {
+      return soft ? '' :
+        '<div class="card"><div class="note bad"><b>Cooler duty outstanding.</b> ' + esc(cd.takenCount) +
+        ' deer in since it was last walked. A deer left on the center rail blocks everything behind it.' +
+        '</div><button class="btn" data-go2="intake" style="width:100%">Open it on the check-in page</button></div>';
+    }
+    /* The band, not the rail, is what says donated or private — Joe, 10 November: "when we start
+       reaching capacity, we're going to put deer where we need to and rails will get mixed up. The
+       bands on the deer will decipher what is donated vs. private." So the side rail is shown as
+       where it goes if there is room, never as an instruction, and nothing treats the other side as
+       a mistake. What is not optional is getting it off the center rail. */
+    const rails = (cd.taken || []).map(x =>
+      '<div class="trow"><div><b>' + esc(x.band) + '</b> · ' + esc(x.type || '') +
+      (x.hunter ? ' · ' + esc(x.hunter) : '') +
+      '<div class="status">' + esc(x.rail) + ' rail if there is room</div></div></div>').join('');
+    return '<div class="card">' +
+      (soft
+        ? '<div class="note ok"><b>Before the next deer: square the cooler away.</b> ' +
+          esc(cd.takenCount) + ' in so far.</div>'
+        : '<div class="note bad"><b>Cooler duty outstanding — ' + esc(cd.takenCount) +
+          ' deer in since it was last walked.</b><br>A deer left on the <b>center</b> rail blocks every deer ' +
+          'behind it from coming out, because the center rail is the only one carrying trolleys.</div>') +
+      (rails ? '<p class="status">Donated go <b>' + esc(cd.railDonated) + '</b> and private or cold storage <b>' +
+        esc(cd.railPrivate) + '</b> where there is room, facing in from the entrance — a preference, not a rule. ' +
+        'At capacity put them where they fit: the <b>band</b> is what says donated or private.</p>' + rails : '') +
+      '<div class="form" id="cdform">' +
+      cd.lines.map((it, i) =>
+        '<div style="margin:10px 0;padding-top:8px;border-top:1px solid #e6e2d8">' +
+        '<div style="margin-bottom:6px">' + esc(it) + '</div>' +
+        ['Done', 'No', 'N/A'].map(v =>
+          '<label class="choice" style="display:inline-block;margin:0 10px 0 0">' +
+          '<input type="radio" name="cd' + i + '" value="' + v + '"> <span>' + v + '</span></label>').join('') +
+        '<input id="cdn' + i + '" type="text" placeholder="Why not? (needed if No)" hidden>' +
+        '</div>').join('') +
+      '<button class="btn" id="cdsave" style="width:100%;margin-top:10px">Cooler is squared away</button>' +
+      '<div class="note bad" id="cderr" hidden></div></div></div>';
+  }
+
+  /* Wired by delegation: the card is rebuilt on every repaint of the check-in page, so binding by
+     id once would survive exactly one redraw. */
+  function wireCoolerDuty() {
+    const cd = st.home && st.home.coolerDuty;
+    if (!cd || !cd.lines) return;
+    cd.lines.forEach((it, i) => {
+      document.querySelectorAll('[name="cd' + i + '"]').forEach(r => {
+        r.onchange = () => { const n = document.getElementById('cdn' + i); if (n) n.hidden = r.value !== 'No'; };
+      });
+    });
+    const btn = document.getElementById('cdsave');
+    if (!btn) return;
+    btn.onclick = () => {
+      const err = document.getElementById('cderr');
+      const items = {};
+      for (let i = 0; i < cd.lines.length; i++) {
+        const picked = document.querySelector('[name="cd' + i + '"]:checked');
+        if (!picked) { err.hidden = false; err.textContent = 'Answer every line: ' + cd.lines[i]; return; }
+        const note = (document.getElementById('cdn' + i) || {}).value || '';
+        if (picked.value === 'No' && !note.trim()) {
+          err.hidden = false; err.textContent = 'Say why: ' + cd.lines[i]; return;
+        }
+        items[cd.lines[i]] = { status: picked.value, note: note.trim() };
+      }
+      err.hidden = true;
+      btn.disabled = true; btn.textContent = 'Saving…';
+      queue('coolerduty', { items: items, bands: (cd.taken || []).map(x => x.band) }, 'Cooler duty');
+      toast('Cooler duty recorded.', true);
+      if (st.home && st.home.coolerDuty) {
+        st.home.coolerDuty.outstanding = false;
+        st.home.coolerDuty.waitingOnGrace = false;
+        st.home.coolerDuty.takenCount = 0;
+        st.home.coolerDuty.taken = [];
+      }
+      save();
+      showIntake();
+      refresh(true);
+    };
+  }
+
   function showIntake() {
     const s = S(), now = new Date();
     const todayBand = bandColour(new Date());
@@ -1909,6 +2022,7 @@
       return;
     }
     frame('intake', 'Check in a deer',
+      coolerDutyCard() +
       (todayBand ? '<div class="note ok" style="font-size:17px">' + swatch(todayBand) + ' today. Make sure the <b>' + esc(todayBand) + '</b> roll is in the band printer.</div>' : '') +
       '<div class="card">' +
       '<label>Did this deer come through the Island Access Program?</label>' +
@@ -2143,6 +2257,10 @@
     };
     // Revealed only when asked for, and pre-filled with the shot date so a backfill is one tap and
     // a time rather than a whole date typed in again.
+    /* The cooler duty sits at the top of this screen and is rebuilt with it, so it is wired here
+       rather than once at start-up. */
+    wireCoolerDuty();
+
     /* The tribal tick hides the two state fields rather than leaving them on screen to be filled
        in with something that does not exist. Their values are cleared, so a tick made after the
        boxes were typed into cannot leave a stale number on the row. */
