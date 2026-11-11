@@ -261,7 +261,7 @@
          repainting anyway is how a background refresh eats a tap for no gain at all. The outbox
          counts as part of the picture, because a queued action that has just landed changes what
          the screen should say even when the server payload is identical. */
-      const sig = sigOf(out) + '|' + st.outbox.length;
+      const sig = sigOf(sansTiming(out)) + '|' + st.outbox.length;
       const same = sig === homeSig;
       homeSig = sig;
       st.home = out; st.synced = stamp(); save();
@@ -330,6 +330,35 @@
     }
     return false;
   }
+  /* SOMETHING THE PERSON HAS ENTERED ON THIS SCREEN, anywhere on it, not only inside a `.form`.
+
+     formInUse() above only looks inside `.form`, which is the board's deer cards. The check-in
+     page, the sanitation records, the corrective form, the log book and the cards on Home are not
+     `.form`s, and the sanitation records keep their A/U marks in memory rather than in inputs. So
+     a background redraw rebuilt them and threw away what had been entered: a check-in half filled
+     when the phone came back from the lock screen, twelve pre-op lines, a finish time being typed
+     on Home (found 11 November).
+
+     This remembers the last thing the person typed into, chose, ticked or marked. It counts for
+     as long as that control is still on the screen and visible, so cancelling a card (which
+     removes or hides it) lets the screen update again, and it is forgotten whenever a screen is
+     drawn, which is what a save or a navigation does. Only real input counts (isTrusted), so
+     code that sets a value itself does not freeze a screen nobody has touched. */
+  let touchedEl = null;
+  const MARKS = '[data-set], #allgood, [data-yn] [data-v]';   // marks made by tapping a button, not an input
+  const noteTouch = e => {
+    if (!e.isTrusted || !e.target || !e.target.closest || !$app.contains(e.target)) return;
+    if (e.type === 'click') { const m = e.target.closest(MARKS); if (m) touchedEl = m; return; }
+    touchedEl = e.target;
+  };
+  ['input', 'change', 'click'].forEach(ev => document.addEventListener(ev, noteTouch, true));
+  const userEditing = () => !!(touchedEl && document.contains(touchedEl) && touchedEl.offsetParent !== null);
+  /* The timing fields the server stamps on every reply differ every time by definition. Left in,
+     the "nothing changed, do not repaint" test below was never true against the real backend, so
+     Home was rebuilt on every 45-second poll. sameAnswer() already left them out for the cached
+     screens; the home poll did not. (The test stub sends no timing fields, which is how every
+     suite missed it.) */
+  const sansTiming = o => { const c = Object.assign({}, o); delete c.ms; delete c.lockMs; delete c.fromCache; return c; };
   // Cheap, order-independent enough for "did anything change?", and far cheaper than diffing.
   const sigOf = o => { const s = JSON.stringify(o) || ''; let h = 5381;
     for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
@@ -356,8 +385,14 @@
     redrawing = !!quiet;
     try {
       const busy = formInUse();
-      formPaused = busy && (current === 'board' || current === 'donate' || current === 'deer');
-      if (current === 'home') showHome();
+      const onCards = current === 'board' || current === 'donate' || current === 'deer';
+      /* A BACKGROUND redraw never rebuilds a screen the person has entered something on. A redraw
+         they asked for (quiet is false: they tapped Refresh, or an action just finished) goes
+         ahead as it always did. */
+      const held = !!quiet && !onCards && (busy || userEditing());
+      formPaused = (busy && onCards) || held;
+      if (held) { /* leave it exactly as it is; status() below says why */ }
+      else if (current === 'home') showHome();
       else if (current === 'board' && !busy && !boardQuery) showBoard();
       else if (current === 'donate' && !busy && !document.querySelector('#lic2:focus')) showDonate();
       else if (current === 'deer' && shownBand && !busy) showDeer(shownBand);
@@ -520,6 +555,7 @@
     const sameScreen = key === frameKey;
     frameKey = key;
     current = name;
+    touchedEl = null;   // a screen being drawn is a save, a cancel or a navigation: nothing entered yet
     $app.innerHTML =
       '<header class="top"><img src="icon-192.png" alt=""><div><div class="who">' + esc(st.staff && st.staff.name) + ' · ' + esc(st.staff && st.staff.number) + '</div>' +
       '<div class="sub">Home Ground Facility ' + esc(APP_VERSION) + ' · <button class="plain" id="out" style="padding:0">Sign out</button></div></div></header>' +
