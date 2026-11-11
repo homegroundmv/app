@@ -2404,14 +2404,22 @@
         return err('Ask him whether he wants the skull and antlers back. Once the head goes out with the waste it is gone, so this one is not left blank.');
       }
       if (!v('fn') || !v('ln')) return err('Enter the hunter\'s first and last name.');
-      const lic = v('lic').replace(/\D/g, '');
+      /* A tribal deer has no MassWildlife customer ID and no confirmation number: ticking the box
+         hides and clears both. The two checks below used to demand them anyway, so a tribal deer
+         could not be checked in with the box ticked at all (Joe, 11 November). What it must have
+         instead is what the backend asks for: the tribal band number always, and the town of
+         harvest on a donated one, because those are Martin's confirmation and last-name cells. */
+      const tribal = !!(document.getElementById('tribal') || {}).checked;
+      const lic = tribal ? '' : v('lic').replace(/\D/g, '');
       if (lic && (lic.length < 5 || lic.length > 8)) return err('The MassWildlife customer ID is 5 to 8 digits.');
-      if (type === 'Donated' && !lic) return err('Enter the hunter\'s MassWildlife customer ID. Martin needs it for donated deer.');
+      if (type === 'Donated' && !tribal && !lic) return err('Enter the hunter\'s MassWildlife customer ID. Martin needs it for donated deer.');
+      if (tribal && !v('ttag').trim()) return err('Enter the tribal band number. It is the only number this deer has.');
+      if (tribal && type === 'Donated' && !v('thtown').trim()) return err('Which town was it taken in? Martin reads the town as the last name on a tribal row.');
       const noAddr = (document.getElementById('adna') || {}).checked;
       if (type === 'Donated' && !noAddr && (!v('ad1') || !v('adt') || !v('adz'))) return err('Enter the hunter\'s mailing address (street, town and ZIP), or tick "No address to hand". TFMV mails the donation check there.');
       if (!v('tw')) return err('Say how the deer was taken. It decides how hard the wound channel is trimmed.');
       if ((v('tw') === 'Shotgun slug' || v('tw') === 'Muzzleloader') && !v('am')) return err('Lead or non-lead? Ask the hunter \u2014 it changes how the meat is trimmed.');
-      if (!v('cf')) return err('Enter the MassWildlife confirmation number. No confirmation number, no intake.');
+      if (!tribal && !v('cf')) return err('Enter the MassWildlife confirmation number. No confirmation number, no intake.');
       /* The confirmation number is the state's seal for one animal. Backfilling a season off another
          processor's sheet is where this goes wrong: a hunter's name appears several times, the first
          number under it gets used twice, and nobody finds out until packages have shipped under a
@@ -2419,7 +2427,9 @@
          MassWildlife. The list includes check-ins still queued offline, so it holds without signal. */
       const cfv = v('cf').trim().toUpperCase();
       const cfdup = document.getElementById('cfdup'), cfbox = document.getElementById('cfdupbox');
-      const clash = deerList().find(d => String(d['MassWildlife confirmation'] || '').trim().toUpperCase() === cfv);
+      // Only when there is a number to compare: a blank one (a tribal deer) would "match" every
+      // other deer on the board that has no confirmation number.
+      const clash = cfv ? deerList().find(d => String(d['MassWildlife confirmation'] || '').trim().toUpperCase() === cfv) : null;
       if (clash && !(cfdup && cfdup.checked)) {
         if (cfbox) cfbox.hidden = false;
         return err('Confirmation ' + v('cf') + ' is already on band ' + band(clash.Band) + ' (' +
@@ -2429,7 +2439,7 @@
       if (type === 'Donated' && !document.getElementById('fd').checked) return err('Donated deer must be field dressed within 4 hours of the shot.');
       if (type !== 'Donated' && coolerCount() >= S().coolerCap) return err('The cooler is full. Hold private and cold-storage deer until there\'s room.');
       const noCall = document.getElementById('nocallout');
-      const f = { band: b, iap: iap === 'Yes', type, deer: v('deer'), points: v('deer') === 'Antlered buck' ? pts : '', firstName: v('fn'), lastName: v('ln'), customerId: lic, hunterPhone: v('ph'), confirmation: v('cf'), takenWith: v('tw'), ammunition: v('am'),
+      const f = { band: b, iap: iap === 'Yes', type, deer: v('deer'), points: v('deer') === 'Antlered buck' ? pts : '', firstName: v('fn'), lastName: v('ln'), customerId: lic, hunterPhone: v('ph'), confirmation: tribal ? '' : v('cf'), takenWith: v('tw'), ammunition: v('am'),
         skull: skullAsked() ? skullPick === 'Yes' : undefined,
         notCallout: !!(noCall && noCall.checked),
         cuts: type === 'Private' ? readCuts() : '',
