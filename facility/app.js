@@ -1272,7 +1272,11 @@
     wireHits();
     // The cooler-duty pointer is the only data-go2 the board draws; wired here because the board
     // does not wire them generally.
-    $app.querySelectorAll('[data-go2]').forEach(b => { b.onclick = () => { if (GO[b.dataset.go2]) GO[b.dataset.go2](); }; });
+    $app.querySelectorAll('[data-go2]').forEach(b => { b.onclick = () => {
+      if (GO[b.dataset.go2]) GO[b.dataset.go2]();
+      // The cooler duty is at the bottom of the check-in page now, so "Open it" has to take them to it.
+      if (b.dataset.cd) setTimeout(() => { const w = document.getElementById('cdwrap'); if (w) w.scrollIntoView({ block: 'start' }); }, 60);
+    }; });
     $app.querySelectorAll('details.drop').forEach(x => x.addEventListener('toggle', e => {
       e.stopPropagation(); if (x.open) boardOpen.add(x.dataset.drop); else boardOpen.delete(x.dataset.drop);
     }));
@@ -1931,7 +1935,7 @@
       return soft ? '' :
         '<div class="card"><div class="note bad"><b>Cooler duty outstanding.</b> ' + esc(cd.takenCount) +
         ' deer in since it was last walked. A deer left on the center rail blocks everything behind it.' +
-        '</div><button class="btn" data-go2="intake" style="width:100%">Open it on the check-in page</button></div>';
+        '</div><button class="btn" data-go2="intake" data-cd="1" style="width:100%">Open it on the check-in page</button></div>';
     }
     /* The band, not the rail, is what says donated or private — Joe, 10 November: "when we start
        reaching capacity, we're going to put deer where we need to and rails will get mixed up. The
@@ -2022,7 +2026,6 @@
       return;
     }
     frame('intake', 'Check in a deer',
-      coolerDutyCard() +
       (todayBand ? '<div class="note ok" style="font-size:17px">' + swatch(todayBand) + ' today. Make sure the <b>' + esc(todayBand) + '</b> roll is in the band printer.</div>' : '') +
       '<div class="card">' +
       '<label>Did this deer come through the Island Access Program?</label>' +
@@ -2127,6 +2130,12 @@
       '<label class="choice"><input id="fd" type="checkbox"> Field dressed within 4 hours of the shot (or the air stayed below 37°F)</label>' +
       '<label class="choice"><input id="ddp" type="checkbox"> Taken under a deer damage permit (DDP)</label>' +
       '<p class="status">The deer hangs in the receiving cooler skin-on, head-on. It\'s skinned and the head removed inside MHU #1 when processing starts.</p>' +
+      /* The cooler duty sits HERE, at the bottom just above the notes (Joe, 11 November). It was the
+         first thing on the page, which pushed the first check-in question more than a screen down
+         for the person with a hunter standing in front of them. Down here it is where the hands
+         are when the deer has just been hung. It keeps its own button: squaring the cooler away
+         and checking a deer in are two records. The board's "Open it" button scrolls to #cdwrap. */
+      '<div id="cdwrap">' + coolerDutyCard() + '</div>' +
       '<label for="nt">Notes</label><textarea id="nt"></textarea>' +
       '<div class="err" id="err"></div><button class="submit" id="save">Check in and print band</button>' +
       '<button class="btn ghost" id="away" style="width:100%">Turn this deer away instead</button><div id="awaybox"></div></div>');
