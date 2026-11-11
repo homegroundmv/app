@@ -508,10 +508,17 @@
 
   /* ---------- frame ---------- */
   let current = '';
+  /* What screen the page is actually showing, including WHICH deer when it is a deer. frame()
+     compares it against what is being drawn to tell a navigation from a repaint of the screen
+     somebody is already on. See the scroll note at the foot of frame(). */
+  let frameKey = '';
   let threadTimer = null;
   const stopThread = () => { if (threadTimer) { clearInterval(threadTimer); threadTimer = null; } };
-  function frame(name, title, body, noBack) {
+  function frame(name, title, body, noBack, ident) {
     stopThread();
+    const key = name + (ident == null ? '' : '|' + ident);
+    const sameScreen = key === frameKey;
+    frameKey = key;
     current = name;
     $app.innerHTML =
       '<header class="top"><img src="icon-192.png" alt=""><div><div class="who">' + esc(st.staff && st.staff.name) + ' · ' + esc(st.staff && st.staff.number) + '</div>' +
@@ -524,11 +531,25 @@
     const hb = document.getElementById('home-btn');
     if (hb) hb.onclick = () => showHome();
     status();
-    /* Jump to the top when the person navigated here, and never when the 45-second poll is
-       repainting the screen they are already reading. Being thrown back to the first card while
-       working down the board is one of the things that made the app feel like it was fighting
-       back (Joe, 7 November). */
-    if (redrawing) { const y = window.scrollY; requestAnimationFrame(() => window.scrollTo(0, y)); }
+    /* Jump to the top when the person NAVIGATED here. Never when the screen they are already
+       reading is simply being drawn again. Being thrown back to the first card while working down
+       the board is one of the things that made the app feel like it was fighting back (Joe,
+       7 November).
+
+       The `redrawing` flag covered the 45-second poll and nothing else, which left the commonest
+       case of all still broken: tapping a deer on the board to open its row calls showBoard()
+       straight out, so the flag is false, so the page went to the top while the row expanded
+       somewhere below the fold. Same for the band-colour chips and for Undo. Joe, 10 November,
+       tapping a deer four down the list: "I just clicked on deer board and it scrolled to the top
+       again. Is there a permanent fix for this?"
+
+       It is permanent because it no longer depends on a caller remembering to set a flag. The
+       screen's own identity decides: drawing 'board' while already on 'board' keeps the scroll,
+       whoever asked for it and for whatever reason. A screen that shows one of many things passes
+       what it is showing as `ident`, so moving from one deer to another still counts as going
+       somewhere and still lands at the top. A new screen that forgets to pass one degrades to
+       keeping the scroll, which is the safe direction. */
+    if (redrawing || sameScreen) { const y = window.scrollY; requestAnimationFrame(() => window.scrollTo(0, y)); }
     else window.scrollTo(0, 0);
   }
   // The cached front desk goes too: on a shared iPad the next person must not open to the last
@@ -2414,7 +2435,7 @@
     const d = deerList().filter(x => band(x.Band) === b).pop();
     if (!d) {
       frame('deer', 'Band ' + esc(b), '<div class="card"><div class="note warn">This band isn\'t in the app\'s list. It may have been released over a week ago, or the list needs refreshing.</div>' +
-        '<button class="btn" id="dr">Refresh and try again</button> <button class="btn ghost" id="ds">Scan another</button></div>');
+        '<button class="btn" id="dr">Refresh and try again</button> <button class="btn ghost" id="ds">Scan another</button></div>', false, b);
       document.getElementById('dr').onclick = async () => { await refresh(); showDeer(b); };
       document.getElementById('ds').onclick = () => showScan();
       return;
@@ -2425,7 +2446,9 @@
         '<div style="font-size:17px;margin-top:4px">' + Math.floor(u.hours) + ' hours hung' + (d.Type === 'Donated' ? ' · donated: goes first' : '') + '</div>' +
         '<div style="font-size:14px;opacity:.9;margin-top:4px">' + (u.i >= 4 ? 'Over the maximum hold: tell a manager now.' : u.i === 3 ? 'Past the start-by time: process next.' : u.i === 2 ? 'Process today.' : u.i === 1 ? 'Process when there\'s room.' : 'Let it hang at least overnight.') + '</div></div>'
       : '<div class="card"><b>' + esc(d.Status === 'Processing' ? 'Being processed' : d.Status === 'Ready' ? 'Processed: ready for pickup or delivery' : d.Status) + '</b></div>';
-    frame('deer', 'Band ' + esc(band(d.Band)), head + deerCard(d) + '<button class="btn ghost" id="ds" style="width:100%;margin-top:8px">Scan another band</button>');
+    /* The band is the screen's identity, so moving from one deer to another is a navigation and
+       lands at the top, while redrawing the same deer keeps the scroll. */
+    frame('deer', 'Band ' + esc(band(d.Band)), head + deerCard(d) + '<button class="btn ghost" id="ds" style="width:100%;margin-top:8px">Scan another band</button>', false, band(d.Band));
     const c = $app.querySelector('[data-band]');
     c.querySelectorAll('[data-a]').forEach(x => x.onclick = () => act(x.dataset.a, d, c.querySelector('.form'), () => showDeer(b)));
     document.getElementById('ds').onclick = () => showScan();
@@ -3728,8 +3751,9 @@
         openSheetBtn(8) +
         (isMgr() ? '<button class="btn ghost" id="msent" style="width:100%;margin-top:8px">I\'ve pasted them: mark as sent</button>' : '<p class="status">A manager marks them as sent.</p>')) : '') +
       '<div id="mout"></div></div>' +
-      /* Tribal deer were held off his sheet between 10 and 11 November, on the assumption that a
-         row keyed on a customer ID and a seal number could not take an animal that has neither.
+      /* Tribal deer were held off his sheet for about three hours on the evening of 10 November,
+         on the assumption that a row keyed on a customer ID and a seal number could not take an
+         animal that has neither.
          Martin answered on the evening of the 10th: TRIBAL as the first name, town of harvest as
          the last name, band number in the confirmation field. So they are on the sheet like
          anything else, and the only thing that can hold one back now is a town nobody asked for.
