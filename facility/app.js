@@ -35,6 +35,13 @@
   /* Taken under tribal authority: no state customer ID, no seal number, a band the tribe issues.
      Reads the flag, falling back to the tag for any row entered before the column existed. */
   const isTribalDeer = d => /^y/i.test(String((d && d['Tribal deer']) || '')) || !!String((d && d['Tribal tag']) || '').trim();
+  /* Martin, 10 November: on a tribal row his Last Name field holds the town of harvest. The six
+     Island towns, because that is what every deer through this door has been taken in; the backend
+     only insists the answer is not blank, so one taken off-Island can still be typed in later
+     through a correction rather than being blocked at the counter. */
+  const HARVEST_TOWNS = ['Aquinnah', 'Chilmark', 'West Tisbury', 'Tisbury', 'Oak Bluffs', 'Edgartown'];
+  const townOptions = sel => '<option value="">Choose the town…</option>' +
+    HARVEST_TOWNS.map(t => '<option value="' + esc(t) + '"' + (String(sel || '').toLowerCase() === t.toLowerCase() ? ' selected' : '') + '>' + esc(t) + '</option>').join('');
   function bandColour(when) {
     const s = S(), list = s.bandColours && s.bandColours.length ? s.bandColours : ['Aqua', 'Yellow', 'Orange', 'Day Glow Green', 'Day Glow Pink'];
     const d = when instanceof Date ? when : parse(when), b = String(s.bandStart || '2026-11-01').split('-').map(Number);
@@ -1467,7 +1474,12 @@
         '<div><label for="e_phone">Phone</label><input id="e_phone" type="text" inputmode="tel" value="' + esc(d['Hunter phone'] || '') + '"></div></div>' +
         (isTribalDeer(d)
           ? '<label for="e_tribalTag">Tribal band number</label><input id="e_tribalTag" type="text" value="' + esc(d['Tribal tag'] || '') + '">' +
-            '<p class="status">Taken under tribal authority. There is no MassWildlife customer ID or seal number for this deer, and it is held off the state report.</p>'
+            '<label for="e_townOfHarvest">Town of harvest</label><select id="e_townOfHarvest">' + townOptions(d['Town of harvest'] || '') + '</select>' +
+            /* Martin, 10 November. Worth spelling out on the form, because the field looks
+               optional and on a donated tribal deer it is the row's surname. */
+            '<p class="status">Taken under tribal authority: no MassWildlife customer ID and no seal number. On his sheet it goes across as TRIBAL, the town of harvest in place of the surname, and the band number as the confirmation.' +
+            (!String(d['Town of harvest'] || '').trim() && d['Type'] === 'Donated'
+              ? ' <b>The town is still missing, so this one cannot go to Martin yet.</b>' : '') + '</p>'
           : '<label for="e_confirmation">MassWildlife confirmation</label><input id="e_confirmation" type="text" autocapitalize="characters" value="' + esc(d['MassWildlife confirmation'] || '') + '">' +
             /* A deer is sometimes only discovered to be tribal after it is on the rail — the hunter
                is not always the person who dropped it off — and a tag typed into the confirmation
@@ -1475,7 +1487,9 @@
                state fields, and the Edits tab records what was in them. */
             (isMgr() && !d['Sent to Martin']
               ? '<label class="choice"><input id="e_tribal" type="checkbox"> This is a tribal deer <span class="hint">No MassWildlife customer ID or seal number. Ticking this clears both and asks for the tribal band number instead — what was in them is kept on the Edits tab.</span></label>' +
-                '<div id="e_tribalnew" hidden><label for="e_tribalTag2">Tribal band number</label><input id="e_tribalTag2" type="text" autocapitalize="characters"></div>'
+                '<div id="e_tribalnew" hidden><label for="e_tribalTag2">Tribal band number</label><input id="e_tribalTag2" type="text" autocapitalize="characters">' +
+                  '<label for="e_townOfHarvest2">Town of harvest</label><select id="e_townOfHarvest2">' + townOptions('') + '</select>' +
+                  '<p class="status">Martin reads the town as the last name on a tribal row, so it goes across in place of the hunter’s surname.</p></div>'
               : '')) +
         (d['Sent to Martin'] ? '<p class="note warn">This deer is already on MassWildlife’s sheet. Changing the licence, the name or the confirmation number makes his copy wrong, so it gets flagged for correcting rather than pasted again.</p>' : '') +
         /* What the deer IS, not a typo in what was written down — a hunter changing his mind about
@@ -1708,9 +1722,15 @@
         // Only on the form for a manager, and only while the deer is off Martin's sheet.
         if (document.getElementById('e_type')) changes.type = v('e_type').trim();
         if (document.getElementById('e_tribalTag')) changes.tribalTag = v('e_tribalTag').trim();
+        if (document.getElementById('e_townOfHarvest')) changes.townOfHarvest = v('e_townOfHarvest').trim();
         if (document.getElementById('e_tribal') && document.getElementById('e_tribal').checked) {
           const tag2 = v('e_tribalTag2').trim();
           if (!tag2) return err('Enter the tribal band number. It is the only number this deer has.');
+          // Donated only: Martin's sheet is the only place the town is read, and a deer that is
+          // not donated never reaches it. Asked for anyway when it is there to be answered.
+          const town2 = v('e_townOfHarvest2').trim();
+          if (!town2 && d['Type'] === 'Donated') return err('Which town was it taken in? Martin reads the town as the last name on a tribal row.');
+          if (town2) changes.townOfHarvest = town2;
           changes.tribal = 'Yes'; changes.tribalTag = tag2;
           delete changes.confirmation; delete changes.customerId;   // the backend clears both, and logs what was there
         }
@@ -1909,7 +1929,12 @@
          Brian Vanderhoop's tag went into the MassWildlife confirmation box this afternoon because
          there was nowhere else for it, and that box is a cell on the state's own sheet. */
       '<div style="grid-column:1/-1"><label class="choice" style="margin:0"><input id="tribal" type="checkbox"> Tribal deer <span class="hint">Issued and secured by the tribe. No MassWildlife customer ID or seal number — the tribal band number is the record.</span></label></div>' +
-      '<div id="tribalbox" hidden style="grid-column:1/-1"><label for="ttag">Tribal band number</label><input id="ttag" type="text" autocapitalize="characters"></div>' +
+      '<div id="tribalbox" hidden style="grid-column:1/-1"><label for="ttag">Tribal band number</label><input id="ttag" type="text" autocapitalize="characters">' +
+        /* Martin reads this as the surname on his sheet (10 November), so on a donated tribal deer
+           it is the row's key field and not a nicety. Asked at the door because the hunter is
+           standing there and nobody will know it a week later. */
+        '<label for="thtown">Town of harvest</label><select id="thtown">' + townOptions('') + '</select>' +
+        '<p class="status">On MassWildlife’s sheet a tribal deer is entered as TRIBAL, with the town of harvest in place of the surname and the band number as the confirmation. The hunter’s own name stays on our record.</p></div>' +
       '<div id="licbox"><label for="lic">MassWildlife customer ID <span class="hint">5 to 8 digits</span></label><input id="lic" type="text" inputmode="numeric" maxlength="8" pattern="[0-9]*"></div>' +
       '<div><label for="ph">Hunter phone</label><input id="ph" type="tel"></div>' +
       /* UP HERE, beside the phone, and asked for EVERY deer (Joe, 10 November: "I just noticed
@@ -2274,6 +2299,8 @@
         // No state numbers on a tribal deer; the tribe's own band number is the record.
         tribal: !!(document.getElementById('tribal') || {}).checked,
         tribalTag: (document.getElementById('tribal') || {}).checked ? v('ttag').trim() : '',
+        // Martin's Last Name field on a tribal row (10 November).
+        townOfHarvest: (document.getElementById('tribal') || {}).checked ? v('thtown').trim() : '',
         // He told us at the counter that it is already filed. Donated only — nothing else is paid
         // by TFMV, so there is no form to have filed.
         taxFiled: type === 'Donated' && !!(document.getElementById('taxfiled') || {}).checked,
@@ -3701,15 +3728,19 @@
         openSheetBtn(8) +
         (isMgr() ? '<button class="btn ghost" id="msent" style="width:100%;margin-top:8px">I\'ve pasted them: mark as sent</button>' : '<p class="status">A manager marks them as sent.</p>')) : '') +
       '<div id="mout"></div></div>' +
-      /* Donated deer that cannot go on the state sheet, named rather than silently absent. A row
-         that just vanishes is a row nobody chases (Joe, 10 November). */
-      ((data.heldTribal && data.heldTribal.length)
-        ? '<div class="card"><b>Held off MassWildlife\u2019s sheet (' + data.heldTribal.length + ')</b>' +
-          '<p class="status">Taken under tribal authority, so there is no MassWildlife customer ID and no seal number \u2014 and every row on his sheet is keyed on both. The venison goes where donated venison goes; the state report is what these are held out of.</p>' +
-          data.heldTribal.map(x => '<div class="trow"><div><b>' + esc(x.hunter || 'no name') + '</b>' +
+      /* Tribal deer were held off his sheet between 10 and 11 November, on the assumption that a
+         row keyed on a customer ID and a seal number could not take an animal that has neither.
+         Martin answered on the evening of the 10th: TRIBAL as the first name, town of harvest as
+         the last name, band number in the confirmation field. So they are on the sheet like
+         anything else, and the only thing that can hold one back now is a town nobody asked for.
+         Named rather than silently absent \u2014 a row that just vanishes is a row nobody chases. */
+      ((data.tribalNeedTown && data.tribalNeedTown.length)
+        ? '<div class="card"><b>Tribal deer missing the town (' + data.tribalNeedTown.length + ')</b>' +
+          '<p class="status">On a tribal row MassWildlife reads the town of harvest where the surname would be, so a blank one puts an incomplete row on a state sheet. Open the deer, Correct the record, and set the town \u2014 then it joins the block below.</p>' +
+          data.tribalNeedTown.map(x => '<div class="trow"><div><b>' + esc(x.hunter || 'no name') + '</b>' +
             '<div class="status">' + esc(x.band) + ' \u00b7 in ' + esc(x.dateIn) +
             (x.tag ? ' \u00b7 tribal band ' + esc(x.tag) : '') + '</div></div></div>').join('') +
-          '<p class="status"><b>Open with Martin:</b> whether a tribally harvested deer can be reported to Share the Harvest at all, and whether TFMV pays its donation rate on one. Held off until he answers, because that is the reversible direction.</p></div>'
+          '<p class="status"><b>Still open with TFMV, not Martin:</b> whether they pay their donation rate on a tribally harvested deer. Martin\u2019s answer covers the state report only.</p></div>'
         : '') +
       /* Check against his sheet, before anything is pasted into it. On 9 November a hand
          reconciliation found TWELVE of sixteen deer our tab showed as never sent were already on
