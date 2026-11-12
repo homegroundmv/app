@@ -4815,6 +4815,15 @@
       setInterval(check, 15 * 60000);
     }).catch(() => {});
     let reloading = false;
+    /* Was a service worker already running this page when it loaded? On a first-ever open (a new
+       phone, or after the site data is cleared) there is none. sw.js then installs, calls
+       skipWaiting() and clients.claim(), and the browser fires `controllerchange` — which is the
+       first copy arriving, not a newer one. The bar came up anyway, saying "a newer version is
+       ready" on a brand-new install and sitting over the bottom 136 px of the screen, Save
+       buttons included, until somebody dismissed it (found 11 November; it was also why eighteen
+       browser suites failed on a clean machine). That one takeover is ignored. Every takeover
+       after it is a real update and shows the bar as before. */
+    let hadController = !!navigator.serviceWorker.controller;
     /* This used to write the notice into #msg at the top of the screen and then scrollTo(0, 0) to
        be sure it was seen — which threw whoever was reading down the board straight back to the
        first card, every single time a version shipped. Six shipped in one evening and Joe met it
@@ -4825,6 +4834,7 @@
        the decision stays the person's. Not now dismisses it; the new version is already waiting
        and arrives on the next ordinary reload either way. */
     navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController) { hadController = true; return; }   // the first install taking over: nothing is newer
       if (reloading || document.getElementById('swbar')) return;
       const bar = document.createElement('div');
       bar.id = 'swbar';
