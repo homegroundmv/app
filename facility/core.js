@@ -18,7 +18,7 @@ window.HG_CORE = (function () {
      sw.js: it is the number somebody reads out over the phone. It had drifted to v68 while v69
      and v70 shipped, which is exactly the confusion it exists to prevent, so a test now fails if
      this and VERSION in sw.js disagree. */
-  const APP_VERSION = 'v100';
+  const APP_VERSION = 'v101';
   const KEY = 'hg-facility';
 
   /* ---------- helpers ---------- */

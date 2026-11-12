@@ -630,7 +630,7 @@
     current = 'login';
     $app.innerHTML = '<img class="login-logo" src="logo.png" alt="Home Ground. Change starts with YES">' +
       '<div class="card"><h1>Facility sign-in</h1>' + (msg ? '<div class="note bad">' + esc(msg) + '</div>' : '') +
-      '<label for="num">Your staff number</label><input id="num" type="text" autocapitalize="characters" placeholder="P-001" value="' + esc(st.number || '') + '">' +
+      '<label for="num">Your staff number</label><input id="num" type="text" autocapitalize="characters" placeholder="P-001" value="' + esc(st.number || '') + '" autocorrect="off" spellcheck="false">' +
       '<label for="pin">Your PIN</label><input id="pin" type="password" inputmode="numeric" maxlength="6" placeholder="4 digits">' +
       '<button class="submit" id="go">Sign in</button></div>';
     const go = async () => {
@@ -1335,7 +1335,7 @@
       '<div class="status">Each list runs longest-hanging first. Tap a deer for its card. Amber: ' + s.startBy + ' hours hung, start processing. Red: over the maximum hold, tell Joe.</div>' +
       '<button class="plain" id="reload">Refresh now</button></div>' +
       '<div class="card"><label for="bsearch">Find a deer <span class="hint">hunter ID, confirmation # or name</span></label>' +
-      '<input id="bsearch" type="text" enterkeyhint="search" autocomplete="off" value="' + esc(boardQuery) + '" placeholder="1690575, MY4M3P or Bellabuono">' +
+      '<input id="bsearch" type="text" enterkeyhint="search" autocomplete="off" value="' + esc(boardQuery) + '" placeholder="1690575, MY4M3P or Bellabuono" autocorrect="off" spellcheck="false" autocapitalize="off">' +
       '<div id="bhits">' + searchHtml(boardQuery) + '</div></div>' +
       (bandFilter ? '<div class="note ok">Showing ' + esc(bandFilter) + ' bands only. <button class="plain" id="clearband" style="padding:0">Show them all</button></div>' : '') +
       drop('Cooler', 'Cooler', cooler, coolerInner) +
@@ -1606,26 +1606,26 @@
          check-in. The weights, times, packages and tickboxes are absent too — those are
          measurements made by doing the work, not answers that can be mistyped. */
       edit: () => '<p class="status">Corrects what was taken down at check-in. Every change is kept with what it was before, your name and the reason. The band cannot be changed here — a wrong band is a void and a new check-in.</p>' +
-        '<div class="grid2"><div><label for="e_firstName">First name</label><input id="e_firstName" type="text" value="' + esc(d['Hunter first name'] || splitName(d['Hunter name']).first) + '"></div>' +
-        '<div><label for="e_lastName">Last name</label><input id="e_lastName" type="text" value="' + esc(d['Hunter last name'] || splitName(d['Hunter name']).last) + '"></div></div>' +
+        '<div class="grid2"><div><label for="e_firstName">First name</label><input id="e_firstName" type="text" value="' + esc(d['Hunter first name'] || splitName(d['Hunter name']).first) + '" autocapitalize="words" autocorrect="off" spellcheck="false"></div>' +
+        '<div><label for="e_lastName">Last name</label><input id="e_lastName" type="text" value="' + esc(d['Hunter last name'] || splitName(d['Hunter name']).last) + '" autocapitalize="words" autocorrect="off" spellcheck="false"></div></div>' +
         '<div class="grid2"><div><label for="e_customerId">Licence number</label><input id="e_customerId" type="text" inputmode="numeric" value="' + esc(d['Customer ID'] || '') + '"></div>' +
         '<div><label for="e_phone">Phone</label><input id="e_phone" type="text" inputmode="tel" value="' + esc(d['Hunter phone'] || '') + '"></div></div>' +
         (isTribalDeer(d)
-          ? '<label for="e_tribalTag">Tribal band number</label><input id="e_tribalTag" type="text" value="' + esc(d['Tribal tag'] || '') + '">' +
+          ? '<label for="e_tribalTag">Tribal band number</label><input id="e_tribalTag" type="text" value="' + esc(d['Tribal tag'] || '') + '" autocapitalize="characters" autocorrect="off" autocomplete="off" spellcheck="false">' +
             '<label for="e_townOfHarvest">Town of harvest</label><select id="e_townOfHarvest">' + townOptions(d['Town of harvest'] || '') + '</select>' +
             /* Martin, 10 November. Worth spelling out on the form, because the field looks
                optional and on a donated tribal deer it is the row's surname. */
             '<p class="status">Taken under tribal authority: no MassWildlife customer ID and no seal number. On his sheet it goes across as TRIBAL, the town of harvest in place of the surname, and the band number as the confirmation.' +
             (!String(d['Town of harvest'] || '').trim() && d['Type'] === 'Donated'
               ? ' <b>The town is still missing, so this one cannot go to Martin yet.</b>' : '') + '</p>'
-          : '<label for="e_confirmation">MassWildlife confirmation</label><input id="e_confirmation" type="text" autocapitalize="characters" value="' + esc(d['MassWildlife confirmation'] || '') + '">' +
+          : '<label for="e_confirmation">MassWildlife confirmation</label><input id="e_confirmation" type="text" autocapitalize="characters" value="' + esc(d['MassWildlife confirmation'] || '') + '" autocorrect="off" autocomplete="off" spellcheck="false">' +
             /* A deer is sometimes only discovered to be tribal after it is on the rail — the hunter
                is not always the person who dropped it off — and a tag typed into the confirmation
                box because there was nowhere else for it has to be movable. Ticking this clears both
                state fields, and the Edits tab records what was in them. */
             (isMgr() && !d['Sent to Martin']
               ? '<label class="choice"><input id="e_tribal" type="checkbox"> This is a tribal deer <span class="hint">No MassWildlife customer ID or seal number. Ticking this clears both and asks for the tribal band number instead — what was in them is kept on the Edits tab.</span></label>' +
-                '<div id="e_tribalnew" hidden><label for="e_tribalTag2">Tribal band number</label><input id="e_tribalTag2" type="text" autocapitalize="characters">' +
+                '<div id="e_tribalnew" hidden><label for="e_tribalTag2">Tribal band number</label><input id="e_tribalTag2" type="text" autocapitalize="characters" autocorrect="off" autocomplete="off" spellcheck="false">' +
                   '<label for="e_townOfHarvest2">Town of harvest</label><select id="e_townOfHarvest2">' + townOptions('') + '</select>' +
                   '<p class="status">Martin reads the town as the last name on a tribal row, so it goes across in place of the hunter’s surname.</p></div>'
               : '')) +
@@ -2169,8 +2169,8 @@
       '<div class="grid2"><div><label for="tw">Taken with</label><select id="tw"><option value="">Choose\u2026</option><option>Archery</option><option>Shotgun slug</option><option>Muzzleloader</option><option>Not known</option></select></div>' +
       '<div id="ammobox" hidden><label for="am">Ammunition <span class="hint">lead or copper/solid</span></label><select id="am"><option value="">Choose\u2026</option><option>Lead</option><option>Non-lead</option><option>Not known</option></select></div></div>' +
       '<div class="grid2">' +
-      '<div><label for="fn">Hunter first name</label><input id="fn" type="text" autocomplete="off"></div>' +
-      '<div><label for="ln">Hunter last name</label><input id="ln" type="text" autocomplete="off"></div>' +
+      '<div><label for="fn">Hunter first name</label><input id="fn" type="text" autocomplete="off" autocapitalize="words" autocorrect="off" spellcheck="false"></div>' +
+      '<div><label for="ln">Hunter last name</label><input id="ln" type="text" autocomplete="off" autocapitalize="words" autocorrect="off" spellcheck="false"></div>' +
       /* A deer taken under tribal authority has neither of the two state numbers — no customer ID,
          no seal number — and carries a band the tribe issues and secures (Joe, 10 November). The
          tick swaps both fields for that one number. It is a flag ON TOP of the type, not a fourth
@@ -2178,7 +2178,7 @@
          Brian Vanderhoop's tag went into the MassWildlife confirmation box this afternoon because
          there was nowhere else for it, and that box is a cell on the state's own sheet. */
       '<div style="grid-column:1/-1"><label class="choice" style="margin:0"><input id="tribal" type="checkbox"> Tribal deer <span class="hint">Issued and secured by the tribe. No MassWildlife customer ID or seal number — the tribal band number is the record.</span></label></div>' +
-      '<div id="tribalbox" hidden style="grid-column:1/-1"><label for="ttag">Tribal band number</label><input id="ttag" type="text" autocapitalize="characters">' +
+      '<div id="tribalbox" hidden style="grid-column:1/-1"><label for="ttag">Tribal band number</label><input id="ttag" type="text" autocapitalize="characters" autocorrect="off" autocomplete="off" spellcheck="false">' +
         /* Martin reads this as the surname on his sheet (10 November), so on a donated tribal deer
            it is the row's key field and not a nicety. Asked at the door because the hunter is
            standing there and nobody will know it a week later. */
@@ -2204,7 +2204,7 @@
          note saying why; the number is added later through Fix the record. On a donated deer
          Martin's Confirmation/Seal # cell is blank until then — Joe's decision, same day — and
          nothing else about his row changes. */
-      '<div id="cfbox"><label for="cf">MassWildlife confirmation number</label><input id="cf" type="text">' +
+      '<div id="cfbox"><label for="cf">MassWildlife confirmation number</label><input id="cf" type="text" autocapitalize="characters" autocorrect="off" autocomplete="off" spellcheck="false">' +
         '<label class="choice" style="margin-top:6px"><input id="cfna" type="checkbox"> <span><b>Hunter unable to obtain number</b><br><span class="hint">The state system would not give one. Add it later with Fix the record.</span></span></label></div>' +
       '<div><label for="sd">Date of the shot <span class="hint">the Home Ground ID is built from it</span></label><input id="sd" type="date" value="' + isoDate(now) + '" max="' + isoDate(now) + '"></div>' +
       '</div>' +
@@ -2221,7 +2221,7 @@
       '<div id="arrbox" hidden><label for="arr">Arrived at the cooler <span class="hint">hours hung is counted from here</span></label>' +
       '<input id="arr" type="datetime-local"></div>' +
       '<div id="addrbox" hidden><label for="ad1">Hunter mailing address <span class="hint">TFMV mails the donation check here</span></label><input id="ad1" type="text" autocomplete="street-address" placeholder="Street or PO box">' +
-      '<div class="grid2"><div><label for="adt">Town</label><input id="adt" type="text"></div><div><label for="ads">State</label><input id="ads" type="text" value="MA" maxlength="2" autocapitalize="characters"></div>' +
+      '<div class="grid2"><div><label for="adt">Town</label><input id="adt" type="text" autocapitalize="words" autocorrect="off" spellcheck="false"></div><div><label for="ads">State</label><input id="ads" type="text" value="MA" maxlength="2" autocapitalize="characters"></div>' +
       '<div><label for="adz">ZIP</label><input id="adz" type="text" inputmode="numeric" maxlength="10"></div></div>' +
       /* A required field nobody can satisfy gets defeated, not obeyed: every donated row checked in
          before 4 November carries "Na, Na, MA 555555". A deer dropped off out of hours arrives
@@ -2732,7 +2732,7 @@
   async function showScan() {
     frame('scan', 'Scan a band', '<div class="card"><p class="status">Point the camera at the QR code on the band. For a deer coming out of the cooler this opens the move straight away; a hang-only deer opens the collection form. Check the name before you save \u2014 bands hang close together.</p>' +
       '<video id="sv" playsinline muted style="width:100%;border-radius:12px;background:#000"></video><canvas id="sc" hidden></canvas><div id="sm"></div>' +
-      '<label for="sb">Or type the band number</label><input id="sb" type="text" autocapitalize="characters"><button class="btn" id="sg" style="margin-top:8px">Open</button></div>');
+      '<label for="sb">Or type the band number</label><input id="sb" type="text" autocapitalize="characters" autocorrect="off" autocomplete="off" spellcheck="false" inputmode="numeric"><button class="btn" id="sg" style="margin-top:8px">Open</button></div>');
     const msg = h => { document.getElementById('sm').innerHTML = h; };
     document.getElementById('sg').onclick = () => { const v = document.getElementById('sb').value.trim(); if (v) { stopScan(); showDeer(v, true); } };
     try {
@@ -3084,7 +3084,7 @@
       (d.inWindow ? '<div class="note ok">Inside the posted drop-off hours, so somebody should already be there.</div>'
         : w ? '<div class="note warn">Outside the posted hours. Whoever goes gets the $' + d.calloutFee + ' call-out fee.' +
           ' If the deer can wait, the next window is ' + esc(w.day) + ' ' + t12(w.start) + ' to ' + t12(w.end) + '.</div>' : '') +
-      '<label for="dhunter">Hunter\'s name</label><input id="dhunter" maxlength="60" autocomplete="off">' +
+      '<label for="dhunter">Hunter\'s name</label><input id="dhunter" maxlength="60" autocomplete="off" autocapitalize="words" autocorrect="off" spellcheck="false">' +
       '<label for="dphone">Their number <span class="hint">So whoever goes can reach them</span></label><input id="dphone" type="tel" maxlength="24" autocomplete="off">' +
       '<label for="dwhen">When are they coming? <span class="hint">Optional</span></label><input id="dwhen" maxlength="40" placeholder="e.g. in 20 minutes, or 5:30" autocomplete="off">' +
       '<label for="ddeer">Deer <span class="hint">Optional</span></label><input id="ddeer" maxlength="40" placeholder="e.g. doe, or 2 deer" autocomplete="off">' +
@@ -3441,7 +3441,7 @@
       (!priv && !d.open && d.passCallout && d.charging
         ? '<label class="choice"><input type="checkbox" id="ocnc"> <span>This collection is <b>not</b> a call-out — we were here anyway</span></label>'
         : '') +
-      '<label for="octo">Who is collecting it?</label><input id="octo" type="text" autocomplete="off" value="' + esc(x.hunter || '') + '">' +
+      '<label for="octo">Who is collecting it?</label><input id="octo" type="text" autocomplete="off" value="' + esc(x.hunter || '') + '" autocapitalize="words" autocorrect="off" spellcheck="false">' +
       (priv ? '<label for="oclb">Pounds going out <span class="hint">Leave as is unless it was reweighed</span></label>' +
         '<input id="oclb" type="number" inputmode="decimal" value="' + esc(x.lb || '') + '">' : '') +
       (owes
@@ -3691,11 +3691,21 @@
     ['Cash deposit', 'Dollars in the envelope dropped in the safe. Note: number of payments and both sets of initials'],
     ['Bank deposit', 'Managers only. Dollars taken from the safe to the bank. Note: deposit slip number']];
   const myLogs = () => LOGS.filter(l => l[0] !== 'Bank deposit' || isMgr());
+  /* Which keyboard the reading gets (v101). A test-strip reading, an ice-point temperature and a
+     dollar amount are numbers, and were being typed on the letter keyboard; a complaint's lot
+     number and the name of the pumping company are not. Follows the kind of entry chosen. */
+  const LOG_NUMERIC = ['Sanitizer test', 'Thermometer check', 'Cash deposit', 'Bank deposit'];
+  document.addEventListener('change', e => { if (e.target && e.target.id === 'lt') logKeyboard(); });
+  function logKeyboard() {
+    const t = document.getElementById('lt'), v = document.getElementById('lv');
+    if (t && v) v.setAttribute('inputmode', LOG_NUMERIC.indexOf(t.value) >= 0 ? 'decimal' : 'text');
+  }
   function showDaily() {
+    setTimeout(logKeyboard, 0);
     frame('daily', 'Log book',
       '<div class="card"><label for="lt">What are you logging?</label><select id="lt">' + myLogs().map(l => '<option value="' + esc(l[0]) + '">' + esc(l[0]) + '</option>').join('') + '</select>' +
       '<div id="unitbox" hidden><label for="lu">Which one?</label><select id="lu"></select></div>' +
-      '<label for="lv">Reading or result <span class="hint" id="lh"></span></label><input id="lv" type="text">' +
+      '<label for="lv">Reading or result <span class="hint" id="lh"></span></label><input id="lv" type="text" autocorrect="off" spellcheck="false">' +
       '<label for="ln">Note</label><textarea id="ln"></textarea><div id="err" class="err"></div><button class="submit" id="save">Save to the log</button></div>' +
       '<p class="status">Cleaning and the pre-op check have their own signed records: Home › <b>Pre-op sanitation</b> and <b>Operational sanitation</b>. Cooler, freezer and MHU temperatures are monitored continuously by the sensors.</p>');
     const sel = document.getElementById('lt'), hint = () => {
@@ -4626,7 +4636,7 @@
     frame(cfg.name, '',
       '<div class="card">' + masthead(cfg.formTitle) + '<div class="sign"><div><label for="sd">Date</label><input id="sd" type="text" value="' + esc(stamp().split(' ')[0]) + '" readonly></div>' +
       '<div><label for="stm">Time</label><input id="stm" type="time" value="' + esc(nowHM().replace(/^(\d):/, '0$1:')) + '"></div></div>' +
-      '<label for="sin">Your initials</label><input id="sin" type="text" maxlength="4" autocapitalize="characters" value="' + esc(myInitials()) + '">' +
+      '<label for="sin">Your initials</label><input id="sin" type="text" maxlength="4" autocapitalize="characters" value="' + esc(myInitials()) + '" autocorrect="off" autocomplete="off" spellcheck="false">' +
       '<p class="status">' + cfg.intro + '</p></div>' +
       '<div class="card"><button class="btn ghost" id="allgood" style="width:100%">' + esc(cfg.allLabel) + '</button>' +
       '<p class="status" style="margin-top:8px">Walk the room first. Your initials go on this record: ' + esc(cfg.allWhy) + '</p>' +
@@ -4752,7 +4762,7 @@
     frame('corrective', '',
       '<div class="card">' + masthead('Sanitation Corrective Action Form') + '<div class="sign"><div><label for="cd">Date</label><input id="cd" type="text" value="' + esc(stamp().split(' ')[0]) + '" readonly></div>' +
       '<div><label for="ct">Time</label><input id="ct" type="time" value="' + esc(nowHM().replace(/^(\d):/, '0$1:')) + '"></div></div>' +
-      '<label for="ci">Your initials</label><input id="ci" type="text" maxlength="4" autocapitalize="characters" value="' + esc(myInitials()) + '">' +
+      '<label for="ci">Your initials</label><input id="ci" type="text" maxlength="4" autocapitalize="characters" value="' + esc(myInitials()) + '" autocorrect="off" autocomplete="off" spellcheck="false">' +
       /* The form asked what you did about it and never what it was. The SOP has named this since
          5 November: Part 1 records "what was found, what was done, what prevents it returning".
          It sits above the parts because it is the first thing you know (Joe, 7 November). */
