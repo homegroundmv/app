@@ -348,7 +348,35 @@
      drawn, which is what a save or a navigation does. Only real input counts (isTrusted), so
      code that sets a value itself does not freeze a screen nobody has touched. */
   let touchedEl = null;
-  const MARKS = '[data-set], #allgood, [data-yn] [data-v]';   // marks made by tapping a button, not an input
+  const MARKS = '[data-set], #allgood, [data-yn] [data-v], [data-chip]';   // marks made by tapping a button, not an input
+
+  /* Reasons to tap instead of type (v100). Four screens insist on a reason \u2014 fixing a clock-out,
+     Undo, Correct the record, Void \u2014 and each had only a text box, which in gloves means the
+     reason is skipped, or is "x". The reason IS the record on all four, so the common ones are
+     one tap and the box stays for anything else. A tap fills the box with those words: what is
+     saved is exactly what would have been typed, and nothing downstream knows the difference.
+     Wired once, by delegation, because every one of these forms is drawn with innerHTML. */
+  const WHY_PRESETS = {
+    clock: ['Forgot to clock out', 'Phone died', 'No signal', 'Clocked out by mistake'],
+    undo: ['Tapped the wrong deer', 'Tapped the wrong button', 'Done too early', 'Wrong weight or count'],
+    edit: ['Typo at check-in', 'Hunter gave new details', 'Wrong hunter picked', 'Confirmation number added later'],
+    void: ['Checked in twice', 'Test entry', 'Wrong deer entirely', 'Hunter took it back'],
+  };
+  const chips = (kind, inputId) => '<div class="chips" data-chips="' + inputId + '" style="display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 8px">' +
+    WHY_PRESETS[kind].map(r => '<button type="button" class="btn ghost" data-chip style="padding:12px 14px;min-height:48px;font-size:15px;font-weight:600">' + esc(r) + '</button>').join('') + '</div>';
+  const paintChips = box => { const inp = document.getElementById(box.dataset.chips); if (!inp) return;
+    box.querySelectorAll('[data-chip]').forEach(c => { const on = c.textContent === inp.value.trim();
+      c.style.background = on ? 'var(--green)' : ''; c.style.color = on ? '#fff' : ''; c.setAttribute('aria-pressed', on ? 'true' : 'false'); }); };
+  document.addEventListener('click', e => {
+    const c = e.target && e.target.closest && e.target.closest('[data-chip]'); if (!c) return;
+    const box = c.closest('[data-chips]'), inp = box && document.getElementById(box.dataset.chips); if (!inp) return;
+    inp.value = inp.value.trim() === c.textContent ? '' : c.textContent;     // a second tap takes it back out
+    paintChips(box);
+  });
+  document.addEventListener('input', e => {       // typing something else lets go of the chip
+    const t = e.target; if (!t || !t.id) return;
+    const box = document.querySelector('[data-chips="' + t.id + '"]'); if (box) paintChips(box);
+  });
   const noteTouch = e => {
     if (!e.isTrusted || !e.target || !e.target.closest || !$app.contains(e.target)) return;
     if (e.type === 'click') { const m = e.target.closest(MARKS); if (m) touchedEl = m; return; }
@@ -977,7 +1005,7 @@
           ' (' + esc(x.hours || '0') + ' h)' + (x.autoClosed ? ' — closed automatically' : '') +
           (x.corrected ? ' — already corrected' : '') + '</option>').join('') + '</select>' +
         '<label for="co">What time did you actually leave?</label><input id="co" type="time">' +
-        '<label for="cwhy">Why <span class="hint">goes on the record beside the change</span></label><input id="cwhy" type="text" placeholder="Forgot to clock out, left after the last deer">' +
+        '<label for="cwhy">Why <span class="hint">goes on the record beside the change</span></label>' + chips('clock', 'cwhy') + '<input id="cwhy" type="text" placeholder="Or type what happened">' +
         '<p class="status">The time the clock recorded is kept alongside this, and the managers are told.</p>' +
         '<div id="coerr" class="err"></div><button class="btn" id="cook">Save the correction</button> <button class="btn ghost" id="cox">Cancel</button></div>');
       document.getElementById('cox').onclick = () => showHome();
@@ -1140,7 +1168,8 @@
       (u.step === 'finish' ? ' <b>The first package number is kept</b>, so labels already written still match.' : '') +
       '</div>' +
       '<label for="uwhy">Why <span class="hint">goes on the deer and in the log</span></label>' +
-      '<input id="uwhy" type="text" autocomplete="off" placeholder="Tapped the wrong deer">' +
+      chips('undo', 'uwhy') +
+      '<input id="uwhy" type="text" autocomplete="off" placeholder="Or type what happened">' +
       '<div class="err" id="uerr"></div>' +
       '<button class="submit" id="uok">Undo it</button> <button class="btn ghost" id="ux">Keep it as it is</button></div>';
     document.getElementById('ux').onclick = () => { host.innerHTML = ''; };
@@ -1624,10 +1653,10 @@
         '<div class="grid2"><div><label for="e_takenWith">Taken with</label><select id="e_takenWith">' + opts(['Archery', 'Shotgun slug', 'Muzzleloader', 'Not known'], d['Taken with']) + '</select></div>' +
         '<div><label for="e_ammunition">Ammunition</label><select id="e_ammunition">' + opts(['Lead', 'Non-lead', 'Not known'], d['Ammunition']) + '</select></div></div>' +
         '<label for="e_notes">Notes</label><input id="e_notes" type="text" value="' + esc(d['Notes'] || '') + '">' +
-        '<label for="er">Why <span class="hint">goes on the record beside the change</span></label><input id="er" type="text" placeholder="Licence read back off the hunter’s card">',
+        '<label for="er">Why <span class="hint">goes on the record beside the change</span></label>' + chips('edit', 'er') + '<input id="er" type="text" placeholder="Or type what happened">',
       void: () => '<p class="status">The row stays on the record and is marked voided, with your name and the reason on it. It stops counting in the cooler, on this board, in the totals and on the Donation report. Nothing is deleted.</p>' +
         (d['First pack #'] && d['Last pack #'] ? '<p class="note bad">This deer was packaged: <b>' + esc(d['First pack #']) + ' to ' + esc(d['Last pack #']) + '</b>. Voiding it frees those package numbers, and nothing renumbers the deer that came after. Fix the numbering by hand before the next drop-off.</p>' : '') +
-        '<label for="vr">Why</label><input id="vr" type="text" placeholder="Duplicate of 1017202601, checked in twice">',
+        '<label for="vr">Why</label>' + chips('void', 'vr') + '<input id="vr" type="text" placeholder="Or type it: duplicate of 1017202601">',
       /* There used to be a warning here that a skin-on carcass should not go into MHU-2. That was
          wrong: unskinned carcasses go into MHU-2 by design, and MHU-2 is filled before MHU-1
          (Joe, 7 November). A warning nobody should heed teaches people to dismiss the ones that
