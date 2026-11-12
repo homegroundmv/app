@@ -561,12 +561,14 @@
     touchedEl = null;   // a screen being drawn is a save, a cancel or a navigation: nothing entered yet
     $app.innerHTML =
       '<header class="top"><img src="icon-192.png" alt=""><div><div class="who">' + esc(st.staff && st.staff.name) + ' · ' + esc(st.staff && st.staff.number) + '</div>' +
-      '<div class="sub">Home Ground Facility ' + esc(APP_VERSION) + ' · <button class="plain" id="out" style="padding:0">Sign out</button></div></div></header>' +
+      /* Sign out left the header in v99. It was a 59 by 18 px link beside the version number, at
+         the top of every screen, acting on one touch: a gloved thumb reaching for Home signed
+         people out, and signing back in needs signal and a PIN. It is at the foot of Home now. */
+      '<div class="sub">Home Ground Facility ' + esc(APP_VERSION) + '</div></div></header>' +
       (noBack ? '' : '<button class="plain" id="home-btn">← Home</button>') +
       (title ? '<h1>' + title + '</h1>' : '') +
       (st.staff && st.staff.demo ? '<div class="note warn"><b>Demo sign-in.</b> Practice data: nothing here goes into the real Facility Log.</div>' : '') +
       '<div id="sync" class="status"></div><div id="msg"></div>' + body;
-    document.getElementById('out').onclick = () => signOut();
     const hb = document.getElementById('home-btn');
     if (hb) hb.onclick = () => showHome();
     status();
@@ -878,7 +880,22 @@
       tell +
       office +
       '<button class="morebtn" id="morebtn"><span id="morearrow">' + (st.moreOpen ? '▾' : '▸') + '</span> Everything else</button>' +
-      '<div id="morebox"' + (st.moreOpen ? '' : ' hidden') + '>' + more + '</div>', true);
+      '<div id="morebox"' + (st.moreOpen ? '' : ' hidden') + '>' + more + '</div>' +
+      /* The last thing on Home, full width, and two taps (v99). The first says what signing out
+         costs (signal and a PIN to get back in, and anything not yet sent) and arms the button;
+         the second signs out. Same "sure?" pattern as Forfeit and the W-9. */
+      '<button class="btn ghost" id="out" style="width:100%;margin-top:22px">Sign out</button><div id="outnote"></div>', true);
+    { const ob = document.getElementById('out');
+      ob.onclick = () => {
+        if (ob.dataset.armed === '1') return signOut();
+        ob.dataset.armed = '1'; ob.textContent = 'Tap again to sign out';
+        const waiting = st.outbox.filter(x => !x.error).length;
+        document.getElementById('outnote').innerHTML = '<div class="note warn">Signing back in needs signal and your PIN.' +
+          (waiting ? ' <b>' + waiting + (waiting === 1 ? ' entry has' : ' entries have') + ' not sent yet.</b> Wait for "Everything sent" first.' : '') +
+          ' <button class="plain" id="outno" style="padding:0">Stay signed in</button></div>';
+        document.getElementById('outno').onclick = () => { ob.dataset.armed = '0'; ob.textContent = 'Sign out'; document.getElementById('outnote').innerHTML = ''; };
+        document.getElementById('outnote').scrollIntoView({ block: 'nearest' });
+      }; }
 
     $app.querySelectorAll('[data-go]').forEach(b => b.onclick = () => GO[b.dataset.go]());
     wireDrops(document.getElementById('alerts'));
