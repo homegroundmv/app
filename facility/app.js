@@ -416,7 +416,7 @@
     redrawing = !!quiet;
     try {
       const busy = formInUse();
-      const onCards = current === 'board' || current === 'donate' || current === 'deer';
+      const onCards = current === 'board' || current === 'deer';
       /* A BACKGROUND redraw never rebuilds a screen the person has entered something on. A redraw
          they asked for (quiet is false: they tapped Refresh, or an action just finished) goes
          ahead as it always did. */
@@ -425,7 +425,6 @@
       if (held) { /* leave it exactly as it is; status() below says why */ }
       else if (current === 'home') showHome();
       else if (current === 'board' && !busy && !boardQuery) showBoard();
-      else if (current === 'donate' && !busy && !document.querySelector('#lic2:focus')) showDonate();
       else if (current === 'deer' && shownBand && !busy) showDeer(shownBand);
       /* The fetched screens redraw themselves by being opened again, which is what happens when
          the real answer arrives behind the cached one. Never while something is half typed. */
@@ -439,7 +438,7 @@
   window.__hgRedraw = redraw;
   window.addEventListener('online', flush);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) flush(); });
-  setInterval(() => { if (!document.hidden && (current === 'home' || current === 'board' || current === 'donate')) { flush(); if (!flushing) refresh(true); } }, 45000);
+  setInterval(() => { if (!document.hidden && (current === 'home' || current === 'board')) { flush(); if (!flushing) refresh(true); } }, 45000);
 
   /* How long ago, in words. For the queue list: "4 minutes ago" tells somebody whether an entry
      is stuck or just made, which a clock time does not. */
@@ -3842,70 +3841,6 @@
       (isViewer() ? '' : '<button class="plain" data-go2="daily">Log a cash deposit</button>') + '</div>';
   }
 
-  /* ---------- Process a donated deer: Martin's columns, one deer at a time ---------- */
-  let donateBand = null;
-  function showDonate() {
-    const all = deerList(), p = st.home.packs || {};
-    const list = all.filter(d => d.Type === 'Donated' && (d.Status === 'Hanging' || d.Status === 'Processing'))
-      .sort((a, b) => (a.Status === 'Processing' ? 0 : 1) - (b.Status === 'Processing' ? 0 : 1) || hoursHung(b) - hoursHung(a));
-    const done = all.filter(d => d.Type === 'Donated' && d.Status === 'Ready').length;
-    if (!list.some(d => d.Band === donateBand)) donateBand = list.length ? list[0].Band : null;
-    const d = list.find(x => x.Band === donateBand);
-    const pk = n => ('000' + n).slice(-4);
-    const nextNote = p.grinder ? '<b>' + esc(p.grinder.band) + '</b> is on the grinder, labeled from <b>' + esc(p.grinder.first) + '</b>. The next deer\'s numbers follow on once it\'s finished.'
-      : 'Next package number: <b style="font-size:20px">' + esc(p.next || '0001') + '</b> (follows on from the last donated deer, automatically)';
-    let body = '<div class="card"><p class="status">Everything Martin\'s Share the Harvest sheet needs, for one donated deer at a time. ' +
-      'Check-in fills the hunter details; the app fills the dates and package numbers.</p><div class="note ok">' + nextNote + '</div>' +
-      (done ? '<p class="status">' + done + ' finished donated deer waiting to go to Martin: <button class="plain" data-go2="martin">Donation report</button></p>' : '') + '</div>';
-    if (!list.length) body += '<div class="card"><p class="status">No donated deer in the cooler right now. Check one in first.</p><button class="btn" data-go2="intake">Check in a deer</button></div>';
-    else {
-      body += '<div class="chips">' + list.map(x => '<button data-pick="' + esc(x.Band) + '" class="' + (x.Band === donateBand ? 'on' : '') + '">' + esc(x.Band) +
-        '<small>' + esc(x.Status === 'Processing' ? (x['First pack #'] ? 'grinding' : 'processing') : 'hanging') + '</small></button>').join('') + '</div>';
-      const [fn, ...rest] = String(d['Hunter name'] || '').trim().split(/\s+/);
-      const first = d['Hunter first name'] || (rest.length ? String(d['Hunter name']).trim().split(/\s+/).slice(0, -1).join(' ') : fn) || '';
-      const last = d['Hunter last name'] || (rest.length ? rest[rest.length - 1] : '');
-      const fp = d['First pack #'];
-      const row = (k, val, note) => '<tr><th>' + esc(k) + '</th><td>' + (val ? '<b>' + esc(val) + '</b>' : '') + (note ? ' <span class="status">' + note + '</span>' : '') + '</td></tr>';
-      body += '<div class="card"><b>' + esc(d.Band) + '</b> <span class="tag don">DONATED</span> <span class="status">' + esc(d.Deer || '') + '</span>' +
-        '<table class="mrow">' +
-        row('Customer ID', d['Customer ID'], d['Customer ID'] ? '' : '<span id="licbox"><input id="lic2" type="text" inputmode="numeric" maxlength="8" placeholder="5 to 8 digits"><button class="btn ghost" id="licsave" style="padding:8px 12px">Save</button></span>') +
-        row('First Name', first) + row('Last Name', last) +
-        row('Date Received', String(d.Intake || '').split(' ')[0]) +
-        row('Confirmation/Seal #', d['MassWildlife confirmation']) +
-        row('Date Packaged', '', 'filled in when you tap Finished') +
-        row('First Pack #', fp, fp ? '' : 'next free number when you start grinding' + (p.grinder ? '' : ' (' + esc(p.next || '0001') + ')')) +
-        row('Last Pack #', '', fp ? 'worked out from the package count' : '') +
-        row('Donation Type', 'whole') +
-        row('Enter Date of Bill Once Billed', '', 'MassWildlife’s own column — we leave it blank') + '</table>';
-      const step = (n, t) => '<div class="grp" style="margin-top:14px">Step ' + n + ' · ' + t + '</div>';
-      if (isViewer()) body += '';
-      else if (d.Status === 'Hanging') body += step(1, 'Start processing') + '<button class="btn" data-a="start">Start processing</button>';
-      else if (!fp) body += step(2, 'Before grinding') + '<p class="status">Get this deer\'s package numbers before the first package comes off the grinder.</p><button class="btn alt" data-a="grind">Get package numbers</button>';
-      else body += step(3, 'Grind, label and finish') + '<div class="note warn" style="font-size:17px">Label the 2 lb packages in order from <b>' + esc(fp) + '</b>: ' + esc(fp) + ', ' + esc(pk(parseInt(fp, 10) + 1)) + ', …</div>' +
-        '<p class="status">When the last package is labeled, tap Finished.</p><button class="btn" data-a="finish">Finished</button>';
-      body += '<div class="form"></div></div>';
-    }
-    frame('donate', 'Process a donated deer', body);
-    if (!document.getElementById('mrow-css')) { const c = document.createElement('style'); c.id = 'mrow-css';
-      c.textContent = '.mrow{width:100%;table-layout:fixed;border-collapse:collapse;margin:10px 0;font-size:15px}.mrow th{text-align:left;font-weight:600;font-size:14px;color:var(--muted);padding:7px 8px 7px 0;width:45%;vertical-align:top;white-space:normal}.mrow td{padding:7px 0;border-bottom:1px solid var(--line);text-align:left;white-space:normal;overflow-wrap:anywhere}.mrow td input{width:100%;box-sizing:border-box;margin:0 0 6px}.mrow td .status{display:block}.mrow th{border-bottom:1px solid var(--line)}' +
-        '.chips{display:flex;gap:6px;overflow-x:auto;padding:4px 0 8px}.chips button{flex:0 0 auto;border:1px solid var(--line);background:#fff;border-radius:10px;padding:8px 12px;font-size:15px;cursor:pointer;color:var(--ink);line-height:1.2}.chips button.on{background:var(--green);color:#fff;border-color:var(--green)}.chips button small{display:block;font-size:11px;opacity:.8}';
-      document.head.appendChild(c); }
-    $app.querySelectorAll('[data-go2]').forEach(b => b.onclick = () => GO[b.dataset.go2]());
-    $app.querySelectorAll('[data-pick]').forEach(b => b.onclick = () => { donateBand = b.dataset.pick; showDonate(); });
-    if (!d) return;
-    const box = $app.querySelector('.form');
-    $app.querySelectorAll('[data-a]').forEach(b => b.onclick = () => act(b.dataset.a, d, box, showDonate));
-    const ls = document.getElementById('licsave');
-    if (ls) ls.onclick = async () => {
-      const lic = (document.getElementById('lic2').value || '').replace(/\D/g, '');
-      if (lic.length < 5 || lic.length > 8) return toast('The MassWildlife customer ID is 5 to 8 digits.');
-      ls.disabled = true;
-      try { await call({ action: 'setlicense', band: d.Band, license: lic });
-        (st.home.deer || []).forEach(x => { if (band(x.Band) === band(d.Band) && x.Status !== 'Released') x['Customer ID'] = lic; }); save(); showDonate(); }
-      catch (e) { ls.disabled = false; toast(e.offline ? 'Needs signal.' : e.message); }
-    };
-  }
-
   /* ---------- Martin's report: rows for his live MassWildlife sheet ---------- */
   /* The guest share Martin sent Joe on 20 Oct. It is a Commonwealth SharePoint file: anyone
      without a MassWildlife sign-in gets a wall, which is why the link says so on its face rather
@@ -4532,7 +4467,7 @@
   }
 
   const GO = { supplies: () => showSupplies(), status: showStatus, speed: showSpeed, board: showBoard, intake: showIntake, shifts: () => showShifts(), messages: showMessages, help: showHelp,
-    numbers: showNumbers, daily: showDaily, team: showTeam, martin: () => showMartin(), donate: showDonate, scan: () => showScan(),
+    numbers: showNumbers, daily: showDaily, team: showTeam, martin: () => showMartin(), scan: () => showScan(),
     preop: showPreop, opssop: showOpSsop, corrective: () => showCorrective(), records: showRecords,
     closeout: showCloseOut,
     skinning: () => showShifts(null, null, 'Skinning'),
