@@ -112,6 +112,9 @@
   // Who a hunter is likely to text or ring: the published number reaches a manager or intake staff.
   const atDoor = () => isMgr() || /intake/i.test((st.staff && st.staff.role) || '');
   const isViewer = () => !!(st.staff && st.staff.viewer);
+  // Who is shown the counter's screens. The backend decides (seesCounter there, backend 76); this
+  // only keeps a processor from being offered a tile that would answer with a refusal.
+  const seesCounter = () => atDoor() || isViewer();
 
   /* ---------- backend ---------- */
   /* ---------- screens that can open on what we already know ----------
@@ -843,7 +846,13 @@
       (preopFirst ? group('Do this first') + big('preop', 'Pre-op sanitation', preopSub, preopCls) : '') +
 
       group('The work') +
-      (doorFirst ? deskTile + boardTile : boardTile + deskTile) +
+      /* A processor gets no Front desk (v97, with backend 76 behind it): that screen is the
+         collection list, with hunters' names and what each owes, and the counter is not his job
+         (Joe, 9 November). The one thing on it that IS anybody's job is saying a deer is on its
+         way, because a hunter may text or ring anyone, so that takes the tile's place. */
+      (doorFirst ? deskTile + boardTile
+        : boardTile + (seesCounter() ? deskTile
+          : big('raisedrop', 'A deer is coming in', 'A hunter texted or rang · tells everyone on the team', 'alt'))) +
 
       /* The three headings say WHEN, which is the question somebody actually has at seven in the
          morning; "Pre-op / Operational / Close-out" are the names of the records, which answers a
@@ -3732,7 +3741,7 @@
       '<div class="card"><b>Today</b><div class="tiles">' + tile(x.today.in, 'Deer in') + tile(x.today.processed, 'Processed') + tile(fmt(x.today.lb), 'lb packaged') + tile(x.today.released, 'Released') + '</div>' +
       (x.today.turnedAway ? '<div class="status">' + x.today.turnedAway + ' turned away today.</div>' : '') + '</div>' +
       (x.cash ? cashHtml(x.cash) : '') +
-      (x.storage && x.storage.hanging ?
+      (x.storage && x.storage.hanging && seesCounter() ?
         '<div class="card"><b>Cold storage</b> <span class="status">hang-only deer</span>' +
         '<div class="tiles">' + tile(x.storage.hanging, 'Hanging') + tile('$' + x.storage.owing, 'Owing') + '</div>' +
         (x.storage.overdue ? '<div class="note warn">' + x.storage.overdue + ' past collection' +
