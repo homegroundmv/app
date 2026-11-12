@@ -1958,10 +1958,18 @@
   function coolerDutyCard(onBoard) {
     const cd = st.home && st.home.coolerDuty;
     if (!cd || !cd.lines || !cd.lines.length) return '';
+    /* The lines are read, not answered (Joe, 12 November: "take the checkboxes off of deer check in
+       and make it text with all of those items, please make it relatively visible and noticeable").
+       Three Done / No / N/A choices a line was a form to fill in with a deer on the trolley. So the
+       list is always on the page, in the amber box so it is not read past, and one button records
+       who walked the cooler and when. */
+    const checklist = '<div class="note warn" id="cdlist" style="font-size:17px"><b>Cooler checklist, after every deer</b>' +
+      '<ul style="margin:8px 0 0;padding-left:22px">' +
+      cd.lines.map(it => '<li style="margin:6px 0"><b>' + esc(it) + '</b></li>').join('') + '</ul></div>';
     if (!cd.outstanding && !cd.waitingOnGrace) {
       return onBoard ? '' :
-        '<p class="status">Cooler squared away' + (cd.lastDone ? ' at ' + esc(cd.lastDone) : '') +
-        (cd.lastBy ? ' by ' + esc(cd.lastBy) : '') + '.</p>';
+        '<div class="card">' + checklist + '<p class="status">Cooler squared away' + (cd.lastDone ? ' at ' + esc(cd.lastDone) : '') +
+        (cd.lastBy ? ' by ' + esc(cd.lastBy) : '') + '.</p></div>';
     }
     /* Within the grace period this is a reminder of what to do next, not a reprimand — nobody can
        hang a deer and clear a trolley in the time it takes to press Save (the 31 October rule:
@@ -1978,10 +1986,6 @@
        bands on the deer will decipher what is donated vs. private." So the side rail is shown as
        where it goes if there is room, never as an instruction, and nothing treats the other side as
        a mistake. What is not optional is getting it off the center rail. */
-    const rails = (cd.taken || []).map(x =>
-      '<div class="trow"><div><b>' + esc(x.band) + '</b> · ' + esc(x.type || '') +
-      (x.hunter ? ' · ' + esc(x.hunter) : '') +
-      '<div class="status">' + esc(x.rail) + ' rail if there is room</div></div></div>').join('');
     return '<div class="card">' +
       (soft
         ? '<div class="note ok"><b>Before the next deer: square the cooler away.</b> ' +
@@ -1989,20 +1993,34 @@
         : '<div class="note bad"><b>Cooler duty outstanding — ' + esc(cd.takenCount) +
           ' deer in since it was last walked.</b><br>A deer left on the <b>center</b> rail blocks every deer ' +
           'behind it from coming out, because the center rail is the only one carrying trolleys.</div>') +
-      (rails ? '<p class="status">Donated go <b>' + esc(cd.railDonated) + '</b> and private or cold storage <b>' +
+      checklist +
+      (cd.railDonated && cd.railPrivate ? '<p class="status">Donated go <b>' + esc(cd.railDonated) + '</b> and private or cold storage <b>' +
         esc(cd.railPrivate) + '</b> where there is room, facing in from the entrance — a preference, not a rule. ' +
-        'At capacity put them where they fit: the <b>band</b> is what says donated or private.</p>' + rails : '') +
-      '<div class="form" id="cdform">' +
-      cd.lines.map((it, i) =>
-        '<div style="margin:10px 0;padding-top:8px;border-top:1px solid #e6e2d8">' +
-        '<div style="margin-bottom:6px">' + esc(it) + '</div>' +
-        ['Done', 'No', 'N/A'].map(v =>
-          '<label class="choice" style="display:inline-block;margin:0 10px 0 0">' +
-          '<input type="radio" name="cd' + i + '" value="' + v + '"> <span>' + v + '</span></label>').join('') +
-        '<input id="cdn' + i + '" type="text" placeholder="Why not? (needed if No)" hidden>' +
-        '</div>').join('') +
-      '<button class="btn" id="cdsave" style="width:100%;margin-top:10px">Cooler is squared away</button>' +
-      '<div class="note bad" id="cderr" hidden></div></div></div>';
+        'At capacity put them where they fit: the <b>band</b> is what says donated or private.</p>' : '') +
+      '<button class="btn" id="cdsave" style="width:100%;margin-top:10px">Cooler is squared away</button></div>';
+  }
+
+  /* Today's check-ins, by what is happening to them (Joe, 12 November): donated on the left,
+     everything else on the right, each a dropdown with its count. It is built from the deer's own
+     check-in time, so it starts again at midnight with nobody clearing it — the list it replaces
+     ran "since the cooler was last walked", which emptied whenever the button was pressed.
+     Check-ins still waiting to send are in deerList(), so it is right with no signal too. */
+  function todayList() {
+    const today = isoDate(new Date());
+    const mine = deerList().filter(d => { const t = parse(d.Intake); return t && isoDate(t) === today; });
+    const of = t => mine.filter(d => d.Type === t);
+    const box = (key, title, list) =>
+      '<details class="drop" data-drop="' + key + '"' + (boardOpen.has(key) ? ' open' : '') + ' style="margin:0 0 8px">' +
+      '<summary style="padding:12px 8px;font-size:16px"><span><b>' + title + '</b> · ' + list.length + '</span></summary>' +
+      '<div class="dropin">' + (list.length
+        ? list.map(d => '<div class="drow" style="padding:8px 2px"><b>' + esc(band(d.Band)) + '</b>' +
+            '<div class="status">' + esc(d['Hunter name'] || 'no name') + (d.Deer ? ' · ' + esc(d.Deer) : '') + '</div></div>').join('')
+        : '<p class="status">None today.</p>') + '</div></details>';
+    return '<div id="todaylist"><label>Checked in today <span class="hint">starts again each day</span></label>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:start">' +
+      '<div>' + box('today-d', 'Donated', of('Donated')) + '</div>' +
+      '<div>' + box('today-p', 'Private Process', of('Private')) + box('today-c', 'Cold Storage Only', of('Cold storage')) + '</div>' +
+      '</div></div>';
   }
 
   /* Wired by delegation: the card is rebuilt on every repaint of the check-in page, so binding by
@@ -2010,26 +2028,14 @@
   function wireCoolerDuty() {
     const cd = st.home && st.home.coolerDuty;
     if (!cd || !cd.lines) return;
-    cd.lines.forEach((it, i) => {
-      document.querySelectorAll('[name="cd' + i + '"]').forEach(r => {
-        r.onchange = () => { const n = document.getElementById('cdn' + i); if (n) n.hidden = r.value !== 'No'; };
-      });
-    });
     const btn = document.getElementById('cdsave');
     if (!btn) return;
     btn.onclick = () => {
-      const err = document.getElementById('cderr');
+      /* One button now stands for the whole list, so every line goes across as Done: that is what
+         pressing "Cooler is squared away" under the list says. The backend still wants a status per
+         line and is unchanged. Something that could not be done goes in a note or to a manager. */
       const items = {};
-      for (let i = 0; i < cd.lines.length; i++) {
-        const picked = document.querySelector('[name="cd' + i + '"]:checked');
-        if (!picked) { err.hidden = false; err.textContent = 'Answer every line: ' + cd.lines[i]; return; }
-        const note = (document.getElementById('cdn' + i) || {}).value || '';
-        if (picked.value === 'No' && !note.trim()) {
-          err.hidden = false; err.textContent = 'Say why: ' + cd.lines[i]; return;
-        }
-        items[cd.lines[i]] = { status: picked.value, note: note.trim() };
-      }
-      err.hidden = true;
+      cd.lines.forEach(it => { items[it] = { status: 'Done', note: '' }; });
       btn.disabled = true; btn.textContent = 'Saving…';
       queue('coolerduty', { items: items, bands: (cd.taken || []).map(x => x.band) }, 'Cooler duty');
       toast('Cooler duty recorded.', true);
@@ -2123,7 +2129,14 @@
          storage reminder is emailed, and a private hunter gets told when his meat is ready. Asking
          only on donated deer meant losing it on the two kinds where somebody is coming back. */
       '<div><label for="hem">Hunter email <span class="hint">the W-9 goes here, and collection reminders</span></label><input id="hem" type="email" inputmode="email" autocomplete="email" autocapitalize="off"></div>' +
-      '<div id="cfbox"><label for="cf">MassWildlife confirmation number</label><input id="cf" type="text"></div>' +
+      /* The state's system for confirming a deer is not always up, so a hunter can be standing here
+         with a legal deer and no number (Joe, 12 November). Refusing the deer for that punishes the
+         hunter for the state's outage. Ticked, the deer is checked in with the number blank and a
+         note saying why; the number is added later through Fix the record. On a donated deer
+         Martin's Confirmation/Seal # cell is blank until then — Joe's decision, same day — and
+         nothing else about his row changes. */
+      '<div id="cfbox"><label for="cf">MassWildlife confirmation number</label><input id="cf" type="text">' +
+        '<label class="choice" style="margin-top:6px"><input id="cfna" type="checkbox"> <span><b>Hunter unable to obtain number</b><br><span class="hint">The state system would not give one. Add it later with Fix the record.</span></span></label></div>' +
       '<div><label for="sd">Date of the shot <span class="hint">the Home Ground ID is built from it</span></label><input id="sd" type="date" value="' + isoDate(now) + '" max="' + isoDate(now) + '"></div>' +
       '</div>' +
       // Filled in as the name is typed, from hunters the log has already seen. Nothing is entered
@@ -2171,7 +2184,7 @@
          for the person with a hunter standing in front of them. Down here it is where the hands
          are when the deer has just been hung. It keeps its own button: squaring the cooler away
          and checking a deer in are two records. The board's "Open it" button scrolls to #cdwrap. */
-      '<div id="cdwrap">' + coolerDutyCard() + '</div>' +
+      '<div id="cdwrap">' + todayList() + coolerDutyCard() + '</div>' +
       '<label for="nt">Notes</label><textarea id="nt"></textarea>' +
       '<div class="err" id="err"></div><button class="submit" id="save">Check in and print band</button>' +
       '<button class="btn ghost" id="away" style="width:100%">Turn this deer away instead</button><div id="awaybox"></div></div>');
@@ -2314,10 +2327,19 @@
       const on = trb.checked;
       const show = (id, vis) => { const el = document.getElementById(id); if (el) el.hidden = !vis; };
       show('tribalbox', on); show('licbox', !on); show('cfbox', !on);
-      if (on) { const l = document.getElementById('lic'), c = document.getElementById('cf');
-                if (l) l.value = ''; if (c) c.value = ''; }
+      if (on) { const l = document.getElementById('lic'), c = document.getElementById('cf'), n = document.getElementById('cfna');
+                if (l) l.value = ''; if (c) { c.value = ''; c.disabled = false; } if (n) n.checked = false; }
       else { const t = document.getElementById('ttag'); if (t) t.value = ''; }
     };
+    // No number to be had: the box is cleared and greyed, so nothing half-typed goes on the record.
+    const cfna = document.getElementById('cfna');
+    if (cfna) cfna.onchange = () => {
+      const c = document.getElementById('cf');
+      if (c) { if (cfna.checked) c.value = ''; c.disabled = cfna.checked; }
+    };
+    $app.querySelectorAll('#todaylist details.drop').forEach(x => x.addEventListener('toggle', () => {
+      if (x.open) boardOpen.add(x.dataset.drop); else boardOpen.delete(x.dataset.drop);
+    }));
     document.getElementById('earlier').onchange = e => {
       const box = document.getElementById('arrbox'), arr = document.getElementById('arr');
       box.hidden = !e.target.checked;
@@ -2464,7 +2486,8 @@
       if (type === 'Donated' && !noAddr && (!v('ad1') || !v('adt') || !v('adz'))) return err('Enter the hunter\'s mailing address (street, town and ZIP), or tick "No address to hand". TFMV mails the donation check there.');
       if (!v('tw')) return err('Say how the deer was taken. It decides how hard the wound channel is trimmed.');
       if ((v('tw') === 'Shotgun slug' || v('tw') === 'Muzzleloader') && !v('am')) return err('Lead or non-lead? Ask the hunter \u2014 it changes how the meat is trimmed.');
-      if (!tribal && !v('cf')) return err('Enter the MassWildlife confirmation number. No confirmation number, no intake.');
+      const noCf = !tribal && !!(document.getElementById('cfna') || {}).checked;
+      if (!tribal && !noCf && !v('cf')) return err('Enter the MassWildlife confirmation number, or tick "Hunter unable to obtain number" if the state system would not give one.');
       /* The confirmation number is the state's seal for one animal. Backfilling a season off another
          processor's sheet is where this goes wrong: a hunter's name appears several times, the first
          number under it gets used twice, and nobody finds out until packages have shipped under a
@@ -2506,7 +2529,8 @@
         shotDate: v('sd'),
         arrived: document.getElementById('earlier').checked ? v('arr') : '',
         dressed4h: document.getElementById('fd').checked, ddp: document.getElementById('ddp').checked, skinned: false,
-        notes: (v('nt') + (clash ? ' [confirmation also on band ' + band(clash.Band) + ', entered on purpose]' : '')).trim(),
+        notes: (v('nt') + (clash ? ' [confirmation also on band ' + band(clash.Band) + ', entered on purpose]' : '') +
+          (noCf ? ' [no MassWildlife confirmation number at check-in: hunter unable to obtain one]' : '')).trim(),
         intakeWeight: v('iw'), weighedAs: document.getElementById('wa').value,
         porkFat: type === 'Private' && !!document.getElementById('pork') && document.getElementById('pork').checked };
       queue('intake', f, 'Check-in ' + b);
