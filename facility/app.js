@@ -830,7 +830,13 @@
     frame('home', '',
       (note ? '<div class="note ok">' + note + '</div>' : '') +
       '<div id="alerts">' + alertsHtml() + dropCardsHtml() + '</div><div id="push"></div>' +
-      (lead ? leadCard(lead) : '') + clockStrip + mine +
+      (lead ? leadCard(lead) : '') + clockStrip +
+      /* One slim red button, on the first screen (Joe, 12 November). Need help went into the
+         "Need help, supplies, messages" group on 8 November and stays first in it; but that made
+         it a scroll and two taps at the one moment nobody has time for either. This is a single
+         line, not the big tile coming back, so the work below it is not pushed down a screen. */
+      '<button class="btn" id="helpnow" data-go="help" style="width:100%;margin:10px 0;background:var(--bad)">Need help</button>' +
+      mine +
 
       // Pre-op is a gate: until it is signed it IS the start of the day, and it sits above the
       // work it has to come before. Once signed it drops into the day's run, ticked.
