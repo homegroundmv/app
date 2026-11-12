@@ -3553,7 +3553,25 @@
       showFees();
     };
     const ff = document.getElementById('ff');
-    if (ff) ff.onclick = () => go({ band: band, note: document.getElementById('fwhy').value.trim() }, 'forfeit');
+    /* Two taps (v98). One tap used to take a hunter's deer: it becomes a donated deer, goes on
+       MassWildlife's sheet as a donation, and what he owes is written off. That is not a thing to
+       do with a thumb that landed in the wrong place. The first tap says exactly what will
+       happen and arms the button; the second does it. Same pattern as "Already sent" on the
+       tax-form card, so there is one way of being asked "sure?" in this app. */
+    if (ff) ff.onclick = () => {
+      if (ff.dataset.armed !== '1') {
+        ff.dataset.armed = '1'; ff.textContent = 'Tap again to forfeit ' + band;
+        document.getElementById('serr').innerHTML = '<div class="note warn" id="ffwarn"><b>This takes ' + esc(x.hunter || 'the hunter') +
+          '\u2019s deer.</b> ' + esc(band) + ' becomes a donated deer and goes on MassWildlife\u2019s sheet, and ' +
+          (x.waived ? 'the charge is closed' : money(x.owing) + ' owing is written off') +
+          '. Tap again only if that is what you mean. <button class="plain" id="ffno" style="padding:0">Don\u2019t forfeit</button></div>';
+        const no = document.getElementById('ffno');
+        if (no) no.onclick = () => { ff.dataset.armed = '0'; ff.textContent = 'Forfeit ' + band + ' to donation'; document.getElementById('serr').textContent = ''; };
+        return;
+      }
+      ff.disabled = true;
+      go({ band: band, note: document.getElementById('fwhy').value.trim() }, 'forfeit').then(() => { const f2 = document.getElementById('ff'); if (f2) { f2.disabled = false; f2.dataset.armed = '0'; f2.textContent = 'Forfeit ' + band + ' to donation'; } });
+    };
   }
 
   /* ---------- numbers ---------- */
@@ -4111,6 +4129,17 @@
     };
     $app.querySelectorAll('[data-tax]').forEach(b => b.onclick = async () => {
       const tout = document.getElementById('taxout');
+      /* Two taps (v98): this sends an email to a hunter with Tick Free MV copied in, and a sent
+         email cannot be called back. The first tap arms this one button and disarms any other;
+         the second sends. Backend 77 refuses a second send for the same hunter in any case. */
+      if (b.dataset.armed !== '1') {
+        $app.querySelectorAll('[data-tax]').forEach(o => { o.dataset.armed = '0'; o.textContent = 'Send it'; });
+        $app.querySelectorAll('[data-taxdone]').forEach(o => { o.dataset.armed = '0'; o.textContent = 'Already sent'; });
+        b.dataset.armed = '1'; b.textContent = 'Sure? Send';
+        if (tout) tout.innerHTML = '<div class="note warn">Tap again to email this hunter the W-9. Tick Free MV is copied on it, and it cannot be unsent.</div>';
+        return;
+      }
+      b.dataset.armed = '0';
       b.disabled = true; b.textContent = 'Sending…';
       try {
         const r = await call({ action: 'taxform', band: b.dataset.tax, clientId: 'tax-' + b.dataset.tax + '-' + Date.now() });
@@ -4133,6 +4162,7 @@
       const tout = document.getElementById('taxout');
       if (b.dataset.armed !== '1') {
         $app.querySelectorAll('[data-taxdone]').forEach(o => { o.dataset.armed = '0'; o.textContent = 'Already sent'; });
+        $app.querySelectorAll('[data-tax]').forEach(o => { o.dataset.armed = '0'; o.textContent = 'Send it'; });
         b.dataset.armed = '1'; b.textContent = 'Sure?';
         if (tout) tout.innerHTML = '<div class="note warn">Tap again to take this hunter off the chase. Only do it if you know they have had the W-9 — from Blake, or at the counter.</div>';
         return;
