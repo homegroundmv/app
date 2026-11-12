@@ -1265,14 +1265,17 @@
           esc(placeOf(up)) + ' · ' + esc(rankName(rankOf(up))) + ' · ' + Math.round(hoursHung(up)) + ' h hung' +
           (urgentDeer(up) ? ' — <b>near the maximum hold, so it goes first whatever its priority</b>'
             : unpaidDeer(up) ? ' — <b>unpaid</b>, so it cannot be started until the money is in' : '') +
-          '</div>';
+          '</div>' +
+          /* The board named the next deer and then made the processor go and find it: past the
+             band colours, into Cooler, into Donated, down the list (seven steps, counted on
+             11 November). The deer it names is one tap away now. */
+          '<button class="btn" id="nextup" data-next="' + esc(up.Band) + '" style="width:100%">Open this deer</button>';
       })() +
       '<div class="status">Each list runs longest-hanging first. Tap a deer for its card. Amber: ' + s.startBy + ' hours hung, start processing. Red: over the maximum hold, tell Joe.</div>' +
       '<button class="plain" id="reload">Refresh now</button></div>' +
       '<div class="card"><label for="bsearch">Find a deer <span class="hint">hunter ID, confirmation # or name</span></label>' +
       '<input id="bsearch" type="text" enterkeyhint="search" autocomplete="off" value="' + esc(boardQuery) + '" placeholder="1690575, MY4M3P or Bellabuono">' +
       '<div id="bhits">' + searchHtml(boardQuery) + '</div></div>' +
-      bandKeyHtml() +
       (bandFilter ? '<div class="note ok">Showing ' + esc(bandFilter) + ' bands only. <button class="plain" id="clearband" style="padding:0">Show them all</button></div>' : '') +
       drop('Cooler', 'Cooler', cooler, coolerInner) +
       drop('MHU-2', 'MHU-2', m2, null, s.mhu2Cap || 20) +
@@ -1283,7 +1286,12 @@
           : '<p class="status">Nothing has gone out yet.</p>',
         null,
         released.length > RELEASED_SHOWN ? 'last ' + RELEASED_SHOWN + ' of ' + released.length
-          : released.length ? 'most recent first' : 'none yet'));
+          : released.length ? 'most recent first' : 'none yet') +
+      /* The band colours are a key, and a key goes after the thing it explains. Above the lists it
+         was a screen of scrolling between a processor and the cooler on every visit. The "showing
+         only" note stays above the lists, so a filter left on cannot be missed. */
+      bandKeyHtml());
+    { const nx = document.getElementById('nextup'); if (nx) nx.onclick = () => showDeer(nx.dataset.next); }
     document.getElementById('reload').onclick = () => refresh();
     $app.querySelectorAll('[data-bandkey]').forEach(r => r.onclick = () => {
       bandFilter = bandFilter === r.dataset.bandkey ? '' : r.dataset.bandkey; showBoard();
