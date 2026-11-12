@@ -4092,13 +4092,22 @@
         const pk = data.packaging || [];
         if (!pk.length) return '<div class="card"><b>Packaging to fill in</b>' +
           '<p class="status">Nothing waiting.' + (data.waiting ? ' ' + data.waiting + ' donated deer ' + (data.waiting === 1 ? 'is' : 'are') + ' on his sheet and not packaged yet — they appear here when they are finished.' : '') + '</p></div>';
-        const row = x => '<div class="trow">' +
+        /* Stacked (v103). The tickbox label lays its children out side by side, so the name, the
+           check-in line and the three values became four narrow columns: at phone width the
+           values wrapped a word at a time and ran past the edge of the box. Everything about the
+           deer is now one block beside the tickbox, and F, G and H are three lines, each with its
+           column letter, its heading as it reads on Martin's sheet, and the value to type. Same
+           values, same order. */
+        const val = (col, head, v) => '<div class="pkval" style="display:flex;gap:8px;align-items:baseline;padding:3px 0">' +
+          '<b style="min-width:18px">' + col + '</b> <span style="flex:1">' + head + '</span> <b style="font-size:17px">' + esc(v || '\u2014') + '</b></div>';
+        const row = x => '<div class="trow" style="display:block">' +
           (isMgr() ? '<label class="choice" style="margin:0"><input type="checkbox" data-pk="' + esc(x.band) + '" checked> ' : '<div>') +
+          '<span class="pkbody" style="flex:1;min-width:0;display:block">' +
           '<b>' + esc(x.customerId || '(no Customer ID)') + '</b> ' + esc(x.hunter) +
           '<div class="status">in ' + esc(x.dateIn) + ' \u00b7 seal ' + esc(x.confirmation || '\u2014') + ' \u00b7 on his sheet ' + esc(x.sent) + '</div>' +
-          '<div class="status"><b>F</b> Date Packaged <b>' + esc(x.datePackaged) + '</b> \u00b7 ' +
-          '<b>G</b> First Pack # <b>' + esc(x.firstPack || '\u2014') + '</b> \u00b7 ' +
-          '<b>H</b> Last Pack # <b>' + esc(x.lastPack || '\u2014') + '</b></div>' +
+          '<div class="status" style="margin-top:6px;border-top:1px solid var(--line);padding-top:4px">' +
+          val('F', 'Date Packaged', x.datePackaged) + val('G', 'First Pack #', x.firstPack) + val('H', 'Last Pack #', x.lastPack) + '</div>' +
+          '</span>' +
           (isMgr() ? '</label>' : '</div>') + '</div>';
         return '<div class="card"><b>Packaging to fill in (' + pk.length + ')</b>' +
           '<p class="status">These are already on Martin\'s sheet from check-in. Find each row by its Seal # in column E and type the three values into columns <b>F</b>, <b>G</b> and <b>H</b>. Don\'t paste the whole row again — it would go in twice.</p>' +
