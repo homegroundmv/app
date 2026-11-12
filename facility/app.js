@@ -77,7 +77,7 @@
   }
   function bandKeyHtml() {
     const s = S(), rows = bandKey();
-    return '<div class="card"><b>Band colours</b> <span class="status">what is on the roll each day \u00b7 tap one to show just those deer</span>' +
+    return '<div class="card"><b>Band colors</b> <span class="status">what is on the roll each day \u00b7 tap one to show just those deer</span>' +
       rows.map(r => {
         const cls = r.oldest === null ? '' : r.oldest >= s.maxHold ? ' bad' : r.oldest >= s.startBy ? ' warnrow' : '';
         const on = bandFilter === r.name;
@@ -85,7 +85,7 @@
           '<div><b>' + swatch(r.name) + (on ? ' \u2713' : '') + '</b><div class="status">' +
           esc(r.when ? r.when + ' \u00b7 ' + r.date : r.date) +
           (r.n ? ' \u00b7 oldest ' + Math.floor(r.oldest) + ' h' + (r.oldest >= s.maxHold ? ' \u00b7 OVER THE MAXIMUM HOLD' : r.oldest >= s.startBy ? ' \u00b7 start next' : '') : ' \u00b7 none in the cooler') +
-          (r.stale ? ' \u00b7 ' + r.stale + ' of these is a full cycle old, so it carries today\'s colour' : '') +
+          (r.stale ? ' \u00b7 ' + r.stale + ' of these is a full cycle old, so it carries today\'s color' : '') +
           '</div></div><div class="tval">' + (r.n || '\u2014') + '</div></div>';
       }).join('') + '</div>';
   }
@@ -829,7 +829,7 @@
         /* Managers only, and moved here on 7 November: cold storage fees have not been approved or
            announced yet (Joe), so what is owed is not a figure anyone at the counter should be
            quoting to a hunter. */
-        (isMgr() ? big('fees', 'Cold storage', 'Hang-only deer · what is owed, what is past collection', 'alt') : '')
+        (isMgr() ? big('fees', 'Cold storage', 'Cold-storage-only deer · what is owed, what is past collection', 'alt') : '')
       : '';
 
     /* The tiles whose job is to reach another person, behind one tap so the work above them is not
@@ -882,7 +882,7 @@
          way, because a hunter may text or ring anyone, so that takes the tile's place. */
       (doorFirst ? deskTile + boardTile
         : boardTile + (seesCounter() ? deskTile
-          : big('raisedrop', 'A deer is coming in', 'A hunter texted or rang · tells everyone on the team', 'alt'))) +
+          : big('raisedrop', 'A deer is coming in', 'A hunter texted or called · tells everyone on the team', 'alt'))) +
 
       /* The three headings say WHEN, which is the question somebody actually has at seven in the
          morning; "Pre-op / Operational / Close-out" are the names of the records, which answers a
@@ -999,7 +999,7 @@
       catch (e) { fixc.disabled = false; return clockErr('<div class="err">' + esc(e.offline ? 'Needs signal.' : e.message) + '</div>'); }
       fixc.disabled = false;
       const done = shifts.filter(x => x.clockOut);
-      if (!done.length) return clockErr('<div class="status">No finished shifts in the last fortnight to correct.</div>');
+      if (!done.length) return clockErr('<div class="status">No finished shifts in the last two weeks to correct.</div>');
       clockErr('<div class="card" style="margin:10px 0 0;text-align:left"><label for="cs">Which shift</label><select id="cs">' +
         done.map((x, i) => '<option value="' + i + '">' + esc(x.clockIn) + ' – ' + esc(hhmm(x.clockOut)) +
           ' (' + esc(x.hours || '0') + ' h)' + (x.autoClosed ? ' — closed automatically' : '') +
@@ -1608,7 +1608,7 @@
       edit: () => '<p class="status">Corrects what was taken down at check-in. Every change is kept with what it was before, your name and the reason. The band cannot be changed here — a wrong band is a void and a new check-in.</p>' +
         '<div class="grid2"><div><label for="e_firstName">First name</label><input id="e_firstName" type="text" value="' + esc(d['Hunter first name'] || splitName(d['Hunter name']).first) + '" autocapitalize="words" autocorrect="off" spellcheck="false"></div>' +
         '<div><label for="e_lastName">Last name</label><input id="e_lastName" type="text" value="' + esc(d['Hunter last name'] || splitName(d['Hunter name']).last) + '" autocapitalize="words" autocorrect="off" spellcheck="false"></div></div>' +
-        '<div class="grid2"><div><label for="e_customerId">Licence number</label><input id="e_customerId" type="text" inputmode="numeric" value="' + esc(d['Customer ID'] || '') + '"></div>' +
+        '<div class="grid2"><div><label for="e_customerId">MassWildlife customer ID</label><input id="e_customerId" type="text" inputmode="numeric" value="' + esc(d['Customer ID'] || '') + '"></div>' +
         '<div><label for="e_phone">Phone</label><input id="e_phone" type="text" inputmode="tel" value="' + esc(d['Hunter phone'] || '') + '"></div></div>' +
         (isTribalDeer(d)
           ? '<label for="e_tribalTag">Tribal band number</label><input id="e_tribalTag" type="text" value="' + esc(d['Tribal tag'] || '') + '" autocapitalize="characters" autocorrect="off" autocomplete="off" spellcheck="false">' +
@@ -1624,12 +1624,12 @@
                box because there was nowhere else for it has to be movable. Ticking this clears both
                state fields, and the Edits tab records what was in them. */
             (isMgr() && !d['Sent to Martin']
-              ? '<label class="choice"><input id="e_tribal" type="checkbox"> This is a tribal deer <span class="hint">No MassWildlife customer ID or seal number. Ticking this clears both and asks for the tribal band number instead — what was in them is kept on the Edits tab.</span></label>' +
+              ? '<label class="choice"><input id="e_tribal" type="checkbox"> This is a tribal deer <span class="hint">No MassWildlife customer ID or seal number. Checking this clears both and asks for the tribal band number instead — what was in them is kept on the Edits tab.</span></label>' +
                 '<div id="e_tribalnew" hidden><label for="e_tribalTag2">Tribal band number</label><input id="e_tribalTag2" type="text" autocapitalize="characters" autocorrect="off" autocomplete="off" spellcheck="false">' +
                   '<label for="e_townOfHarvest2">Town of harvest</label><select id="e_townOfHarvest2">' + townOptions('') + '</select>' +
                   '<p class="status">Martin reads the town as the last name on a tribal row, so it goes across in place of the hunter’s surname.</p></div>'
               : '')) +
-        (d['Sent to Martin'] ? '<p class="note warn">This deer is already on MassWildlife’s sheet. Changing the licence, the name or the confirmation number makes his copy wrong, so it gets flagged for correcting rather than pasted again.</p>' : '') +
+        (d['Sent to Martin'] ? '<p class="note warn">This deer is already on MassWildlife’s sheet. Changing the customer ID, the name or the confirmation number makes his copy wrong, so it gets flagged for correcting rather than pasted again.</p>' : '') +
         /* What the deer IS, not a typo in what was written down — a hunter changing his mind about
            what happens to it (Joe, 10 November: Bill Courtney moving a deer from cold storage to
            donation). Managers only, and never once it is on Martin's sheet, because changing it
@@ -1910,8 +1910,8 @@
         toast((d['Hunter name'] || d.Band) + ' moved to ' + pick.value + '.', true);
       }
       if (kind === 'skin') {
-        if (!document.getElementById('k1').checked) return err('Skin it and remove the head inside MHU #1, then tick the box.');
-        if (!document.getElementById('k2').checked) return err('Apply the antimicrobial spray, then tick the box.');
+        if (!document.getElementById('k1').checked) return err('Skin it and remove the head inside MHU #1, then check the box.');
+        if (!document.getElementById('k2').checked) return err('Apply the antimicrobial spray, then check the box.');
         const who = isMgr() ? v('sk') : st.staff.number;
         const wn = ((st.home.staff || []).find(x => x.number === who) || st.staff).name;
         queue('skin', { band: d.Band, skinner: who, skinnerName: wn, antimicrobial: true }, 'Skin ' + d.Band);
@@ -1932,13 +1932,13 @@
           if (!v('fup').trim()) return err('$' + owe.owing + ' is still owing. Say why it is being started unpaid.');
         }
         if (!document.getElementById('f0').checked) return err('Check the confirmation number on the tag first. If it doesn\'t match, stop and tell Joe.');
-        if (!document.getElementById('f8').checked) return err('Skin it and remove the head inside MHU #1, then tick the box.');
-        if (!document.getElementById('f9').checked) return err('Apply the antimicrobial spray in MHU #1, then tick the box.');
+        if (!document.getElementById('f8').checked) return err('Skin it and remove the head inside MHU #1, then check the box.');
+        if (!document.getElementById('f9').checked) return err('Apply the antimicrobial spray in MHU #1, then check the box.');
         const naW = document.getElementById('f1na').checked, wv = num(v('f1'));
         if (!naW) {
-          if (!(wv > 0)) return err('Weigh the carcass and enter the weight, or tick Not weighed.');
+          if (!(wv > 0)) return err('Weigh the carcass and enter the weight, or check Not weighed.');
           // 1 lb and 880 lb both reached the log on 4 November. One slipped finger either way.
-          if (wv < 15 || wv > 250) return err(v('f1') + ' lb is outside the range a deer carcass falls in (15–250 lb). Check the scale, or tick Not weighed.');
+          if (wv < 15 || wv > 250) return err(v('f1') + ' lb is outside the range a deer carcass falls in (15–250 lb). Check the scale, or check Not weighed.');
         }
         const p = isMgr() ? v('fp') : st.staff.number;
         const pn = ((st.home.staff || []).find(x => x.number === p) || st.staff).name;
@@ -1959,7 +1959,7 @@
           unpaidReason: (owe && !owe.settled) ? v('fup').trim() : '' }, 'Start ' + d.Band);
       }
       if (kind === 'finish') {
-        if (needsPack) return err('Tap Get package numbers first. A donated deer is labelled from the state\u2019s sequence, not from a bag count.');
+        if (needsPack) return err('Tap Get package numbers first. A donated deer is labeled from the state\u2019s sequence, not from a bag count.');
         const c = calc(), ip = Math.round(num(v('f2')));
         if (byLast && Math.round(num(v('f1'))) > 0 && Math.round(num(v('f1'))) < firstPack) {
           return err('The last package number can\'t be below ' + d['First pack #'] + ', which is where this deer started.');
@@ -1967,10 +1967,10 @@
         if (!(c.pk + ip > 0)) return err(byLast ? 'Enter the number on the last label.' : 'Enter the packages.');
         if (d.Type === 'Donated' && !d['First pack #']) return err('Get package numbers first (needs signal), so every label carries its MassWildlife number.');
         if (ip && !(c.il > 0)) return err('Weigh the intact cuts and enter the total.');
-        if (!document.getElementById('fw').checked) return err(/archery/i.test(d['Taken with'] || '') ? 'Trim the wound channel out and check for broadhead fragments, then tick the box.' : 'Trim 6 inches around the wound channel out of the grind, then tick the box. Fragments travel further than the damage you can see.');
+        if (!document.getElementById('fw').checked) return err(/archery/i.test(d['Taken with'] || '') ? 'Trim the wound channel out and check for broadhead fragments, then check the box.' : 'Trim 6 inches around the wound channel out of the grind, then check the box. Fragments travel further than the damage you can see.');
         if (!(Number(v('f4')) >= 0) || v('f4') === '') return err('Weigh the trim you discarded and enter it.');
-        if (!document.getElementById('f5').checked) return err('Put the allergen sticker on every package, then tick the box. No package leaves without one.');
-        if (d.Type === 'Private' && !document.getElementById('f6').checked) return err('Clear the grinder before the next hunter\'s deer goes through, then tick the box.');
+        if (!document.getElementById('f5').checked) return err('Put the allergen sticker on every package, then check the box. No package leaves without one.');
+        if (d.Type === 'Private' && !document.getElementById('f6').checked) return err('Clear the grinder before the next hunter\'s deer goes through, then check the box.');
         const maxLug = Number(s.lugs) || 24, lug = Math.round(num(v('flug')));
         if (!(lug >= 1 && lug <= maxLug)) {
           return err(v('flug').trim() === ''
@@ -2129,7 +2129,7 @@
     if (!isViewer() && !atDoor()) {
       frame('intake', 'Check in a deer',
         '<div class="note warn" style="font-size:17px"><b>Checking a deer in is done by a manager or whoever is on intake.</b>' +
-        '<br><br>It takes the hunter’s licence details and often his money, so it stays with Joe, the facility ' +
+        '<br><br>It takes the hunter’s license details and often his money, so it stays with Joe, the facility ' +
         'manager, or the person on the door that day.</div>' +
         '<button class="btn" data-go2="help">Need help — nobody is here</button> ' +
         '<button class="btn ghost" data-go2="board">Back to the board</button>');
@@ -2142,7 +2142,7 @@
       '<label>Did this deer come through the Island Access Program?</label>' +
       '<label class="choice"><input type="radio" name="iap" value="Yes"> <span><b>Yes</b>: the hunter is enrolled and took it on an enrolled property</span></label>' +
       '<label class="choice"><input type="radio" name="iap" value="No"> <span><b>No</b>: any other hunter</span></label>' +
-      '<div class="note ok">Home Ground ID: <b id="genid">enter the date of the shot below</b><br><span class="status">Every deer gets one here, printed on the intake band. It stays with the deer from intake to release.</span></div>' +
+      '<div class="note ok">Band number: <b id="genid">enter the date of the shot below</b><br><span class="status">Every deer gets one here, printed on the intake band. It stays with the deer from intake to release.</span></div>' +
       '<label>What is happening to this deer?</label>' +
       '<label class="choice"><input type="radio" name="type" value="Donated"> <span><b>Donated</b> (Share the Harvest). TFMV mails the hunter a check: $' + esc(s.payDoe || 150) + ' a doe, $' + esc(s.payBuck || 100) + ' a buck (any male deer).</span></label>' +
       '<label class="choice"><input type="radio" name="type" value="Private"> <span><b>Private</b>: processed for the hunter, $' + esc(s.privatePrice || 250) + '.</span></label>' +
@@ -2206,7 +2206,7 @@
          nothing else about his row changes. */
       '<div id="cfbox"><label for="cf">MassWildlife confirmation number</label><input id="cf" type="text" autocapitalize="characters" autocorrect="off" autocomplete="off" spellcheck="false">' +
         '<label class="choice" style="margin-top:6px"><input id="cfna" type="checkbox"> <span><b>Hunter unable to obtain number</b><br><span class="hint">The state system would not give one. Add it later with Fix the record.</span></span></label></div>' +
-      '<div><label for="sd">Date of the shot <span class="hint">the Home Ground ID is built from it</span></label><input id="sd" type="date" value="' + isoDate(now) + '" max="' + isoDate(now) + '"></div>' +
+      '<div><label for="sd">Date of the shot <span class="hint">the band number is built from it</span></label><input id="sd" type="date" value="' + isoDate(now) + '" max="' + isoDate(now) + '"></div>' +
       '</div>' +
       // Filled in as the name is typed, from hunters the log has already seen. Nothing is entered
       // until it is tapped.
@@ -2346,7 +2346,7 @@
           '<div class="note ok"><b>' + esc(h.name) + '</b> \u2014 filled in from ' +
           (h.lastSeen ? 'the check-in on ' + esc(h.lastSeen) : 'the last check-in') + '. ' +
           h.deer + (h.deer === 1 ? ' deer' : ' deer') + ' through here. ' +
-          'Check the customer ID against their licence before you save.' +
+          'Check the customer ID against their license before you save.' +
           '<button class="plain" id="hundo" style="margin-top:6px">Not them \u2014 clear it</button></div>' +
           (split
             ? '<div class="note bad">' + esc(h.name) + ' has more than one customer ID in the log: <b>' +
@@ -2371,7 +2371,7 @@
         const h = hits[+b.dataset.h];
         fillFrom(h);
         box.innerHTML = '<div class="note ok">Filled in from ' + esc(h.name) + '\u2019s last check-in. ' +
-          'Check the customer ID against their licence before you save.</div>';
+          'Check the customer ID against their license before you save.</div>';
       });
     }
     ['fn', 'ln'].forEach(id => { const el = document.getElementById(id); if (el) el.oninput = suggestHunters; });
@@ -2475,11 +2475,11 @@
         const out = await call({ action: 'coldgate' });
         feeState = out;
         const gate = !out.ok
-          ? '<div class="note bad"><b>The cooler is ' + out.pct + '% full and is not taking hang-only deer.</b> ' +
+          ? '<div class="note bad"><b>The cooler is ' + out.pct + '% full and is not taking cold-storage-only deer.</b> ' +
             'Donated and privately processed deer still come in. Offer them donation or private processing, ' +
             'or ask them to come back. If they say no, log it as turned away.</div>'
           : out.gated
-            ? '<div class="note warn"><b>The cooler is ' + out.pct + '% full.</b> A manager has to approve a hang-only deer at this point.</div>'
+            ? '<div class="note warn"><b>The cooler is ' + out.pct + '% full.</b> A manager has to approve a cold-storage-only deer at this point.</div>'
             : '';
         const forfeitAt = (s.coldDays || 7) + (s.coldForfeitDays || 7);
         const late = out.open === false;
@@ -2498,7 +2498,7 @@
               'deer still has to come out of the cooler.</div>') +
           (s.coldCharging && late && s.coldPassCallout
             ? '<div class="note warn"><b>Outside posted hours, so the $' + (s.calloutFee || 40) +
-              ' call-out is added</b> — somebody came in specially for this deer. Tick below if it was not a special trip.' +
+              ' call-out is added</b> — somebody came in specially for this deer. Check the box below if it was not a special trip.' +
               '<label class="choice"><input type="checkbox" id="nocallout"> <span>Not a call-out — we were here anyway</span></label></div>'
             : '') +
           /* Payment is DUE at collection, not now. "Bill it and chase them" was the wrong frame:
@@ -2527,9 +2527,9 @@
       const type = (document.querySelector('input[name=type]:checked') || {}).value;
       const iap = iapNow();
       if (!iap) return err('Say whether it\'s an Island Access Program (IAP) deer.');
-      if (!v('sd')) return err('Enter the date of the shot: the Home Ground ID is built from it.');
+      if (!v('sd')) return err('Enter the date of the shot: the band number is built from it.');
       const b = genId();
-      if (!b) return err('Enter the date of the shot: the Home Ground ID is built from it.');
+      if (!b) return err('Enter the date of the shot: the band number is built from it.');
       if (deerList().some(d => band(d.Band) === b && d.Status !== 'Released')) return err('Band ' + b + ' is already in the cooler.');
       if (!type) return err('Choose donated, private or cold storage only.');
       if (!v('deer')) return err('Choose doe, button buck, sub-legal adult male or antlered buck.');
@@ -2552,11 +2552,11 @@
       if (tribal && !v('ttag').trim()) return err('Enter the tribal band number. It is the only number this deer has.');
       if (tribal && type === 'Donated' && !v('thtown').trim()) return err('Which town was it taken in? Martin reads the town as the last name on a tribal row.');
       const noAddr = (document.getElementById('adna') || {}).checked;
-      if (type === 'Donated' && !noAddr && (!v('ad1') || !v('adt') || !v('adz'))) return err('Enter the hunter\'s mailing address (street, town and ZIP), or tick "No address to hand". TFMV mails the donation check there.');
+      if (type === 'Donated' && !noAddr && (!v('ad1') || !v('adt') || !v('adz'))) return err('Enter the hunter\'s mailing address (street, town and ZIP), or check "No address to hand". TFMV mails the donation check there.');
       if (!v('tw')) return err('Say how the deer was taken. It decides how hard the wound channel is trimmed.');
       if ((v('tw') === 'Shotgun slug' || v('tw') === 'Muzzleloader') && !v('am')) return err('Lead or non-lead? Ask the hunter \u2014 it changes how the meat is trimmed.');
       const noCf = !tribal && !!(document.getElementById('cfna') || {}).checked;
-      if (!tribal && !noCf && !v('cf')) return err('Enter the MassWildlife confirmation number, or tick "Hunter unable to obtain number" if the state system would not give one.');
+      if (!tribal && !noCf && !v('cf')) return err('Enter the MassWildlife confirmation number, or check "Hunter unable to obtain number" if the state system would not give one.');
       /* The confirmation number is the state's seal for one animal. Backfilling a season off another
          processor's sheet is where this goes wrong: a hunter's name appears several times, the first
          number under it gets used twice, and nobody finds out until packages have shipped under a
@@ -2730,7 +2730,7 @@
   let scanStream = null;
   function stopScan() { if (scanStream) { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; } }
   async function showScan() {
-    frame('scan', 'Scan a band', '<div class="card"><p class="status">Point the camera at the QR code on the band. For a deer coming out of the cooler this opens the move straight away; a hang-only deer opens the collection form. Check the name before you save \u2014 bands hang close together.</p>' +
+    frame('scan', 'Scan a band', '<div class="card"><p class="status">Point the camera at the QR code on the band. For a deer coming out of the cooler this opens the move straight away; a cold-storage-only deer opens the collection form. Check the name before you save \u2014 bands hang close together.</p>' +
       '<video id="sv" playsinline muted style="width:100%;border-radius:12px;background:#000"></video><canvas id="sc" hidden></canvas><div id="sm"></div>' +
       '<label for="sb">Or type the band number</label><input id="sb" type="text" autocapitalize="characters" autocorrect="off" autocomplete="off" spellcheck="false" inputmode="numeric"><button class="btn" id="sg" style="margin-top:8px">Open</button></div>');
     const msg = h => { document.getElementById('sm').innerHTML = h; };
@@ -2867,7 +2867,7 @@
       showShifts(out, { text: (bookKind === 'Skinning' ? 'Skinning booked: ' : 'Booked: ') + dayName(out.booked.date) + ', ' + t12(out.booked.start) + '–' + t12(out.booked.end) + '.' }, bookKind);
     });
     box.querySelectorAll('[data-day]').forEach(b => b.onclick = () => { bookDay = b.dataset.day; showShifts(data, null, bookKind); });
-    box.querySelectorAll('[data-cancel]').forEach(b => b.onclick = () => { if (confirmCancel()) go(b, { action: 'cancel', id: b.dataset.cancel }, out => showShifts(out, { text: 'Cancelled.' }, out.kind)); });
+    box.querySelectorAll('[data-cancel]').forEach(b => b.onclick = () => { if (confirmCancel()) go(b, { action: 'cancel', id: b.dataset.cancel }, out => showShifts(out, { text: 'Canceled.' }, out.kind)); });
     const sugg = list => {
       const el = document.getElementById('bk-sugg'); if (!el) return;
       el.innerHTML = list && list.length ? '<div class="status" style="margin-top:8px">Open times the same length:</div>' + list.map((x, i) =>
@@ -3064,11 +3064,11 @@
       b.disabled = true;
       const cancelling = !!b.dataset.dropcancel;
       let why = '';
-      if (cancelling) { why = prompt('Why is it being cancelled?', 'Hunter didn\'t come') || ''; if (!why) { b.disabled = false; return; } }
+      if (cancelling) { why = prompt('Why is it being canceled?', 'Hunter didn\'t come') || ''; if (!why) { b.disabled = false; return; } }
       try {
         const out = await call(cancelling ? { action: 'canceldrop', id: b.dataset.dropcancel, why: why } : { action: 'claimdrop', id: b.dataset.claim });
         st.home.drops = out; save();
-        showHome(cancelling ? 'Cancelled.' : 'It\'s yours. Check the deer in when it arrives and this closes itself.');
+        showHome(cancelling ? 'Canceled.' : 'It\'s yours. Check the deer in when it arrives and this closes itself.');
         refresh(true);
       } catch (e) { b.disabled = false; toast(e.offline ? 'Needs signal.' : e.message); }
     });
@@ -3102,7 +3102,7 @@
       try { const out = await call({ action: 'raisedrop', fields: f }); st.home.drops = out; save();
         showHome('The team has been told. You\'ll see who takes it.'); refresh(true); }
       catch (e) { b.disabled = false; b.textContent = 'Tell the team';
-        document.getElementById('err').textContent = e.offline ? 'No signal, so nobody was told. Ring someone.' : e.message; }
+        document.getElementById('err').textContent = e.offline ? 'No signal, so nobody was told. Call someone.' : e.message; }
     };
   }
 
@@ -3149,7 +3149,7 @@
           'Any day with nobody rostered falls to ' + esc(first(d.backstop.name)) + '. ' +
           (d.backstop.firedLast30
             ? 'That has happened <b>' + d.backstop.firedLast30 + ' time' + (d.backstop.firedLast30 === 1 ? '' : 's') + ' in the last 30 days</b>. ' +
-              (d.backstop.firedLast30 > 3 ? 'The rota is doing the opposite of its job \u2014 fill the days in.' : '')
+              (d.backstop.firedLast30 > 3 ? 'The schedule is doing the opposite of its job \u2014 fill the days in.' : '')
             : 'It has not had to happen in the last 30 days.') + '</div>'
         : gaps ? '<div class="note ' + (d.days[0].number ? 'warn' : 'bad') + '"><b>' + gaps + ' of the next 14 days ' + (gaps === 1 ? 'has' : 'have') + ' nobody on call.</b> An unclaimed deer on those days falls to the managers.</div>' : '') +
       (gaps && d.backstop ? '<div class="status" style="margin:8px 0">' + gaps + ' of the next 14 days ' + (gaps === 1 ? 'has' : 'have') + ' nobody rostered.</div>' : '') +
@@ -3236,7 +3236,7 @@
     const band = job.band || out.state || '';
     if (out.status !== 'ok') {
       const why = {
-        payment_canceled: 'The payment was cancelled in Square.',
+        payment_canceled: 'The payment was canceled in Square.',
         not_logged_in: 'Nobody is signed in to Square on this device.',
         no_network_connection: 'Square had no signal.',
         could_not_perform: 'Square has an unfinished transaction open — clear it and try again.',
@@ -3316,14 +3316,14 @@
       (d.open
         ? '<div class="note ok"><b>Posted hours — open.</b> A deer arriving now is not a call-out.</div>'
         : '<div class="note warn"><b>Outside posted hours.</b> Anyone coming in for a deer now is a call-out: Home Ground pays ' +
-          money(d.calloutFee) + (d.passCallout && d.charging ? ', and it is added to a hang-only hunter\'s charge.' : '.') +
+          money(d.calloutFee) + (d.passCallout && d.charging ? ', and it is added to a cold-storage-only hunter\'s charge.' : '.') +
           (d.nextWindow ? ' Next open: ' + esc(d.nextWindow.day + ' ' + d.nextWindow.start) + '.' : '') + '</div>') +
       '<div class="tiles">' + tile(d.today.in, 'In today') + tile(d.today.out, 'Out today') +
       tile(d.cooler.inCooler + '/' + d.cooler.cap, 'Cooler') + tile(d.collect.length, 'To collect') + '</div>' +
       (d.gate && !d.gate.ok
-        ? '<div class="note bad">Cooler at ' + d.gate.pct + '% — <b>no more hang-only deer.</b> Donated and private still come in.</div>'
+        ? '<div class="note bad">Cooler at ' + d.gate.pct + '% — <b>no more cold-storage-only deer.</b> Donated and private still come in.</div>'
         : d.gate && d.gate.gated
-          ? '<div class="note warn">Cooler at ' + d.gate.pct + '% — a manager has to approve a hang-only deer.</div>'
+          ? '<div class="note warn">Cooler at ' + d.gate.pct + '% — a manager has to approve a cold-storage-only deer.</div>'
           : '') +
       '</div>' +
 
@@ -3352,7 +3352,7 @@
          and below and read as though they were covering it (Joe, 6 November). */
       group('2 · At the door') +
       '<div class="card"><b>A deer is here</b>' +
-      '<div class="status">Donated and privately processed deer are never turned away. Only hang-only deer wait for space.</div>' +
+      '<div class="status">Donated and privately processed deer are never turned away. Only cold-storage-only deer wait for space.</div>' +
       '<div class="deskrow"><button class="btn" data-go2="intake">Check a deer in</button></div></div>' +
 
       /* Money still out on deer that are here. It sits above the collection list because this is
@@ -3482,7 +3482,7 @@
       const f = gather();
       if (!f) return;
       const ok = squareStart({ amount: x.owing, band: band, hunter: x.hunter,
-        action: 'checkout', label: 'Check-out', fields: f });
+        action: 'checkout', label: 'Release', fields: f });
       if (!ok) err('Square is not set up on this device. Record it by hand instead.');
     };
 
@@ -3501,8 +3501,8 @@
           f.method = m;
         }
       }
-      queue('checkout', f, 'Check-out ' + band);
-      toast(band + ' checked out.', true);
+      queue('checkout', f, 'Release ' + band);
+      toast(band + ' released.', true);
       showDesk();
     };
   }
@@ -3546,15 +3546,15 @@
       '<div class="tiles">' + tile(d.deer.length, 'Hanging now') + tile(money(d.owingTotal), 'Owing') +
       tile(d.overdueCount, 'Past collection') + tile(money(d.takenThisSeason), 'Taken this season') + '</div>' +
       (d.gate && !d.gate.ok
-        ? '<div class="note bad">The cooler is ' + d.gate.pct + '% full. <b>No more hang-only deer</b> until it comes down. Donated and private still come in.</div>'
+        ? '<div class="note bad">The cooler is ' + d.gate.pct + '% full. <b>No more cold-storage-only deer</b> until it comes down. Donated and private still come in.</div>'
         : d.gate && d.gate.gated
-          ? '<div class="note warn">The cooler is ' + d.gate.pct + '% full. A manager has to approve each hang-only deer.</div>'
+          ? '<div class="note warn">The cooler is ' + d.gate.pct + '% full. A manager has to approve each cold-storage-only deer.</div>'
           : '') + '</div>' +
       (d.deer.length
         ? '<div class="card"><b>In the cooler now (' + d.deer.length + ')</b>' +
           '<div class="status">Longest first. Tap one to log a call, take payment or forfeit it.</div>' +
           d.deer.map(row).join('') + '</div>'
-        : '<div class="card"><b>In the cooler now</b><p class="status">No hang-only deer hanging.</p></div>') +
+        : '<div class="card"><b>In the cooler now</b><p class="status">No cold-storage-only deer hanging.</p></div>') +
       (d.forfeitReady
         ? '<div class="note bad"><b>' + d.forfeitReady + ' deer can be forfeited.</b> Three logged attempts to reach the hunter are needed first, ' +
           'and it only binds because the drop-off slip says so.</div>'
@@ -3784,7 +3784,7 @@
       '<div class="tiles">' + tile(c.donatedHanging, 'Donated hanging') + tile(c.privateHanging, 'Private hanging') +
       (c.coldStorage !== undefined ? tile(c.coldStorage, 'Cold storage') : '') +
       tile(c.processing, 'Being processed') + tile(x.ready.deer, 'Packaged, waiting') + '</div>' +
-      (c.coldOverdue ? '<div class="note warn">' + c.coldOverdue + ' cold-storage deer past ' + c.coldDays + ' days. Ring the hunters \u2014 the Society allows longer while there is room.</div>' : '') +
+      (c.coldOverdue ? '<div class="note warn">' + c.coldOverdue + ' cold-storage deer past ' + c.coldDays + ' days. Call the hunters \u2014 the Society allows longer while there is room.</div>' : '') +
       (c.pastMaxHold ? '<div class="note bad">' + c.pastMaxHold + ' over the ' + c.maxHold + '-hour maximum hold. Tell Joe now.</div>' : '') +
       (c.pastStartBy - c.pastMaxHold > 0 ? '<div class="note warn">' + (c.pastStartBy - c.pastMaxHold) + ' past ' + c.startBy + ' hours: process next.</div>' : '') +
       (x.ready.deer ? '<div class="status">' + fmt(x.ready.lb) + ' lb packaged and waiting for pickup or delivery (' + x.ready.donated + ' donated deer).</div>' : '') + '</div>' +
@@ -3816,7 +3816,7 @@
       (x.today.turnedAway ? '<div class="status">' + x.today.turnedAway + ' turned away today.</div>' : '') + '</div>' +
       (x.cash ? cashHtml(x.cash) : '') +
       (x.storage && x.storage.hanging && seesCounter() ?
-        '<div class="card"><b>Cold storage</b> <span class="status">hang-only deer</span>' +
+        '<div class="card"><b>Cold storage</b> <span class="status">cold-storage-only deer</span>' +
         '<div class="tiles">' + tile(x.storage.hanging, 'Hanging') + tile('$' + x.storage.owing, 'Owing') + '</div>' +
         (x.storage.overdue ? '<div class="note warn">' + x.storage.overdue + ' past collection' +
           (x.storage.forfeitReady ? ', ' + x.storage.forfeitReady + ' can be forfeited' : '') + '.</div>' : '') +
@@ -3852,7 +3852,7 @@
     if (!list.some(d => d.Band === donateBand)) donateBand = list.length ? list[0].Band : null;
     const d = list.find(x => x.Band === donateBand);
     const pk = n => ('000' + n).slice(-4);
-    const nextNote = p.grinder ? '<b>' + esc(p.grinder.band) + '</b> is on the grinder, labelled from <b>' + esc(p.grinder.first) + '</b>. The next deer\'s numbers follow on once it\'s finished.'
+    const nextNote = p.grinder ? '<b>' + esc(p.grinder.band) + '</b> is on the grinder, labeled from <b>' + esc(p.grinder.first) + '</b>. The next deer\'s numbers follow on once it\'s finished.'
       : 'Next package number: <b style="font-size:20px">' + esc(p.next || '0001') + '</b> (follows on from the last donated deer, automatically)';
     let body = '<div class="card"><p class="status">Everything Martin\'s Share the Harvest sheet needs, for one donated deer at a time. ' +
       'Check-in fills the hunter details; the app fills the dates and package numbers.</p><div class="note ok">' + nextNote + '</div>' +
@@ -3882,7 +3882,7 @@
       else if (d.Status === 'Hanging') body += step(1, 'Start processing') + '<button class="btn" data-a="start">Start processing</button>';
       else if (!fp) body += step(2, 'Before grinding') + '<p class="status">Get this deer\'s package numbers before the first package comes off the grinder.</p><button class="btn alt" data-a="grind">Get package numbers</button>';
       else body += step(3, 'Grind, label and finish') + '<div class="note warn" style="font-size:17px">Label the 2 lb packages in order from <b>' + esc(fp) + '</b>: ' + esc(fp) + ', ' + esc(pk(parseInt(fp, 10) + 1)) + ', …</div>' +
-        '<p class="status">When the last package is labelled, tap Finished.</p><button class="btn" data-a="finish">Finished</button>';
+        '<p class="status">When the last package is labeled, tap Finished.</p><button class="btn" data-a="finish">Finished</button>';
       body += '<div class="form"></div></div>';
     }
     frame('donate', 'Process a donated deer', body);
@@ -4108,7 +4108,7 @@
              Pressed early it takes the deer off this card for good while his sheet is still
              blank, so say both things plainly: what the ticks select, and that typing comes
              first. */
-          (isMgr() ? '<p class="status"><b>Tick the ones you have actually typed in</b>, then press the button at the bottom — it records that his sheet is up to date, it does not fill it in for you. Untick anything you did not get to; it stays on this list.</p>' : '') +
+          (isMgr() ? '<p class="status"><b>Check the ones you have actually typed in</b>, then press the button at the bottom — it records that his sheet is up to date, it does not fill it in for you. Uncheck anything you did not get to; it stays on this list.</p>' : '') +
           pk.map(row).join('') +
           (isViewer() ? '' : openSheetBtn(8)) +
           (isViewer() ? '' : isMgr()
@@ -4145,7 +4145,7 @@
           (cant.length
             ? '<div class="note warn" style="margin-top:8px"><b>' + cant.length +
               (cant.length === 1 ? ' hunter has' : ' hunters have') + ' no email on file.</b> Nothing can be sent to them — ' +
-              'ring them, or catch them at the counter, and put the address on the record with <b>Correct the record</b>.' +
+              'call them, or catch them at the counter, and put the address on the record with <b>Correct the record</b>.' +
               cant.map(x => '<div class="status">' + esc(x.hunter || 'no name') + ' · ' + deerNote(x) +
                 (x.phone ? ' · ' + esc(x.phone) : ' · no phone either') + '</div>').join('') + '</div>'
             : '') +
@@ -4395,7 +4395,7 @@
     const pks = document.getElementById('pksent');
     if (pks) pks.onclick = async () => {
       const bands = Array.prototype.map.call(box.querySelectorAll('[data-pk]:checked'), c => c.dataset.pk);
-      if (!bands.length) { document.getElementById('pkout').innerHTML = '<div class="note warn">Tick the ones you filled in first.</div>'; return; }
+      if (!bands.length) { document.getElementById('pkout').innerHTML = '<div class="note warn">Check the ones you filled in first.</div>'; return; }
       pks.disabled = true;
       try { const r = await call({ action: 'martinpackaged', bands: bands }); showMartin(r, r.marked + ' marked as filled in on Martin\'s sheet.'); }
       catch (e) { pks.disabled = false; toast(e.offline ? 'Needs signal.' : e.message); }
