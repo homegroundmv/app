@@ -6,6 +6,12 @@
 <meta name="description" content="Bringing a deer to the Home Ground facility on Martha’s Vineyard? Pre-check it from your phone and show your code at the counter.">
 <title>Deer Drop-Off Pre-Check</title>
 <link rel="icon" href="../icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#4B5320">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Deer Drop-Off">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Public+Sans:wght@400;500;600;700&family=Zilla+Slab:wght@500;600;700&display=swap">
@@ -150,6 +156,13 @@ textarea{min-height:76px}
 .btns{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}
 .btn2{display:flex;align-items:center;justify-content:center;min-height:52px;border-radius:10px;border:1.5px solid var(--orange);color:var(--orange);background:none;text-decoration:none;font:inherit;font-weight:700;font-size:15.5px;cursor:pointer;padding:8px}
 .btn2.solid{background:var(--orange);color:#fff}
+
+/* "Keep Pre-Check on your phone": shown in a browser, gone once it is running from the home screen. */
+.getapp{margin-top:16px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.getapp b{display:block;font-weight:700}
+.getapp p{margin:4px 0 0;font-size:14.5px;color:var(--muted)}
+.getapp .btn2{width:100%;margin-top:10px}
+.getapp [hidden]{display:none}
 
 footer{margin:28px 0 30px;padding-top:14px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
 footer p{margin:4px 0}
@@ -353,6 +366,13 @@ footer a{color:var(--orange)}
       </div>
       <button class="btn2" id="again" type="button" style="width:100%;margin-top:10px">Pre-check another deer</button>
     </div>
+  </div>
+
+  <div class="getapp" id="getapp" hidden>
+    <b>Keep Pre-Check on your phone</b>
+    <p id="getappHow">Add this page to your home screen and it opens like an app, one tap from the truck.</p>
+    <button class="btn2" id="getappBtn" type="button" hidden>Add to my home screen</button>
+    <a class="btn2" id="getappOpen" href="https://homegroundmv.github.io/app/dropoff/" target="_blank" rel="noopener" hidden>Open the app page</a>
   </div>
 
   <footer>
@@ -656,6 +676,42 @@ function tellParent(){
 }
 window.addEventListener("resize", tellParent);
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(tellParent);
+
+/* A hunter can keep this page on his phone like an app (Joe, 14 Nov 2026). It has its own manifest
+   and a small service worker, so "Add to Home Screen" gives it its own icon and it opens full
+   screen, even with no signal. The box says how, in the words for the phone in his hand:
+   - already running from the home screen: say nothing;
+   - embedded on homegroundmv.com: a frame cannot be installed, so send him to the page itself;
+   - Android Chrome: it offers its own prompt, so show one button;
+   - iPhone, and anything else: the two taps, in words. */
+(function(){
+  var box = $("getapp"), how = $("getappHow"), btn = $("getappBtn"), openPage = $("getappOpen"), ask = null;
+  var installed = false;
+  try { installed = window.navigator.standalone === true || window.matchMedia("(display-mode: standalone)").matches; } catch (e) {}
+  if (installed) return;
+  if (window.parent !== window) {
+    how.textContent = "Open the app page, then add it to your home screen. After that it is one tap from the truck.";
+    openPage.hidden = false;
+  } else {
+    how.textContent = /iPhone|iPad|iPod/.test(navigator.userAgent)
+      ? "Tap the Share button, then “Add to Home Screen”. It opens like an app, one tap from the truck."
+      : "Open your browser’s menu, then tap “Add to Home screen” or “Install app”. It opens like an app, one tap from the truck.";
+    window.addEventListener("beforeinstallprompt", function(e){
+      e.preventDefault(); ask = e;
+      how.textContent = "It opens like an app, one tap from the truck.";
+      btn.hidden = false; tellParent();
+    });
+    btn.addEventListener("click", function(){
+      if (!ask) return;
+      ask.prompt();
+      if (ask.userChoice) ask.userChoice.then(function(c){ if (c && c.outcome === "accepted") { box.hidden = true; tellParent(); } });
+      ask = null; btn.hidden = true;
+    });
+    window.addEventListener("appinstalled", function(){ box.hidden = true; tellParent(); });
+    try { if (location.protocol === "https:" && "serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(function(){}); } catch (e) {}
+  }
+  box.hidden = false;
+})();
 
 drawOpen(); setInterval(drawOpen, 60000);
 var startAt = restore();
