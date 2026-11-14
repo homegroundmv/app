@@ -461,9 +461,10 @@ function renderAll(){
   RENDER.forEach(function(f){ f(); });
   wireBars(); fitLogo(); tellParent();
 }
-// When this page is embedded on homegroundmv.com, tell the frame how tall to be.
+// When this page is embedded on homegroundmv.com, tell the frame how tall to be. Measured on the
+// page itself, not on <body>: a bottom margin on the last block falls outside the body's box.
 function tellParent(){
-  try { if (window.parent !== window) window.parent.postMessage({ hgScoreboardHeight: Math.ceil(document.body.getBoundingClientRect().height) }, "*"); } catch (e) {}
+  try { if (window.parent !== window) window.parent.postMessage({ hgScoreboardHeight: Math.ceil(document.documentElement.getBoundingClientRect().height) }, "*"); } catch (e) {}
 }
 window.addEventListener("resize", tellParent);
 function fromBackend(j){

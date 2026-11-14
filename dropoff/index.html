@@ -670,9 +670,11 @@ function restore(){
   return 0;
 }
 
-/* When embedded on homegroundmv.com, tell the frame how tall to be. */
+/* When embedded on homegroundmv.com, tell the frame how tall to be. Measured on the page itself,
+   not on <body>: the footer's bottom margin falls outside the body's box, so the body came up 30 px
+   short and the frame scrolled a little on its own. */
 function tellParent(){
-  try { if (window.parent !== window) window.parent.postMessage({ hgDropoffHeight: Math.ceil(document.body.getBoundingClientRect().height) }, "*"); } catch (e) {}
+  try { if (window.parent !== window) window.parent.postMessage({ hgDropoffHeight: Math.ceil(document.documentElement.getBoundingClientRect().height) }, "*"); } catch (e) {}
 }
 window.addEventListener("resize", tellParent);
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(tellParent);
