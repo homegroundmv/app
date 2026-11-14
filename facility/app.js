@@ -219,7 +219,7 @@
        change a screen somewhere else, and working out which would be a list nobody maintains. A
        write is rare next to a read, so the cost is one honest fetch afterwards; the alternative is
        a counter still showing a deer that has just been handed over. */
-    else if (body && body.action && body.action !== 'login' && body.action !== 'home') {
+    else if (body && body.action && body.action !== 'login' && body.action !== 'home' && body.action !== 'tagimg') {
       st.screens = {};
       Object.keys(refreshedAt).forEach(k => { delete refreshedAt[k]; });
       try { save(); } catch (e) {}
@@ -255,7 +255,164 @@
         save();
       }
       if (!st.outbox.some(x => !x.error && (!x.by || x.by === st.number))) await refresh(true);
-    } finally { flushing = false; status(); }
+    } finally { flushing = false; status(); setTimeout(flushPhotos, 0); }
+  }
+
+  /* ---------- tag photos: their own outbox (v105) ----------
+     A photo is a few hundred kilobytes. The deer outbox lives in localStorage, which holds about
+     five megabytes for the whole app, so ten photos without signal would fill it and stop deer being
+     queued at all. Photos go to IndexedDB instead, and they wait for their deer: one whose check-in
+     is still in the outbox is skipped until it lands, and "no deer with band ... yet" from the server
+     is treated the same way. */
+  let photoQ = [];          // a copy in memory, so a card can tell a photo is still on its way
+  const PDB = 'hg-fac-photos';
+  function pdb() {
+    return new Promise((ok, no) => {
+      const r = indexedDB.open(PDB, 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('q', { keyPath: 'id' });
+      r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error);
+    });
+  }
+  async function pTx(mode, fn) {
+    const db = await pdb();
+    return new Promise((ok, no) => {
+      const t = db.transaction('q', mode), out = fn(t.objectStore('q'));
+      t.oncomplete = () => ok(out && out.result); t.onerror = () => no(t.error);
+    });
+  }
+  async function pAll() { try { return (await pTx('readonly', q => q.getAll())) || []; } catch (e) { return photoQ.slice(); } }
+  async function pPut(it) { try { await pTx('readwrite', q => q.put(it)); } catch (e) { /* kept in memory */ } }
+  async function pDel(id) { try { await pTx('readwrite', q => q.delete(id)); } catch (e) { /* ignore */ } }
+  async function enqueuePhoto(b, kind, data) {
+    const it = { id: uid(), band: band(b), kind, data, by: st.number, created: Date.now() };
+    for (const old of photoQ.filter(x => x.band === it.band && x.kind === kind)) await pDel(old.id);
+    photoQ = photoQ.filter(x => !(x.band === it.band && x.kind === kind)).concat(it);
+    await pPut(it);
+    flushPhotos();
+  }
+  const pendingPhoto = (b, kind) => photoQ.find(x => x.band === band(b) && x.kind === kind && !x.error);
+  let photoFlushing = false;
+  async function flushPhotos() {
+    if (photoFlushing || !st.pin) return;
+    photoFlushing = true;
+    try {
+      photoQ = await pAll();
+      for (const it of photoQ.slice().sort((a, b) => a.created - b.created)) {
+        if (it.error || (it.by && it.by !== st.number)) continue;
+        if (st.outbox.some(x => x.action === 'intake' && !x.error && band((x.fields || {}).band) === it.band)) continue;
+        try {
+          await call({ action: 'tagphoto', band: it.band, kind: it.kind, data: it.data, clientId: it.id });
+          await pDel(it.id);
+          photoQ = photoQ.filter(x => x.id !== it.id);
+        } catch (e) {
+          if (e.offline) break;
+          if (/ yet\./.test(e.message)) continue;
+          it.error = e.message; await pPut(it);
+          toast('The tag photo for band ' + it.band + ' did not save: ' + e.message);
+        }
+      }
+    } finally { photoFlushing = false; }
+  }
+  /* A phone photo is 3 to 12 MB. Shrunk to 1600 pixels on the long side and saved as a JPEG it is
+     around 200 KB and the tag is still readable. */
+  function shrinkPhoto(file, max) {
+    max = max || 1600;
+    return new Promise((ok, no) => {
+      const url = URL.createObjectURL(file), im = new Image();
+      im.onload = () => {
+        const k = Math.min(1, max / Math.max(im.naturalWidth, im.naturalHeight));
+        const c = document.createElement('canvas');
+        c.width = Math.round(im.naturalWidth * k); c.height = Math.round(im.naturalHeight * k);
+        c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url); ok(c.toDataURL('image/jpeg', 0.72));
+      };
+      im.onerror = () => { URL.revokeObjectURL(url); no(new Error('That photo could not be read. Take it again.')); };
+      im.src = url;
+    });
+  }
+  /* The replacement tag record. Everything the hunter would have written on his tag, from what
+     intake collected, drawn as a picture so it sits where the tag photo would be and opens the same
+     way at checkout. It says whose it is and what it is not, in the heading and across the middle:
+     a Home Ground record that could pass for a state tag would be a problem for the hunter and for
+     us. */
+  function lostTagImage(f) {
+    const W = 1000, H = 640, c = document.createElement('canvas'); c.width = W; c.height = H;
+    const g = c.getContext('2d');
+    g.fillStyle = '#fff'; g.fillRect(0, 0, W, H);
+    g.save(); g.translate(W / 2, H / 2 + 30); g.rotate(-0.3);
+    g.fillStyle = 'rgba(0,0,0,0.07)'; g.font = 'bold 96px Arial, Helvetica, sans-serif'; g.textAlign = 'center';
+    g.fillText('NOT A STATE TAG', 0, 30); g.restore();
+    g.strokeStyle = '#111'; g.lineWidth = 6; g.strokeRect(3, 3, W - 6, H - 6);
+    g.fillStyle = '#111'; g.fillRect(0, 0, W, 110);
+    g.fillStyle = '#fff'; g.textAlign = 'left';
+    g.font = 'bold 38px Arial, Helvetica, sans-serif'; g.fillText('HOME GROUND REPLACEMENT TAG RECORD', 30, 52);
+    g.font = '22px Arial, Helvetica, sans-serif'; g.fillText('The hunter\u2019s MassWildlife tag was lost. This is not a MassWildlife tag.', 30, 88);
+    const cells = [
+      ['Hunter', f.name], ['MassWildlife customer ID', f.customerId],
+      ['Confirmation number', f.confirmation], ['Date of kill', f.shotDate],
+      ['Town of kill', f.town], ['Deer', f.deer + (f.points ? ', ' + f.points + ' points' : '')],
+      ['Taken with', f.takenWith], ['Home Ground band', f.band],
+    ];
+    cells.forEach((cl, i) => {
+      const x = 30 + (i % 2) * 485, y = 150 + Math.floor(i / 2) * 104;
+      g.fillStyle = '#555'; g.font = 'bold 17px Arial, Helvetica, sans-serif'; g.fillText(cl[0].toUpperCase(), x, y);
+      g.fillStyle = '#000'; g.font = 'bold 34px Arial, Helvetica, sans-serif';
+      let val = String(cl[1] || '\u2014');
+      while (g.measureText(val).width > 450 && val.length > 4) val = val.slice(0, -2) + '\u2026';
+      g.fillText(val, x, y + 40);
+      g.strokeStyle = '#ccc'; g.lineWidth = 1; g.beginPath(); g.moveTo(x, y + 56); g.lineTo(x + 450, y + 56); g.stroke();
+    });
+    g.fillStyle = '#333'; g.font = '18px Arial, Helvetica, sans-serif';
+    g.fillText('Checked in ' + f.checkedIn + ' by ' + f.by + '. Photo of the hunter\u2019s confirmed deer kept with this record.', 30, H - 28);
+    return c.toDataURL('image/png');
+  }
+  function tagCss() {
+    if (document.getElementById('tag-css')) return;
+    const c = document.createElement('style'); c.id = 'tag-css';
+    c.textContent = '.tagpic{display:block;max-width:100%;border-radius:8px;margin-top:8px;border:1px solid #ccc}' +
+      '.tagstep{border-top:2px solid #ddd;margin-top:14px;padding-top:10px}.tagstep h3{margin:0 0 6px}' +
+      '.camin{position:absolute;opacity:0;width:1px;height:1px}.tagrow{margin-top:8px}';
+    document.head.appendChild(c);
+  }
+  const camBtn = (id, label) => '<label class="btn alt" for="' + id + '" style="display:inline-block">' + esc(label) + '</label>' +
+    '<input id="' + id + '" class="camin" type="file" accept="image/*" capture="environment">';
+  /* On the deer's card: the tag photo, the phone photo, or a way to add one. */
+  function tagPhotoRow(d) {
+    if (isViewer()) return '';
+    tagCss();
+    const lost = d['Tag lost'] === 'Yes';
+    const has = !!d['Tag photo'] || !!pendingPhoto(d.Band, 'tag');
+    const scr = !!d['Harvest screenshot'] || !!pendingPhoto(d.Band, 'screen');
+    let h = '<div class="tagrow">';
+    if (lost) h += '<div class="note warn"><b>Hunter lost his tag.</b> The tag photo is a Home Ground replacement record' +
+      (d['Town of harvest'] ? ', taken in ' + esc(d['Town of harvest']) : '') + '.</div>';
+    if (!has && d['Tag photo note']) h += '<div class="note warn">No tag photo: ' + esc(d['Tag photo note']) + '</div>';
+    if (has) h += '<button class="btn ghost" data-a="tagshow">' + (lost ? 'Show the replacement tag record' : 'Show the tag photo') + '</button> ';
+    if (scr) h += '<button class="btn ghost" data-a="scrshow">Show the hunter\u2019s phone</button> ';
+    if (!has && atDoor() && d.Status !== 'Voided' && d.Status !== 'Released') h += '<button class="btn ghost" data-a="tagadd">Add a tag photo</button>';
+    return h + '<div class="tagimg"></div></div>';
+  }
+  async function showTagImg(d, kind, box) {
+    const card = box && box.closest('[data-band]');
+    const out = (card && card.querySelector('.tagimg')) || box;
+    const local = pendingPhoto(d.Band, kind);
+    if (local) { out.innerHTML = '<img class="tagpic" alt="" src="' + local.data + '"><div class="status">Still sending.</div>'; return; }
+    out.innerHTML = '<div class="status">Loading the photo\u2026</div>';
+    try {
+      const r = await call({ action: 'tagimg', band: d.Band, kind });
+      out.innerHTML = r.none ? '<div class="status">No photo on this deer.</div>'
+        : '<img class="tagpic" alt="' + (kind === 'tag' ? 'Tag photo' : 'Hunter\u2019s phone') + '" src="data:' + esc(r.mime) + ';base64,' + r.data + '">';
+    } catch (e) { out.innerHTML = '<div class="note warn">' + esc(e.offline ? 'The photo needs signal.' : e.message) + '</div>'; }
+  }
+  function addTagPhoto(d, box, after) {
+    tagCss();
+    box.innerHTML = '<p class="status">Photograph the hunter\u2019s tag on band ' + esc(band(d.Band)) + ', close enough to read.</p>' +
+      camBtn('addcam', 'Take a photo of the tag') + '<div class="err" id="adderr"></div>';
+    document.getElementById('addcam').onchange = async e => {
+      const file = e.target.files && e.target.files[0]; if (!file) return;
+      try { await enqueuePhoto(d.Band, 'tag', await shrinkPhoto(file)); toast('Tag photo saved for band ' + band(d.Band) + '.', true); if (after) after(); }
+      catch (x) { document.getElementById('adderr').textContent = x.message; }
+    };
   }
   async function refresh(quiet) {
     try {
@@ -1489,6 +1646,7 @@
       (d['First pack #'] && d['Last pack #'] ? '<div class="note ok"><b>Package numbers ' + esc(d['First pack #']) + '–' + esc(d['Last pack #']) + '</b> (MassWildlife)</div>'
         : d['First pack #'] ? '<div class="note warn" style="font-size:17px">Label the 2 lb packages in order from <b>' + esc(d['First pack #']) + '</b>: ' + esc(d['First pack #']) + ', ' + esc(('000' + (parseInt(d['First pack #'], 10) + 1)).slice(-4)) + ', …</div>' : '') +
       (d.Status === 'Released' ? '<div class="status">Released ' + esc(d.Released) + ' to ' + esc(d['Released to']) + '</div>' : '') +
+      tagPhotoRow(d) +
       '<div class="actions">' + payBtn + act + moveBtn + (live && !isViewer() ? '<button class="btn ghost" data-a="print">Print band</button>' : '') + editBtn + undoBtn + voidBtn + '</div><div class="form"></div></div>';
   }
 
@@ -1585,6 +1743,8 @@
        and not hung is the one thing in the building that cannot wait, and the duty can. */
     if (kind === 'start' && !isViewer() && opsDuty().blocking) return opsStop(box, after);
     if (kind === 'print') return printBand(d);
+    if (kind === 'tagshow' || kind === 'scrshow') return showTagImg(d, kind === 'tagshow' ? 'tag' : 'screen', box);
+    if (kind === 'tagadd') return addTagPhoto(d, box, after);
     if (kind === 'grind') return grind(d, box, after);
     if (kind === 'undo') return askUndo(d, box, after);
     const s = S();
@@ -2137,6 +2297,8 @@
     }
     frame('intake', 'Check in a deer',
       (todayBand ? '<div class="note ok" style="font-size:17px">' + swatch(todayBand) + ' today. Make sure the <b>' + esc(todayBand) + '</b> roll is in the band printer.</div>' : '') +
+      // Hunters who filled in the drop-off form on the Deer Dashboard (v106). Filled in after load.
+      '<div id="prebox"></div>' +
       '<div class="card">' +
       '<label>Did this deer come through the Island Access Program?</label>' +
       '<label class="choice"><input type="radio" name="iap" value="Yes"> <span><b>Yes</b>: the hunter is enrolled and took it on an enrolled property</span></label>' +
@@ -2206,6 +2368,8 @@
       '<div id="cfbox"><label for="cf">MassWildlife confirmation number</label><input id="cf" type="text" autocapitalize="characters" autocorrect="off" autocomplete="off" spellcheck="false">' +
         '<label class="choice" style="margin-top:6px"><input id="cfna" type="checkbox"> <span><b>Hunter unable to obtain number</b><br><span class="hint">The state system would not give one. Add it later with Fix the record.</span></span></label></div>' +
       '<div><label for="sd">Date of the shot <span class="hint">the band number is built from it</span></label><input id="sd" type="date" value="' + isoDate(now) + '" max="' + isoDate(now) + '"></div>' +
+      // Every deer from v106 (Joe, 14 November). A tribal deer keeps its own town field above.
+      '<div id="htownbox"><label for="htown">Town of harvest</label><select id="htown">' + townOptions('') + '</select></div>' +
       '</div>' +
       // Filled in as the name is typed, from hunters the log has already seen. Nothing is entered
       // until it is tapped.
@@ -2254,6 +2418,22 @@
          and checking a deer in are two records. The board's "Open it" button scrolls to #cdwrap. */
       '<div id="cdwrap">' + todayList() + coolerDutyCard() + '</div>' +
       '<label for="nt">Notes</label><textarea id="nt"></textarea>' +
+      /* The last step of a check-in (Joe, 14 November): a photo of the hunter's tag. Lost tag: the
+         app draws the replacement record, and the phone photo is what gets taken. */
+      '<div class="tagstep"><h3>Last step: the tag</h3>' +
+        '<div id="tagnormal"><p class="status">Photograph the hunter\u2019s tag on the deer, close enough to read.</p>' +
+          camBtn('tagcam', 'Take a photo of the tag') + '<img id="tagprev" class="tagpic" alt="Tag photo" hidden></div>' +
+        '<label class="choice" id="taglostrow"><input id="taglost" type="checkbox"> <span><b>Hunter lost their tag</b><br>' +
+          '<span class="hint">The app makes a replacement tag record from this check-in and keeps it in place of the photo.</span></span></label>' +
+        '<div id="lostbox" hidden>' +
+          '<p class="status">Photograph the hunter\u2019s phone showing his confirmed deer on the MassWildlife site.</p>' +
+          camBtn('scrcam', 'Take a photo of his phone') + '<img id="scrprev" class="tagpic" alt="Hunter\u2019s phone" hidden>' +
+          '<div class="status" style="margin-top:10px">The replacement tag record, as it will be kept:</div><img id="ltprev" class="tagpic" alt="Replacement tag record">' +
+        '</div>' +
+        '<label class="choice"><input id="nocam" type="checkbox"> The camera isn\u2019t working</label>' +
+        '<div id="nocambox" hidden><label for="nocamwhy">Why is there no photo?</label><input id="nocamwhy" type="text">' +
+          '<p class="status">The deer is checked in without one. Add it from the deer\u2019s card when you can.</p></div>' +
+      '</div>' +
       '<div class="err" id="err"></div><button class="submit" id="save">Check in and print band</button>' +
       '<button class="btn ghost" id="away" style="width:100%">Turn this deer away instead</button><div id="awaybox"></div></div>');
     const v = id => document.getElementById(id).value.trim();
@@ -2279,6 +2459,98 @@
       if (!show) document.querySelectorAll('input[name=skull]').forEach(r => { r.checked = false; });
     };
     document.getElementById('deer').onchange = syncSkull;
+    /* ---- pre-checked drop-offs (v106) ----
+       What a hunter typed on the public form, for intake to check rather than retype. A tap fills
+       empty and filled fields alike, because the hunter is standing there to correct it; nothing is
+       saved until Check in is pressed. */
+    let precheckRef = '';
+    const setVal = (id, val) => { const el = document.getElementById(id); if (!el || val == null || val === '') return;
+      el.value = val; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); };
+    const setCheck = (sel, on) => { const el = document.querySelector(sel); if (!el || el.checked === !!on) return;
+      el.checked = !!on; el.dispatchEvent(new Event('change', { bubbles: true })); };
+    const fillFromPrecheck = p => {
+      setCheck('input[name="iap"][value="No"]', true);
+      setCheck('input[name="type"][value="' + p.type + '"]', true);
+      setVal('deer', p.deer);
+      if (p.deer === 'Antlered buck') { setVal('pts', p.points); if (p.skull) setCheck('input[name=skull][value="' + p.skull + '"]', true); }
+      setVal('fn', p.firstName); setVal('ln', p.lastName); setVal('lic', String(p.customerId || '').replace(/^'/, ''));
+      setVal('ph', p.phone); setVal('hem', p.email);
+      if (p.noConfirmation) setCheck('#cfna', true); else { setCheck('#cfna', false); setVal('cf', p.confirmation); }
+      setVal('sd', p.shotDate); setVal('htown', p.townOfHarvest); setVal('tw', p.takenWith); setVal('am', p.ammunition);
+      if (p.type === 'Donated' && p.address) {
+        const a = splitAddress(p.address);
+        if (a) { setVal('ad1', a.street); setVal('adt', a.town); setVal('ads', a.state); setVal('adz', a.zip); } else setVal('ad1', p.address);
+      }
+      setCheck('#fd', p.dressed4h);
+      if (p.type === 'Private') {   // v107: the cut sheet he filled in online
+        const cc = p.cutChoices || {};
+        CUTS.forEach((c, i) => { const el = document.getElementById('cut' + i), x = cc[c[0]];
+          if (el) el.value = x && x !== 'Ground' && c[1].indexOf(x) >= 0 ? x : ''; });
+        setCheck('#pork', !!p.porkFat);
+      }
+      if (p.notes) { const nt = document.getElementById('nt'); if (nt && nt.value.indexOf(p.notes) < 0) nt.value = (nt.value ? nt.value + ' ' : '') + 'Hunter wrote: ' + p.notes; }
+      precheckRef = p.ref;
+      showId();
+    };
+    const drawPrechecks = list => {
+      const box = document.getElementById('prebox'); if (!box) return;
+      if (!list || !list.length) { box.innerHTML = ''; return; }
+      box.innerHTML = '<div class="card"><label>Pre-checked online <span class="hint">hunters who filled in the drop-off form. Tap one to fill the form, then check the tag and the deer.</span></label>' +
+        list.map(p => '<div class="prerow" style="display:flex;gap:8px;align-items:center;margin-top:8px">' +
+          '<button class="btn alt" style="flex:1;text-align:left" data-pre="' + esc(p.ref) + '"><b>' + esc(p.firstName + ' ' + p.lastName) + '</b> · ' +
+            esc(p.deer) + ' · ' + esc(String(p.type).toLowerCase()) + (p.cuts ? ' · cut sheet filled' : '') + ' · code ' + esc(p.ref) + (p.comingAt ? ' · ' + esc(p.comingAt) : '') + '</button>' +
+          '<button class="btn ghost" data-predel="' + esc(p.ref) + '">Clear</button></div>').join('') +
+        '<div id="prenote"></div></div>';
+      box.querySelectorAll('[data-pre]').forEach(b => b.onclick = () => {
+        const p = list.find(x => x.ref === b.dataset.pre); if (!p) return;
+        fillFromPrecheck(p);
+        document.getElementById('prenote').innerHTML = '<div class="note ok">Filled from <b>' + esc(p.firstName + ' ' + p.lastName) +
+          '</b>\u2019s form (code ' + esc(p.ref) + ').' + (p.cuts ? ' His cuts are filled in too: go over them with him.' : '') + ' Check the tag and the deer, then take the tag photo and check it in.</div>';
+      });
+      box.querySelectorAll('[data-predel]').forEach(b => b.onclick = async () => {
+        if (b.dataset.armed !== '1') { b.dataset.armed = '1'; b.textContent = 'Tap again to clear'; return; }
+        try { const out = await call({ action: 'precheckdismiss', ref: b.dataset.predel }); if (precheckRef === b.dataset.predel) precheckRef = ''; drawPrechecks(out.prechecks); }
+        catch (e) { toast(e.offline ? 'Clearing it needs signal.' : e.message); }
+      });
+    };
+    if (atDoor() && !isViewer()) call({ action: 'prechecks' }).then(out => drawPrechecks(out.prechecks)).catch(() => {});
+    /* ---- the tag step (v105) ---- */
+    tagCss();
+    let tagShot = '', scrShot = '';
+    const lostFields = b => ({
+      band: b, name: (v('fn') + ' ' + v('ln')).trim(), customerId: v('lic').replace(/\D/g, ''),
+      confirmation: v('cf') || ((document.getElementById('cfna') || {}).checked ? 'Hunter unable to obtain' : ''),
+      shotDate: v('sd') ? new Date(v('sd') + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '',
+      town: v('htown'), deer: v('deer'), points: v('deer') === 'Antlered buck' ? v('pts') : '', takenWith: v('tw'),
+      checkedIn: new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }),
+      by: ((st.staff && st.staff.name) || '') + ' (' + (st.number || '') + ')',
+    });
+    const isLost = () => document.getElementById('taglost').checked && !(document.getElementById('tribal') || {}).checked;
+    const drawLost = () => { if (isLost()) document.getElementById('ltprev').src = lostTagImage(lostFields(genId() || 'not yet given')); };
+    const syncLost = () => {
+      const tr = !!(document.getElementById('tribal') || {}).checked;
+      document.getElementById('taglostrow').hidden = tr;
+      document.getElementById('htownbox').hidden = tr;   // a tribal deer has its own town field
+      document.getElementById('lostbox').hidden = !isLost();
+      document.getElementById('tagnormal').hidden = isLost();
+      drawLost();
+    };
+    const wireCam = (id, prev, set) => {
+      document.getElementById(id).onchange = async e => {
+        const file = e.target.files && e.target.files[0]; if (!file) return;
+        try { const data = await shrinkPhoto(file); set(data); const im = document.getElementById(prev); im.src = data; im.hidden = false; document.getElementById('err').textContent = ''; }
+        catch (x) { document.getElementById('err').textContent = x.message; }
+      };
+    };
+    wireCam('tagcam', 'tagprev', x => { tagShot = x; });
+    wireCam('scrcam', 'scrprev', x => { scrShot = x; });
+    document.getElementById('taglost').onchange = syncLost;
+    { const tr = document.getElementById('tribal'); if (tr) tr.addEventListener('change', syncLost); }
+    document.getElementById('nocam').onchange = () => { document.getElementById('nocambox').hidden = !document.getElementById('nocam').checked; };
+    ['fn', 'ln', 'lic', 'cf', 'cfna', 'sd', 'deer', 'pts', 'tw', 'htown'].forEach(id => {
+      const el = document.getElementById(id); if (!el) return;
+      el.addEventListener('input', drawLost); el.addEventListener('change', drawLost);
+    });
     if (!document.getElementById('mrow-css')) { const c = document.createElement('style'); c.id = 'mrow-css';
       c.textContent = '.mrow{width:100%;table-layout:fixed;border-collapse:collapse;margin:10px 0;font-size:15px}.mrow th{text-align:left;font-weight:600;font-size:14px;color:var(--muted);padding:7px 8px 7px 0;width:45%;vertical-align:top;white-space:normal}.mrow td{padding:7px 0;border-bottom:1px solid var(--line);text-align:left;white-space:normal;overflow-wrap:anywhere}.mrow th{border-bottom:1px solid var(--line)}';
       document.head.appendChild(c); }
@@ -2574,6 +2846,15 @@
       }
       if (type === 'Donated' && !document.getElementById('fd').checked) return err('Donated deer must be field dressed within 4 hours of the shot.');
       if (type !== 'Donated' && coolerCount() >= S().coolerCap) return err('The cooler is full. Hold private and cold-storage deer until there\'s room.');
+      /* The tag step. Required, with an escape: no photo means a reason, so a dead camera never
+         stops the door (Joe, 14 November). A lost tag needs no camera for its record, only for the
+         phone photo. */
+      const tagLost = !tribal && document.getElementById('taglost').checked;
+      const noCam = document.getElementById('nocam').checked, noCamWhy = v('nocamwhy');
+      if (!tribal && !v('htown')) return err('Which town was the deer taken in? Choose it beside the date of the shot.');
+      if (noCam && !noCamWhy) return err('Say why there is no photo, so whoever reads the record knows.');
+      if (!noCam && !tagLost && !tagShot) return err('Last step: take a photo of the hunter\u2019s tag. If the camera isn\u2019t working, tick that box and say why.');
+      if (!noCam && tagLost && !scrShot) return err('Take a photo of the hunter\u2019s phone showing his confirmed deer. If the camera isn\u2019t working, tick that box and say why.');
       const noCall = document.getElementById('nocallout');
       const f = { band: b, iap: iap === 'Yes', type, deer: v('deer'), points: v('deer') === 'Antlered buck' ? pts : '', firstName: v('fn'), lastName: v('ln'), customerId: lic, hunterPhone: v('ph'), confirmation: tribal ? '' : v('cf'), takenWith: v('tw'), ammunition: v('am'),
         skull: skullAsked() ? skullPick === 'Yes' : undefined,
@@ -2585,7 +2866,9 @@
         tribal: !!(document.getElementById('tribal') || {}).checked,
         tribalTag: (document.getElementById('tribal') || {}).checked ? v('ttag').trim() : '',
         // Martin's Last Name field on a tribal row (10 November).
-        townOfHarvest: (document.getElementById('tribal') || {}).checked ? v('thtown').trim() : '',
+        townOfHarvest: (document.getElementById('tribal') || {}).checked ? v('thtown').trim() : v('htown').trim(),
+        precheckRef: precheckRef || undefined,
+        tagLost, noPhotoReason: noCam ? noCamWhy : '',
         // He told us at the counter that it is already filed. Donated only — nothing else is paid
         // by TFMV, so there is no form to have filed.
         taxFiled: type === 'Donated' && !!(document.getElementById('taxfiled') || {}).checked,
@@ -2602,6 +2885,9 @@
         intakeWeight: v('iw'), weighedAs: document.getElementById('wa').value,
         porkFat: type === 'Private' && !!document.getElementById('pork') && document.getElementById('pork').checked };
       queue('intake', f, 'Check-in ' + b);
+      if (tagLost) enqueuePhoto(b, 'tag', lostTagImage(lostFields(b)));
+      else if (tagShot) enqueuePhoto(b, 'tag', tagShot);
+      if (tagLost && scrShot) enqueuePhoto(b, 'screen', scrShot);
       /* The hunter roster is cached for six hours, which is fine for a hunter who was here last
          week and useless for the one standing in front of you with a second deer. A check-in is
          exactly the event that makes the cache wrong, so refresh it on the spot. */
@@ -2717,6 +3003,9 @@
     const c = $app.querySelector('[data-band]');
     c.querySelectorAll('[data-a]').forEach(x => x.onclick = () => act(x.dataset.a, d, c.querySelector('.form'), () => showDeer(b)));
     document.getElementById('ds').onclick = () => showScan();
+    // The band's QR code opens this view. The tag is what gets compared with the deer at checkout,
+    // so it is put on screen without a tap (v105).
+    { const tb = c.querySelector('[data-a="tagshow"]'); if (tb) tb.click(); }
     // Arrived from a scan: open the form for what you are plainly about to do. Clicking the real
     // button rather than calling act() keeps the clock-in nudge and everything else that hangs
     // off it.

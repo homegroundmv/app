@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Live season totals from the Home Ground deer processing facility on Martha’s Vineyard: deer brought in, venison to island families, and room in the cooler.">
+<title>Deer Dashboard</title>
+<link rel="icon" href="../icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Public+Sans:wght@400;500;600;700&family=Zilla+Slab:wght@500;600;700&display=swap">
+<style>
+/* Page reset (what the artifact host supplied in the mockup). */
+html{-webkit-text-size-adjust:100%}body{margin:0}img{max-width:100%}[hidden]{display:none!important}
+:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+/* Layout: one column, olive masthead, big tallies first, then the herd strip, the season by week, and what to do next. No antler-points chart: the page is about antlerless deer, not trophies (Joe, 14 Nov). */
+:root{
+  --bg:#FAF7F0; --surface:#FFFFFF; --ink:#2B2416; --muted:#6B6450; --line:#E4DED0;
+  --olive:#4B5320; --olive-deep:#363C17; --orange:#C96C0C; --orange-soft:#E9A35A; --sage:#8F946E; --brown:#3A301D;
+  --on-olive:#F5F1E4; --band:#EFEADC;
+  --ok:#3F7A3A; --warn:#B7791F; --bad:#A63A2A;
+  --display:"Zilla Slab", Rockwell, "Roboto Slab", Georgia, serif;
+  --num:"Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --body:"Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#17180F; --surface:#212315; --ink:#EEE8D8; --muted:#A9A38D; --line:#34372A;
+  --olive:#5E6829; --olive-deep:#2A2E14; --orange:#F0963B; --orange-soft:#C27A35; --sage:#A3A884; --brown:#D9CDB0;
+  --on-olive:#F5F1E4; --band:#1E2014; --ok:#7DBB72; --warn:#E0A94A; --bad:#E07A66; color-scheme:dark }}
+:root[data-theme="dark"]{
+  --bg:#17180F; --surface:#212315; --ink:#EEE8D8; --muted:#A9A38D; --line:#34372A;
+  --olive:#5E6829; --olive-deep:#2A2E14; --orange:#F0963B; --orange-soft:#C27A35; --sage:#A3A884; --brown:#D9CDB0;
+  --on-olive:#F5F1E4; --band:#1E2014; --ok:#7DBB72; --warn:#E0A94A; --bad:#E07A66; color-scheme:dark }
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.5}
+.wrap{max-width:880px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.mock{background:var(--band);color:var(--muted);font-size:12.5px;text-align:center;padding-block:6px;border-bottom:1px solid var(--line)}
+.mock .wrap{padding-block:0}
+
+/* masthead */
+.mast{background:var(--olive);color:var(--on-olive)}
+.mast .wrap{padding-block:22px 26px;display:flex;flex-wrap:wrap;gap:14px 24px;align-items:flex-end;justify-content:space-between}
+.brand{font-family:var(--display);font-weight:700;letter-spacing:.14em;font-size:13px;text-transform:uppercase;opacity:.85}
+h1{font-family:var(--display);font-weight:700;font-size:clamp(28px,6vw,44px);line-height:1.05;margin:4px 0 0;text-wrap:balance}
+h1 em{font-style:normal;color:#F4B66A}
+.asof{font-size:13px;opacity:.85;margin-top:0}
+.toptitle{white-space:nowrap;text-wrap:nowrap;font-size:clamp(24px,3.5vw,40px);margin:0 0 6px}
+@media (max-width:700px){ .toptitle{font-size:6.2vw} }
+.light{display:inline-flex;align-items:center;gap:14px;background:rgba(0,0,0,.2);border-radius:999px;padding:12px 24px 12px 16px;font-weight:700;font-size:clamp(17px,2.4vw,21px);margin-top:16px}
+.light i{width:22px;height:22px;flex:none;border-radius:50%;background:#7BC86C;box-shadow:0 0 0 5px rgba(123,200,108,.25)}
+.light small{display:block;font-weight:400;opacity:.85;font-size:14px}
+.mast .wrap{align-items:center}
+.idblock{display:flex;align-items:center;gap:28px;flex-wrap:nowrap;width:100%}
+.idblock > div{min-width:0}
+.site{display:block;width:max-content}
+@media (max-width:700px){ .idblock{flex-wrap:wrap;gap:18px} }
+.plate{background:#FAF7F0;border-radius:12px;padding:8px 10px;line-height:0;flex:none}
+.plate{padding:10px 14px}
+.idblock{align-items:flex-start}
+.plate img{width:200px;height:auto;display:block}
+.site{color:var(--on-olive);font-size:13px;opacity:.9}
+.site:hover{opacity:1}
+.dropnote{margin:16px 0 0;font-size:15px;color:var(--muted)}
+.dropnote a{color:var(--orange);font-weight:700}
+
+/* tallies */
+.tallies{display:grid;grid-template-columns:1.25fr 1fr;gap:14px;margin-top:-16px}
+.tally{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px 20px;min-width:0}
+.tally .k{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.big{font-family:var(--num);font-weight:700;font-size:clamp(64px,13vw,104px);line-height:.9;color:var(--olive);font-variant-numeric:tabular-nums;margin-top:6px}
+:root[data-theme="dark"] .big{color:var(--ink)}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .big{color:var(--ink)} }
+.big.orange{color:var(--orange)}
+.meals{font-family:var(--num);font-size:clamp(26px,4vw,34px);font-weight:600;color:var(--ink);margin-top:6px;line-height:1.1}
+.meals b{color:var(--orange);font-weight:700}
+.big .unit{font-size:.38em;font-weight:600;margin-left:4px;color:var(--muted)}
+.sub{color:var(--muted);font-size:14px;margin-top:6px}
+.vs{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:13.5px}
+.vs .bar{flex:1;height:8px;background:var(--band);border-radius:4px;position:relative;overflow:hidden}
+.vs .bar b{position:absolute;inset:0 auto 0 0;background:var(--sage);border-radius:4px}
+.vs .bar b.now{background:var(--olive)}
+.vs span{min-width:92px;color:var(--muted);font-variant-numeric:tabular-nums}
+/* meals on the way: an estimate, so it is drawn as one (dashed) */
+.otw{margin-top:14px;border:2px dashed var(--orange-soft);border-radius:10px;padding:16px 20px;display:flex;flex-wrap:wrap;align-items:center;gap:6px 24px;background:var(--surface)}
+.otw .k{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.otwn{font-family:var(--num);font-weight:600;font-size:clamp(30px,5vw,40px);line-height:1.05;color:var(--ink)}
+.otwn b{color:var(--orange);font-weight:700;font-variant-numeric:tabular-nums}
+.otw p{margin:0;flex:1 1 280px;color:var(--muted);font-size:14px;max-width:60ch}
+
+section{margin-top:34px}
+h2{font-family:var(--display);font-weight:700;font-size:23px;margin:0 0 4px;color:var(--brown);text-wrap:balance}
+.lede{color:var(--muted);margin:0 0 14px;max-width:62ch}
+
+/* herd strip */
+.herd{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px}
+.legend{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.chip{display:flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:999px;padding:6px 12px 6px 8px;font:inherit;font-size:13.5px;cursor:pointer}
+.chip:hover{border-color:var(--sage)}
+.chip:focus-visible{outline:2px solid var(--orange);outline-offset:2px}
+.chip[aria-pressed="true"]{border-color:var(--ink)}
+.chip i{width:12px;height:12px;border-radius:50%}
+.chip b{font-family:var(--num);font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}
+.dots{display:grid;grid-template-columns:repeat(20,1fr);gap:5px}
+.dot{aspect-ratio:1;border-radius:50%;transition:opacity .2s,transform .2s;max-width:100%}
+.dots.focus .dot{opacity:.15}
+.dots.focus .dot.on{opacity:1;transform:scale(1.08)}
+.antlerless{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line);font-size:14px}
+.antlerless strong{font-family:var(--num);font-size:22px;color:var(--orange)}
+
+/* split */
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.use{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px;min-width:0}
+.use .n{font-family:var(--num);font-weight:700;font-size:46px;line-height:1;font-variant-numeric:tabular-nums}
+.use .t{font-weight:600;margin-top:4px}
+.use p{margin:4px 0 0;color:var(--muted);font-size:13.5px}
+.pill{display:inline-block;font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;border-radius:4px;background:var(--orange);color:#fff;margin-top:8px}
+
+/* charts */
+.chart{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 14px 8px;overflow-x:auto}
+.chart svg{display:block;width:100%;min-width:520px;height:auto}
+.chart text{font-family:var(--body);fill:var(--muted);font-size:11px}
+.chart .val{fill:var(--ink);font-family:var(--num);font-size:15px;font-weight:700}
+.chart .season{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;fill:var(--brown)}
+.note{font-size:12.5px;color:var(--muted);margin:8px 2px 0}
+.tip{position:fixed;pointer-events:none;background:var(--ink);color:var(--bg);font-size:12.5px;padding:5px 9px;border-radius:5px;opacity:0;transition:opacity .12s;z-index:5}
+
+/* report + actions */
+.report{background:var(--olive);color:var(--on-olive);border-radius:10px;padding:20px 22px;display:flex;flex-wrap:wrap;gap:8px 20px;align-items:center}
+.report h3{font-family:var(--display);font-size:22px;margin:0;flex:1 1 260px}
+.report p{margin:0;flex:2 1 300px;opacity:.92}
+.acts{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+.act{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px 18px;min-width:0}
+.act h4{font-family:var(--display);font-size:19px;margin:0 0 4px;color:var(--brown)}
+.act ul{margin:6px 0 0;padding-left:18px;color:var(--ink);font-size:14px}
+.act li{margin:2px 0}
+.hl{color:var(--orange);font-weight:700}
+.act .price{font-family:var(--num);font-size:24px;font-weight:700;color:var(--orange)}
+.cta{display:inline-block;margin-top:10px;background:var(--orange);color:#fff;text-decoration:none;font-weight:600;padding:9px 14px;border-radius:6px;font-size:14px}
+.cta:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+/* services on the left; land on the right, hunters below landowners */
+.acts2{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
+.acol{display:grid;gap:12px;min-width:0}
+/* the drop-off form */
+@media (max-width:640px){ .acts2{grid-template-columns:1fr} }
+footer{margin:38px 0 30px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:12.5px}
+footer p{margin:4px 0;max-width:70ch}
+
+@media (max-width:640px){
+  .tallies{grid-template-columns:1fr}
+  .grid3{grid-template-columns:1fr}
+  .acts{grid-template-columns:1fr}
+  .dots{grid-template-columns:repeat(16,1fr);gap:4px}
+}
+@media (prefers-reduced-motion:reduce){ .dot,.tip{transition:none} }
+</style>
+</head>
+<body>
+<header class="mast">
+  <div class="wrap">
+    <div class="idblock">
+      <a class="plate" href="https://homegroundmv.com" target="_blank" rel="noopener" aria-label="Home Ground website"><img alt="Home Ground: Change starts with YES" src="../logo.png" onload="window.fitLogo && fitLogo()"></a>
+      <div>
+        <h1 class="toptitle">Island Deer Dashboard <em>2026</em></h1>
+        <div class="asof" id="asof">Updated Thursday, Nov 12</div>
+        <a class="site" href="https://homegroundmv.com" target="_blank" rel="noopener">homegroundmv.com</a>
+        <div class="asof" id="stale" hidden>Showing the last saved figures. The live numbers will be back shortly.</div>
+        <div class="light" id="light" role="status"><i id="lightDot"></i><div><span id="lightText">Room in the cooler</span><small id="lightSub">55 of 150 rail spots in use</small></div></div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="tallies">
+    <div class="tally">
+      <div class="k">Deer brought to the facility</div>
+      <div class="big" id="total">80</div>
+      <div class="sub">this season, since recording began Oct 17</div>
+      <div class="vs"><span>This season</span><div class="bar"><b class="now" id="barNow"></b></div><span id="nowLbl">80</span></div>
+      <div class="vs"><span>Last season</span><div class="bar"><b id="barLast"></b></div><span>about 50</span></div>
+    </div>
+    <div class="tally">
+      <div class="k">Venison to island families</div>
+      <div class="big orange" id="lbs">526<span class="unit">lb</span></div>
+      <div class="meals"><b id="meals">263</b> meals</div>
+      <div class="sub">packaged from donated deer for the Island Food Pantry. One 2 lb package is one family meal.</div>
+    </div>
+  </div>
+
+  <div class="otw" id="otw">
+    <div><div class="k">Meals on the way</div><div class="otwn">about <b id="otwMeals">470</b> more meals</div></div>
+    <p id="otwNote">An estimate: the 41 donated deer hanging in the cooler now, at this season's average of 11.4 two-pound packages a deer.</p>
+  </div>
+
+  <section aria-labelledby="h-herd">
+    <h2 id="h-herd">Every deer, one dot</h2>
+    <p class="lede">Does in orange, bucks in green. Antlerless deer are what bring the herd down, so does lead the count. Tap a group to pick it out.</p>
+    <div class="herd">
+      <div class="legend" id="legend"></div>
+      <div class="dots" id="dots" aria-hidden="true"></div>
+      <div class="antlerless">
+        <span><strong id="alCount">45</strong> antlerless (does, button bucks and spike bucks with antlers under 3 in.)</span>
+        <span><strong id="alPct">54%</strong> of all deer</span>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-use">
+    <h2 id="h-use">Where they went</h2>
+    <div class="grid3">
+      <div class="use"><div class="n" id="uDon">64</div><div class="t">Donated</div><p>Processed and sent to island food pantries.</p></div>
+      <div class="use"><div class="n" id="uCold">16</div><div class="t">Cold storage</div><p>Hung whole and picked up by the hunter.</p></div>
+      <div class="use"><div class="n" id="uPriv">0</div><div class="t">Private processing</div><p>Cut and packaged for the hunter's own freezer.</p><span class="pill">Now open</span></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-week">
+    <h2 id="h-week">Season by week</h2>
+    <p class="lede">The busiest stretch is still ahead: shotgun season, Nov 30 to Dec 12.</p>
+    <div class="chart" id="weekChart"></div>
+    <p class="note">This week runs through Thursday. Seasons shown are for Zone 13–14; winter dates to be confirmed by MassWildlife.</p>
+  </section>
+
+  <section>
+    <div class="report">
+      <h3>Report every deer</h3>
+      <p>Every deer that's reported counts toward the island's harvest total, whether you donate it, process it, or take it home whole.</p>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-act">
+    <h2 id="h-act">Bring your deer to us</h2>
+    <div class="acts2">
+      <div class="acol">
+      <div class="act">
+        <h4>Donate</h4>
+        <ul>
+          <li>Processed at no cost to you</li>
+          <li>Tick Free MV pays the hunter $150 a doe, $100 a buck</li>
+          <li>Earns a replacement antlerless permit from MassWildlife</li>
+          <li>Donate 2 deer and also <strong class="hl">earn a free either-sex permit</strong></li>
+        </ul>
+      </div>
+      <div class="act">
+        <h4>Private processing <span class="price">$300</span></h4>
+        <ul>
+          <li>2 lb ground chubs and vacuum-packed cuts</li>
+          <li>All venison, or add pork fat for $20</li>
+          <li>One deer, one hunter: your meat is never mixed</li>
+        </ul>
+      </div>
+      <div class="act">
+        <h4>Cold storage</h4>
+        <ul>
+          <li>Hung whole, skin on</li>
+          <li>No charge at present</li>
+          <li>Pick up within 7 days</li>
+        </ul>
+      </div>
+      </div>
+      <div class="acol">
+      <div class="act">
+        <h4>Own land on the island?</h4>
+        <ul>
+          <li>Vetted hunters, on your terms</li>
+          <li>Your name and property are never published</li>
+        </ul>
+        <a class="cta" href="https://www.homegroundmv.com/info-for-landowners" target="_blank" rel="noopener">Enroll your property</a>
+      </div>
+      <div class="act">
+        <h4>Looking for land to hunt?</h4>
+        <ul>
+          <li>Private island land, matched to vetted hunters</li>
+          <li>Permission letters and property rules in your hand before you go</li>
+        </ul>
+        <a class="cta" href="https://www.homegroundmv.com/info-for-hunters" target="_blank" rel="noopener">Learn how to join</a>
+      </div>
+      </div>
+    </div>
+    <p class="dropnote">Dropping off a deer? <a href="https://www.homegroundmv.com/drop-off" target="_top">Pre-check it here</a></p>
+  </section>
+
+
+  <footer>
+    <p>Counts come from Home Ground's own facility records. Deer taken in before Oct 17 were logged on paper and are not yet included.</p>
+    <p>No hunter, landowner, or property is ever identified on this page.</p>
+    <p>Home Ground Inc. · Change starts with YES · <a href="https://homegroundmv.com" target="_blank" rel="noopener" style="color:inherit">homegroundmv.com</a></p>
+  </footer>
+</main>
+<div class="tip" id="tip"></div>
+<script>
+/* Season totals from the facility log, through the backend's public scoreboard address
+   (backend 81). Counts only: no hunter, landowner or property is in it. This copy is the last
+   known figures, shown until the live ones arrive and kept if they cannot. */
+var BACKEND = "https://script.google.com/macros/s/AKfycbwJbxYLDa5uAXwuHI_kF7vD_Panq2ZxNNV2EFofWqJAZkQRWy0j9Ns7ceKQ4-8zwUo3/exec";
+var LAST_SEASON_APPROX = 50;   // last season, about 50 deer through the cooler (an estimate)
+var RENDER = [];
+var DATA = {
+  asOf: "11/12/2026 18:05",
+  total: 80, lastSeasonApprox: 50,
+  cooler: { hanging: 55, capacity: 150, alertPct: 80, fullPct: 95 },
+  lbsDonated: 526, mealsDonated: 263,
+  donatedWaiting: 41, mealsPerDonatedDeer: 11.4,
+  kinds: [
+    { key:"doe",    label:"Does",                 n:31, sex:"f" },
+    { key:"button", label:"Button bucks",         n:12, sex:"m" },
+    { key:"short",  label:"Spike bucks under 3 in.", n:2,  sex:"m" },
+    { key:"buck",   label:"Antlered bucks",       n:35, sex:"m" }
+  ],
+  use: { donated:64, cold:16, private:0 },
+  // Sunday-start weeks, Oct 4 2026 to Feb 14 2027
+  weekStart: "2026-10-04",
+  weeks: [0,2,13,21,12,32],
+  points: { 1:5, 2:3, 3:1, 4:1, 5:0, 6:3, 7:5, 8:5, 9:2, 10:2 },
+  pointsNotRecorded: 8
+};
+
+function $(id){ return document.getElementById(id); }
+var tip = $("tip");
+function showTip(e, text){ tip.textContent = text; tip.style.left = (e.clientX + 12) + "px"; tip.style.top = (e.clientY - 34) + "px"; tip.style.opacity = 1; }
+function hideTip(){ tip.style.opacity = 0; }
+
+// Logo height matches the title-to-cooler-light block beside it (wide screens only)
+function fitLogo(){
+  var img = document.querySelector(".plate img"), plate = img.parentElement, col = plate.nextElementSibling;
+  if (window.innerWidth <= 700) { img.style.height = ""; img.style.width = ""; return; }
+  var cs = getComputedStyle(plate), pad = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+  img.style.width = "auto";
+  img.style.height = Math.max(80, col.getBoundingClientRect().height - pad) + "px";
+}
+fitLogo();
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitLogo);
+window.addEventListener("resize", fitLogo);
+
+// the big numbers
+RENDER.push(function(){
+  $("total").textContent = DATA.total; $("nowLbl").textContent = DATA.total;
+  $("lbs").innerHTML = DATA.lbsDonated.toLocaleString("en-US") + '<span class="unit">lb</span>';
+  $("meals").textContent = DATA.mealsDonated.toLocaleString("en-US");
+  $("uDon").textContent = DATA.use.donated; $("uCold").textContent = DATA.use.cold; $("uPriv").textContent = DATA.use.private;
+});
+
+// meals on the way (an estimate)
+RENDER.push(function(){
+  var w = DATA.donatedWaiting || 0, avg = DATA.mealsPerDonatedDeer || 0, box = $("otw");
+  if (!w || !avg) { box.hidden = true; return; }
+  box.hidden = false;
+  var est = w * avg, shown = est >= 100 ? Math.round(est / 10) * 10 : Math.round(est);
+  $("otwMeals").textContent = shown.toLocaleString("en-US");
+  $("otwNote").textContent = "An estimate: the " + w + " donated deer hanging in the cooler now, at this season\u2019s average of " +
+    avg.toFixed(1) + " two-pound packages a deer.";
+});
+
+// as-of line and cooler light
+RENDER.push(function(){
+  var m = String(DATA.asOf).match(/(\d+)\/(\d+)\/(\d{4})(?:\s+(\d+):(\d+))?/);
+  var d = m ? new Date(+m[3], m[1] - 1, +m[2], +(m[4] || 12), +(m[5] || 0)) : new Date();
+  $("asof").textContent = "Updated " + d.toLocaleDateString("en-US", { weekday:"long", month:"short", day:"numeric" }) +
+    ", " + d.toLocaleTimeString("en-US", { hour:"numeric", minute:"2-digit" });
+  var c = DATA.cooler, pct = Math.round(100 * c.hanging / c.capacity);
+  var state = pct >= c.fullPct ? ["Cooler full: call first", "#E26A55"] : pct >= c.alertPct ? ["Cooler filling up", "#E7B04A"] : ["Room in the cooler", "#7BC86C"];
+  $("lightText").textContent = state[0];
+  $("lightDot").style.background = state[1];
+  $("lightDot").style.boxShadow = "0 0 0 5px " + state[1] + "40";
+  $("lightSub").textContent = c.hanging + " of " + c.capacity + " rail spots in use";
+  var max = Math.max(DATA.total, DATA.lastSeasonApprox);
+  $("barNow").style.width = (100 * DATA.total / max) + "%";
+  $("barLast").style.width = (100 * DATA.lastSeasonApprox / max) + "%";
+});
+
+// herd strip
+RENDER.push(function(){
+  var dots = $("dots"), legend = $("legend"), html = "";
+  legend.innerHTML = ""; dots.classList.remove("focus");
+  var COLOR = { f:"var(--orange)", m:"var(--olive)" };
+  DATA.kinds.forEach(function(k){ for (var i = 0; i < k.n; i++) html += '<span class="dot" data-k="' + k.key + '" data-s="' + k.sex + '" style="background:' + COLOR[k.sex] + '"></span>'; });
+  dots.innerHTML = html;
+  var bucks = DATA.kinds.filter(function(k){ return k.sex === "m"; }).reduce(function(a, k){ return a + k.n; }, 0);
+  var chips = [DATA.kinds[0], { key:"bucks", label:"All bucks", n:bucks, sex:"m", group:true }].concat(DATA.kinds.slice(1));
+  chips.forEach(function(k){
+    k.color = COLOR[k.sex];
+    var b = document.createElement("button");
+    b.className = "chip"; b.type = "button"; b.id = "chip-" + k.key; b.setAttribute("aria-pressed", "false");
+    b.innerHTML = '<i style="background:' + k.color + '"></i>' + k.label + ' <b>' + k.n + '</b>';
+    b.addEventListener("click", function(){
+      var on = b.getAttribute("aria-pressed") !== "true";
+      legend.querySelectorAll(".chip").forEach(function(c){ c.setAttribute("aria-pressed", "false"); });
+      dots.classList.toggle("focus", on);
+      dots.querySelectorAll(".dot").forEach(function(d){ d.classList.toggle("on", on && (k.group ? d.dataset.s === k.sex : d.dataset.k === k.key)); });
+      if (on) b.setAttribute("aria-pressed", "true");
+    });
+    legend.appendChild(b);
+  });
+  var al = DATA.kinds[0].n + DATA.kinds[1].n + DATA.kinds[2].n;
+  $("alCount").textContent = al;
+  $("alPct").textContent = (DATA.total ? Math.round(100 * al / DATA.total) : 0) + "%";
+});
+
+// week chart with season bands
+RENDER.push(function(){
+  var W = 760, H = 230, L = 30, R = 10, T = 30, B = 34;
+  var start = new Date(DATA.weekStart + "T12:00:00"), end = new Date("2027-02-14T12:00:00");
+  var nWeeks = Math.round((end - start) / 6048e5);
+  var bw = (W - L - R) / nWeeks;
+  var maxV = Math.max.apply(null, DATA.weeks.concat([10]));
+  var top = Math.ceil(maxV / 10) * 10;
+  function x(i){ return L + i * bw; }
+  function xDate(s){ return L + ((new Date(s + "T12:00:00") - start) / 6048e5) * bw; }
+  function y(v){ return T + (H - T - B) * (1 - v / top); }
+  var seasons = [
+    ["Archery", "2026-10-05", "2026-11-29"],
+    ["Shotgun", "2026-11-30", "2026-12-13"],
+    ["Primitive", "2026-12-14", "2027-01-01"],
+    ["Winter", "2027-01-01", "2027-02-14"]
+  ];
+  var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Deer brought in each week this season">';
+  seasons.forEach(function(se, i){
+    var a = xDate(se[1]), b = xDate(se[2]);
+    s += '<rect x="' + a + '" y="' + (T - 18) + '" width="' + (b - a) + '" height="' + (H - B - T + 18) + '" fill="' + (i % 2 ? "var(--band)" : "transparent") + '"/>';
+    s += '<text class="season" x="' + (a + 4) + '" y="' + (T - 6) + '">' + se[0] + '</text>';
+  });
+  for (var g = 0; g <= top; g += 10) {
+    s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y(g) + '" y2="' + y(g) + '" stroke="var(--line)"/>';
+    s += '<text x="' + (L - 6) + '" y="' + (y(g) + 4) + '" text-anchor="end">' + g + '</text>';
+  }
+  DATA.weeks.forEach(function(v, i){
+    if (!v) return;
+    var d = new Date(start.getTime() + i * 6048e5);
+    var lbl = "Week of " + d.toLocaleDateString("en-US", { month:"short", day:"numeric" }) + ": " + v + " deer";
+    var last = i === DATA.weeks.length - 1;
+    s += '<rect class="bar" data-tip="' + lbl + (last ? " so far" : "") + '" x="' + (x(i) + 3) + '" y="' + y(v) + '" width="' + (bw - 6) + '" height="' + (y(0) - y(v)) + '" rx="3" fill="' + (last ? "var(--orange)" : "var(--olive)") + '"/>';
+    s += '<text class="val" x="' + (x(i) + bw / 2) + '" y="' + (y(v) - 5) + '" text-anchor="middle">' + v + '</text>';
+  });
+  [["Oct", "2026-10-04"], ["Nov", "2026-11-01"], ["Dec", "2026-12-01"], ["Jan", "2027-01-01"], ["Feb", "2027-02-01"]].forEach(function(m){
+    s += '<text x="' + xDate(m[1]) + '" y="' + (H - 12) + '">' + m[0] + '</text>';
+  });
+  s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y(0) + '" y2="' + y(0) + '" stroke="var(--muted)"/>';
+  s += '</svg>';
+  $("weekChart").innerHTML = s;
+});
+
+// Mouse: follow the pointer and hide on leave. Touch or click: show briefly, then hide.
+var tipTimer;
+function wireBars(){
+document.querySelectorAll(".bar").forEach(function(r){
+  r.addEventListener("pointermove", function(e){ if (e.pointerType === "mouse") showTip(e, r.dataset.tip); });
+  r.addEventListener("pointerleave", function(e){ if (e.pointerType === "mouse") hideTip(); });
+  r.addEventListener("click", function(e){
+    e.stopPropagation(); showTip(e, r.dataset.tip);
+    clearTimeout(tipTimer); tipTimer = setTimeout(hideTip, 2000);
+  });
+});
+}
+document.addEventListener("click", hideTip);
+window.addEventListener("scroll", hideTip, { passive: true });
+document.querySelectorAll(".chart").forEach(function(c){ c.addEventListener("scroll", hideTip, { passive: true }); });
+
+/* Draw, then fetch the live figures and draw again. Every five minutes after that. */
+function renderAll(){
+  RENDER.forEach(function(f){ f(); });
+  wireBars(); fitLogo(); tellParent();
+}
+// When this page is embedded on homegroundmv.com, tell the frame how tall to be.
+function tellParent(){
+  try { if (window.parent !== window) window.parent.postMessage({ hgScoreboardHeight: Math.ceil(document.body.getBoundingClientRect().height) }, "*"); } catch (e) {}
+}
+window.addEventListener("resize", tellParent);
+function fromBackend(j){
+  var pts = {}; Object.keys(j.points || {}).forEach(function(k){ pts[k] = j.points[k]; });
+  return {
+    asOf: j.asOf, total: j.total, lastSeasonApprox: LAST_SEASON_APPROX,
+    cooler: { hanging: j.cooler.inCooler, capacity: j.cooler.capacity, alertPct: j.cooler.alertPct, fullPct: j.cooler.fullPct },
+    lbsDonated: j.lbsDonated, mealsDonated: j.mealsDonated,
+    donatedWaiting: j.donatedWaiting, mealsPerDonatedDeer: j.mealsPerDonatedDeer,
+    kinds: [
+      { key:"doe",    label:"Does",                    n:j.kinds.doe,      sex:"f" },
+      { key:"button", label:"Button bucks",            n:j.kinds.button,   sex:"m" },
+      { key:"short",  label:"Spike bucks under 3 in.", n:j.kinds.spike,    sex:"m" },
+      { key:"buck",   label:"Antlered bucks",          n:j.kinds.antlered, sex:"m" }
+    ],
+    use: j.use, weekStart: j.weekStart, weeks: j.weeks, points: pts, pointsNotRecorded: j.pointsNotRecorded
+  };
+}
+function load(){
+  fetch(BACKEND + "?scoreboard=1", { cache: "no-store" })
+    .then(function(r){ return r.json(); })
+    .then(function(j){ if (!j.ok) throw new Error(j.error || "no data"); DATA = fromBackend(j); $("stale").hidden = true; renderAll(); })
+    .catch(function(){ $("stale").hidden = false; tellParent(); });
+}
+renderAll();
+load();
+setInterval(load, 5 * 60 * 1000);
+</script>
+</body>
+</html>

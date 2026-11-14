@@ -1,0 +1,667 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Bringing a deer to the Home Ground facility on Martha’s Vineyard? Pre-check it from your phone and show your code at the counter.">
+<title>Deer Drop-Off Pre-Check</title>
+<link rel="icon" href="../icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Public+Sans:wght@400;500;600;700&family=Zilla+Slab:wght@500;600;700&display=swap">
+<style>
+/* Deer Drop-Off Pre-Check (Joe, 14 Nov 2026). Split off the Deer Dashboard: the dashboard is for
+   everyone, this page is only for a hunter bringing a deer in. One question at a time, big tap
+   targets, works one-handed in a truck. */
+html{-webkit-text-size-adjust:100%}body{margin:0}img{max-width:100%}[hidden]{display:none!important}
+:root{
+  --bg:#FAF7F0; --surface:#FFFFFF; --ink:#2B2416; --muted:#6B6450; --line:#E4DED0;
+  --olive:#4B5320; --olive-deep:#363C17; --orange:#C96C0C; --orange-soft:#E9A35A; --sage:#8F946E; --brown:#3A301D;
+  --on-olive:#F5F1E4; --band:#EFEADC; --pick:#FCEBD7;
+  --ok:#3F7A3A; --warn:#B7791F; --bad:#A63A2A;
+  --display:"Zilla Slab", Rockwell, "Roboto Slab", Georgia, serif;
+  --num:"Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --body:"Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#17180F; --surface:#212315; --ink:#EEE8D8; --muted:#A9A38D; --line:#34372A;
+  --olive:#5E6829; --olive-deep:#2A2E14; --orange:#F0963B; --orange-soft:#C27A35; --sage:#A3A884; --brown:#D9CDB0;
+  --on-olive:#F5F1E4; --band:#1E2014; --pick:#3A2A16; --ok:#7DBB72; --warn:#E0A94A; --bad:#E07A66; color-scheme:dark }}
+:root[data-theme="dark"]{
+  --bg:#17180F; --surface:#212315; --ink:#EEE8D8; --muted:#A9A38D; --line:#34372A;
+  --olive:#5E6829; --olive-deep:#2A2E14; --orange:#F0963B; --orange-soft:#C27A35; --sage:#A3A884; --brown:#D9CDB0;
+  --on-olive:#F5F1E4; --band:#1E2014; --pick:#3A2A16; --ok:#7DBB72; --warn:#E0A94A; --bad:#E07A66; color-scheme:dark }
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.5}
+.wrap{max-width:720px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.mock{background:var(--band);color:var(--muted);font-size:12.5px;text-align:center;padding:6px 16px;border-bottom:1px solid var(--line)}
+
+/* masthead */
+.mast{background:var(--olive);color:var(--on-olive)}
+.mast .wrap{padding-block:18px 22px;display:flex;gap:18px;align-items:center}
+.plate{background:#FAF7F0;border-radius:10px;padding:8px 10px;line-height:0;flex:none}
+.plate img{width:92px;height:auto;display:block}
+h1{font-family:var(--display);font-weight:700;font-size:clamp(26px,6.4vw,38px);line-height:1.05;margin:0;text-wrap:balance}
+.tag{margin:6px 0 0;opacity:.9;font-size:15px}
+.status{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.st{display:inline-flex;align-items:center;gap:8px;background:rgba(0,0,0,.22);border-radius:999px;padding:6px 14px 6px 10px;font-weight:600;font-size:14px}
+.st i{width:12px;height:12px;border-radius:50%;background:#7BC86C;flex:none}
+@media (max-width:520px){ .mast .wrap{flex-direction:column;align-items:flex-start;gap:12px} .plate img{width:110px} }
+
+/* quick actions */
+.quick{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:16px}
+.qa{display:flex;flex-direction:column;justify-content:center;gap:2px;min-height:64px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 14px;text-decoration:none;color:var(--ink)}
+.qa b{font-family:var(--num);font-size:21px;line-height:1.1;color:var(--orange)}
+.qa span{font-size:13px;color:var(--muted)}
+a.qa:hover{border-color:var(--orange-soft)}
+.qa:focus-visible{outline:2px solid var(--orange);outline-offset:2px}
+@media (max-width:520px){ .quick{grid-template-columns:1fr 1fr} .quick .qa:first-child{grid-column:1/-1} }
+
+/* before you come */
+.before{margin-top:14px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:4px 16px}
+.before summary{cursor:pointer;font-weight:700;padding:10px 0;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:10px}
+.before summary::-webkit-details-marker{display:none}
+.before summary::after{content:"Show";font-weight:600;font-size:13px;color:var(--orange)}
+.before[open] summary::after{content:"Hide"}
+.before ul{margin:0 0 12px;padding-left:20px;font-size:15px}
+.before li{margin:3px 0}
+
+/* the stepper */
+.card{margin-top:16px;background:var(--surface);border:2px solid var(--orange);border-radius:12px;padding:18px 18px 20px;scroll-margin-top:12px}
+.prog{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px;color:var(--muted);font-weight:600}
+.bar{height:6px;background:var(--band);border-radius:3px;margin:8px 0 14px;overflow:hidden}
+.bar b{display:block;height:100%;width:0;background:var(--orange);border-radius:3px;transition:width .25s}
+.back{background:none;border:0;color:var(--orange);font:inherit;font-weight:700;font-size:14px;padding:6px 0;cursor:pointer}
+h2{font-family:var(--display);font-weight:700;font-size:25px;margin:0 0 4px;color:var(--brown);text-wrap:balance}
+.lede{color:var(--muted);margin:0 0 14px}
+.q{margin-top:18px}
+.q > .ql{display:block;font-weight:700;font-size:16px;margin-bottom:8px}
+.hint{font-weight:400;color:var(--muted);font-size:13.5px}
+.choices{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.choices.c3{grid-template-columns:repeat(3,1fr)}
+.choices.c1{grid-template-columns:1fr}
+@media (max-width:420px){ .choices.c3{grid-template-columns:repeat(2,1fr)} }
+.ch{position:relative;display:block;margin:0;cursor:pointer}
+.ch input{position:absolute;opacity:0;inset:0;margin:0;cursor:pointer}
+.ch span{display:flex;flex-direction:column;justify-content:center;min-height:52px;height:100%;border:1.5px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--bg);font-weight:600;font-size:15.5px;line-height:1.25}
+.ch span small{font-weight:400;color:var(--muted);font-size:13px;margin-top:3px}
+.ch input:checked + span{border-color:var(--orange);background:var(--pick);box-shadow:0 0 0 1px var(--orange) inset}
+.ch input:focus-visible + span{outline:2px solid var(--orange);outline-offset:2px}
+.big3 .ch span{min-height:96px;padding:14px 16px;font-weight:400;font-size:14.5px;color:var(--muted)}
+.big3 .ch span b{font-family:var(--display);font-size:21px;color:var(--brown);display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-bottom:2px}
+.big3 .ch span b em{font-style:normal;font-family:var(--num);font-size:22px;color:var(--orange)}
+input[type=text],input[type=tel],input[type=email],input[type=date],select,textarea{width:100%;font:inherit;font-size:16px;padding:12px;border:1.5px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink)}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--orange)}
+textarea{min-height:76px}
+.fl{display:block;font-weight:700;font-size:15px;margin:14px 0 6px}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.row2 .fl{margin-top:0}
+.addr{display:grid;grid-template-columns:1fr 64px 100px;gap:8px;margin-top:8px}
+@media (max-width:520px){ .row2{grid-template-columns:1fr;gap:0} .row2 > div + div .fl{margin-top:14px} .addr{grid-template-columns:1fr 64px} .addr input:first-child{grid-column:1/-1} }
+.chk{display:flex;gap:10px;align-items:flex-start;font-size:15px;margin-top:10px;cursor:pointer}
+.chk input{width:20px;height:20px;margin:2px 0 0;flex:none;accent-color:var(--orange)}
+.stepper{display:inline-flex;align-items:center;border:1.5px solid var(--line);border-radius:10px;overflow:hidden;background:var(--bg)}
+.stepper button{width:52px;height:52px;border:0;background:none;font:inherit;font-size:26px;font-weight:600;color:var(--orange);cursor:pointer}
+.stepper output{min-width:56px;text-align:center;font-family:var(--num);font-size:28px;font-weight:700}
+.warnbox{margin-top:10px;border-left:4px solid var(--warn);background:var(--band);padding:10px 12px;border-radius:0 8px 8px 0;font-size:14.5px}
+.okbox{border-left-color:var(--ok)}
+.err{color:var(--bad);font-weight:700;margin-top:14px;min-height:0}
+.err:empty{display:none}
+.next{display:block;width:100%;margin-top:20px;background:var(--orange);color:#fff;border:0;border-radius:10px;padding:16px 18px;font:inherit;font-weight:700;font-size:18px;cursor:pointer}
+.next:disabled{opacity:.6}
+.next:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+.hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
+
+/* cut sheet */
+.cutrow{display:grid;grid-template-columns:120px 1fr;gap:8px 12px;align-items:start;padding:12px 0;border-top:1px solid var(--line)}
+.cutrow:first-of-type{border-top:0}
+.cutrow > b{font-size:15.5px;padding-top:12px}
+.cutrow > b small{display:block;font-weight:400;color:var(--muted);font-size:12.5px}
+.cutrow .choices{grid-template-columns:repeat(auto-fill,minmax(112px,1fr))}
+.cutrow .ch span{min-height:46px;font-size:14.5px;text-align:center;align-items:center}
+@media (max-width:520px){ .cutrow{grid-template-columns:1fr} .cutrow > b{padding-top:0} }
+.always{font-size:14px;color:var(--muted);margin:6px 0 0}
+.na{margin-top:18px;border:1.5px dashed var(--line);border-radius:10px;padding:12px 14px}
+.na h3{margin:0;font-size:15px;font-weight:700;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.na h3 span{font-weight:600;color:var(--muted);font-size:13px}
+.na ul{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:6px}
+.na li{font-size:13.5px;color:var(--muted);background:var(--band);border-radius:999px;padding:4px 10px;text-decoration:line-through;text-decoration-color:rgba(107,100,80,.5)}
+.price{margin-top:16px;background:var(--band);border-radius:10px;padding:12px 14px;display:grid;grid-template-columns:1fr auto;gap:2px 12px;font-size:15px}
+.price .tot{font-weight:700;border-top:1px solid var(--line);padding-top:6px;margin-top:4px}
+.price .tot + .tot{border:0;padding:0;margin:0}
+.price b{font-family:var(--num);font-size:20px}
+.terms{font-size:13.5px;color:var(--muted);margin:10px 0 0}
+
+/* review */
+.rev{border:1px solid var(--line);border-radius:10px;margin-top:10px}
+.rev > div{display:flex;justify-content:space-between;gap:12px;padding:10px 14px;border-top:1px solid var(--line)}
+.rev > div:first-child{border-top:0}
+.rev dt{font-weight:700;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.rev dd{margin:2px 0 0;font-size:15px}
+.rev button{background:none;border:0;color:var(--orange);font:inherit;font-weight:700;font-size:14px;cursor:pointer;align-self:flex-start;padding:2px 0}
+
+/* done */
+.done{text-align:center}
+.done .k{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.code{font-family:var(--num);font-weight:700;font-size:84px;letter-spacing:.14em;color:var(--orange);line-height:1;margin:6px 0 8px}
+.done ol{text-align:left;max-width:440px;margin:14px auto 0;padding-left:22px}
+.done li{margin:4px 0}
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}
+.btn2{display:flex;align-items:center;justify-content:center;min-height:52px;border-radius:10px;border:1.5px solid var(--orange);color:var(--orange);background:none;text-decoration:none;font:inherit;font-weight:700;font-size:15.5px;cursor:pointer;padding:8px}
+.btn2.solid{background:var(--orange);color:#fff}
+
+footer{margin:28px 0 30px;padding-top:14px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
+footer p{margin:4px 0}
+footer a{color:var(--orange)}
+@media (prefers-reduced-motion:reduce){ .bar b{transition:none} }
+</style>
+</head>
+<body>
+<header class="mast">
+  <div class="wrap">
+    <a class="plate" href="https://homegroundmv.com" target="_blank" rel="noopener" aria-label="Home Ground website"><img alt="Home Ground" src="../logo.png"></a>
+    <div>
+      <h1>Deer Drop-Off Pre-Check</h1>
+      <p class="tag">Check your deer in from the truck. Show your code at the counter.</p>
+      <div class="status">
+        <span class="st" id="openSt"><i id="openDot"></i><span id="openTxt">Open 8 am – 8 pm daily</span></span>
+        <span class="st" id="coolSt" hidden><i id="coolDot"></i><span id="coolTxt">Room in the cooler</span></span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="quick">
+    <a class="qa" href="sms:+15086876255"><b>(508) 687-6255</b><span>Text us before you come</span></a>
+    <a class="qa" href="https://www.google.com/maps/dir/?api=1&amp;destination=41.394750%2C-70.680694" target="_blank" rel="noopener"><b>Directions</b><span>MV Ag Society, West Tisbury</span></a>
+    <div class="qa"><b>8 am – 8 pm</b><span>Drop-off, every day</span></div>
+  </div>
+
+  <details class="before" id="before" open>
+    <summary>Before you head over</summary>
+    <ul>
+      <li><b>Within 24 hours</b> of the shot</li>
+      <li><b>Field dressed</b> within 4 hours</li>
+      <li><b>Reported to MassWildlife</b>, with your tag on the deer</li>
+      <li><b>Whole, skin on.</b> We can’t take a deer that’s quartered, cut up or road-killed</li>
+    </ul>
+  </details>
+
+  <div class="card" id="card" aria-live="polite">
+    <div id="progWrap">
+      <div class="prog"><button class="back" id="back" type="button" hidden>‹ Back</button><span id="progTxt">Step 1 of 4</span></div>
+      <div class="bar"><b id="progBar"></b></div>
+    </div>
+
+    <form id="f" novalidate autocomplete="on">
+      <!-- 1. what happens to the deer -->
+      <section class="step" data-step="plan" data-title="What we’re doing with it">
+        <h2>What would you like done with your deer?</h2>
+        <div class="choices c1 big3" role="radiogroup" aria-label="What would you like done with your deer">
+          <label class="ch"><input type="radio" name="type" value="Donated"><span><b>Donate it</b>Processed free for the Island Food Pantry. Tick Free MV pays you $150 a doe, $100 a buck, and you earn a replacement antlerless permit.</span></label>
+          <label class="ch"><input type="radio" name="type" value="Private"><span><b>Process it for me <em id="pPrice">$300</em></b>Your own deer, your cuts. 2 lb ground packages and vacuum-packed cuts. Paid at pickup.</span></label>
+          <label class="ch"><input type="radio" name="type" value="Cold storage"><span><b>Cold storage</b>Hung whole, skin on, in the cooler. Pick it up within 7 days.</span></label>
+        </div>
+        <div class="warnbox" id="coolWarn" hidden></div>
+      </section>
+
+      <!-- 2. the deer -->
+      <section class="step" data-step="deer" data-title="Your deer" hidden>
+        <h2>Your deer</h2>
+        <div class="q"><span class="ql">Which deer?</span>
+          <div class="choices">
+            <label class="ch"><input type="radio" name="deer" value="Doe"><span>Doe</span></label>
+            <label class="ch"><input type="radio" name="deer" value="Button buck"><span>Button buck</span></label>
+            <label class="ch"><input type="radio" name="deer" value="Sub-legal adult male"><span>Spike buck<small>antlers under 3 in.</small></span></label>
+            <label class="ch"><input type="radio" name="deer" value="Antlered buck"><span>Antlered buck</span></label>
+          </div>
+        </div>
+        <div class="q" id="ptsQ" hidden><span class="ql">Points <span class="hint">count those 1 inch and longer</span></span>
+          <div class="stepper"><button type="button" id="ptsDn" aria-label="One fewer point">−</button><output id="pts" aria-live="polite">–</output><button type="button" id="ptsUp" aria-label="One more point">+</button></div>
+        </div>
+        <div class="q" id="skullQ" hidden><span class="ql">Skull and antlers back?</span>
+          <div class="choices">
+            <label class="ch"><input type="radio" name="skull" value="Yes"><span>Yes, keep them</span></label>
+            <label class="ch"><input type="radio" name="skull" value="No"><span>No</span></label>
+          </div>
+        </div>
+        <div class="q"><span class="ql">When did you shoot it?</span>
+          <div class="choices">
+            <label class="ch"><input type="radio" name="when" value="0"><span>Today</span></label>
+            <label class="ch"><input type="radio" name="when" value="1"><span>Yesterday</span></label>
+          </div>
+        </div>
+        <div class="q"><span class="ql">Town of harvest</span>
+          <div class="choices c3">
+            <label class="ch"><input type="radio" name="town" value="Aquinnah"><span>Aquinnah</span></label>
+            <label class="ch"><input type="radio" name="town" value="Chilmark"><span>Chilmark</span></label>
+            <label class="ch"><input type="radio" name="town" value="West Tisbury"><span>West Tisbury</span></label>
+            <label class="ch"><input type="radio" name="town" value="Tisbury"><span>Tisbury</span></label>
+            <label class="ch"><input type="radio" name="town" value="Oak Bluffs"><span>Oak Bluffs</span></label>
+            <label class="ch"><input type="radio" name="town" value="Edgartown"><span>Edgartown</span></label>
+          </div>
+        </div>
+        <div class="q"><span class="ql">Taken with</span>
+          <div class="choices">
+            <label class="ch"><input type="radio" name="tw" value="Archery"><span>Archery</span></label>
+            <label class="ch"><input type="radio" name="tw" value="Shotgun slug"><span>Shotgun slug</span></label>
+            <label class="ch"><input type="radio" name="tw" value="Muzzleloader"><span>Muzzleloader</span></label>
+            <label class="ch"><input type="radio" name="tw" value="Not known"><span>Not sure</span></label>
+          </div>
+        </div>
+        <div class="q" id="ammoQ" hidden><span class="ql">Lead or non-lead?</span>
+          <div class="choices c3">
+            <label class="ch"><input type="radio" name="am" value="Lead"><span>Lead</span></label>
+            <label class="ch"><input type="radio" name="am" value="Non-lead"><span>Non-lead</span></label>
+            <label class="ch"><input type="radio" name="am" value="Not known"><span>Not sure</span></label>
+          </div>
+        </div>
+        <div class="q"><span class="ql">Field dressed within 4 hours of the shot?</span>
+          <div class="choices">
+            <label class="ch"><input type="radio" name="fd" value="Yes"><span>Yes</span></label>
+            <label class="ch"><input type="radio" name="fd" value="No"><span>No</span></label>
+          </div>
+          <div class="warnbox" id="fdWarn" hidden>We may not be able to take it. Text <a href="sms:+15086876255">(508) 687-6255</a> before you drive over, and we’ll tell you.</div>
+        </div>
+      </section>
+
+      <!-- 3. the hunter -->
+      <section class="step" data-step="you" data-title="About you" hidden>
+        <h2>About you</h2>
+        <p class="lede">So we can match your deer and reach you about it.</p>
+        <div class="row2">
+          <div><label class="fl" for="fn">First name</label><input id="fn" type="text" autocomplete="given-name" autocapitalize="words"></div>
+          <div><label class="fl" for="ln">Last name</label><input id="ln" type="text" autocomplete="family-name" autocapitalize="words"></div>
+        </div>
+        <div class="row2" style="margin-top:14px">
+          <div><label class="fl" for="ph">Mobile phone</label><input id="ph" type="tel" inputmode="tel" autocomplete="tel" placeholder="(508) 555-0123"></div>
+          <div><label class="fl" for="em">Email <span class="hint">optional</span></label><input id="em" type="email" inputmode="email" autocomplete="email"></div>
+        </div>
+        <label class="fl" for="lic">MassWildlife customer ID <span class="hint" id="licHint">on your license · optional</span></label>
+        <input id="lic" type="text" inputmode="numeric" autocomplete="off">
+        <label class="fl" for="cf">Confirmation number <span class="hint">from reporting the deer</span></label>
+        <input id="cf" type="text" autocapitalize="characters" autocorrect="off" spellcheck="false" autocomplete="off">
+        <label class="chk"><input id="cfna" type="checkbox"> The state system wouldn’t give me a confirmation number</label>
+        <div id="addrQ" hidden>
+          <label class="fl" for="ad1">Mailing address <span class="hint">Tick Free MV mails your check here</span></label>
+          <input id="ad1" type="text" autocomplete="address-line1" placeholder="Street or PO box">
+          <div class="addr"><input id="adt" type="text" autocomplete="address-level2" placeholder="Town"><input id="ads" type="text" value="MA" maxlength="2" autocomplete="address-level1" aria-label="State"><input id="adz" type="text" inputmode="numeric" autocomplete="postal-code" placeholder="ZIP" aria-label="ZIP"></div>
+        </div>
+        <label class="chk"><input id="remember" type="checkbox" checked> Remember my details on this phone for next time</label>
+      </section>
+
+      <!-- 4. cuts, private only -->
+      <section class="step" data-step="cuts" data-title="Your cuts" hidden>
+        <h2>Your cut sheet</h2>
+        <p class="lede">Pick how you’d like each part. Anything you leave as Ground goes into 2 lb packages.</p>
+        <div id="cutRows"></div>
+        <p class="always">Neck, shanks and trim are always ground.</p>
+        <div class="q" id="porkQ"><span class="ql">Ground venison</span>
+          <div class="choices">
+            <label class="ch"><input type="radio" name="pork" value="No" checked><span>All venison</span></label>
+            <label class="ch"><input type="radio" name="pork" value="Yes"><span>Add pork fat<small id="porkNote">10%, + $20</small></span></label>
+          </div>
+        </div>
+        <p class="warnbox" id="porkOut" hidden>Pork fat isn’t available right now, so the grind will be all venison.</p>
+        <div class="na">
+          <h3>Specialty items <span>Not available at this time</span></h3>
+          <ul>
+            <li>Hot dogs</li><li>Summer sausage</li><li>Snack sticks</li><li>Jerky</li><li>Breakfast sausage</li><li>Bratwurst</li><li>Burger patties</li>
+          </ul>
+        </div>
+        <div class="price" id="priceBox"></div>
+        <p class="terms">We call you when it’s ready. Meat not picked up within 14 days of that call is donated to an island food pantry. You’ll sign the cut sheet at the counter.</p>
+      </section>
+
+      <!-- 5. review and send -->
+      <section class="step" data-step="send" data-title="Check and send" hidden>
+        <h2>Check and send</h2>
+        <dl class="rev" id="rev"></dl>
+        <div class="q"><span class="ql">When will you get here?</span>
+          <div class="choices">
+            <label class="ch"><input type="radio" name="eta" value="Now, on my way"><span>On my way</span></label>
+            <label class="ch"><input type="radio" name="eta" value="Within the hour"><span>Within the hour</span></label>
+            <label class="ch"><input type="radio" name="eta" value="Later today"><span>Later today</span></label>
+            <label class="ch"><input type="radio" name="eta" value="Tomorrow"><span>Tomorrow morning</span></label>
+          </div>
+          <div class="warnbox" id="etaWarn" hidden>Remember the 24-hour limit from the shot.</div>
+        </div>
+        <label class="fl" for="nt">Anything we should know? <span class="hint">optional</span></label>
+        <textarea id="nt" maxlength="300"></textarea>
+        <div class="hp" aria-hidden="true"><label for="web">Leave this empty</label><input id="web" type="text" tabindex="-1" autocomplete="off"></div>
+      </section>
+
+      <div class="err" id="err" role="alert"></div>
+      <button class="next" id="next" type="submit">Next</button>
+    </form>
+
+    <!-- done -->
+    <div class="done" id="done" hidden>
+      <div class="k">Your check-in code</div>
+      <div class="code" id="code">----</div>
+      <p id="doneMsg">Show this code at the counter.</p>
+      <ol>
+        <li>Pull up to the facility and show your code.</li>
+        <li>We check your tag and the deer, and band it.</li>
+        <li id="doneLast">You’re done.</li>
+      </ol>
+      <div class="btns">
+        <a class="btn2 solid" href="https://www.google.com/maps/dir/?api=1&amp;destination=41.394750%2C-70.680694" target="_blank" rel="noopener">Directions</a>
+        <a class="btn2" id="textCode" href="sms:+15086876255">Text us the code</a>
+      </div>
+      <button class="btn2" id="again" type="button" style="width:100%;margin-top:10px">Pre-check another deer</button>
+    </div>
+  </div>
+
+  <footer>
+    <p>Your details go only to Home Ground’s check-in staff. Nothing you enter is shown publicly.</p>
+    <p>Tribal harvest? Check in at the counter. Questions? Text <a href="sms:+15086876255">(508) 687-6255</a>.</p>
+    <p><a href="../dashboard/" target="_top">See the Island Deer Dashboard</a></p>
+  </footer>
+</main>
+
+<script>
+/* Pre-check-ins go to the facility backend (backend 82 / 83) as action "precheck", no sign-in. The
+   counter confirms each one: nothing typed here is a record of a deer until then. Prices, pork fat
+   stock and cooler space come from the public ?scoreboard=1 reply, which carries no personal data. */
+var BACKEND = "https://script.google.com/macros/s/AKfycbwJbxYLDa5uAXwuHI_kF7vD_Panq2ZxNNV2EFofWqJAZkQRWy0j9Ns7ceKQ4-8zwUo3/exec";
+var DEMO = false;   // the mockup sets this: nothing is sent
+var SVC = { privatePrice: 300, porkAddOn: 20, porkInStock: true, porkPct: 10 };
+var COOLER = null;
+// The intake app's cut sheet (app.js CUTS), same order and words. First four default to Ground.
+var CUTS = [["Backstraps", ["Whole", "Steaks", "Butterflied", "Ground"]], ["Tenderloins", ["Whole", "Ground"]],
+  ["Hindquarters", ["Roasts", "Steaks", "Half roasts, half ground", "Ground"]], ["Shoulders", ["Roasts", "Ground"]],
+  ["Steaks", ["3/4\"", "1\"", "1 1/4\""]], ["Roasts", ["about 2 lb", "about 3 lb"]]];
+var CUT_LABEL = { "Half roasts, half ground": "Half roasts, half ground", "3/4\"": "3/4 in.", "1\"": "1 in.", "1 1/4\"": "1 1/4 in.", "about 2 lb": "About 2 lb", "about 3 lb": "About 3 lb" };
+
+function $(id){ return document.getElementById(id); }
+function pick(n){ var x = document.querySelector('input[name="' + n + '"]:checked'); return x ? x.value : ""; }
+function setPick(n, v){ var x = document.querySelector('input[name="' + n + '"][value="' + v + '"]'); if (x) x.checked = true; }
+function g(id){ return ($(id).value || "").trim(); }
+function esc(s){ return String(s == null ? "" : s).replace(/[&<>"]/g, function(c){ return { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]; }); }
+function money(n){ return "$" + Number(n || 0).toLocaleString("en-US"); }
+
+/* ---------- open now? (Eastern time, 8 am to 8 pm) ---------- */
+function nyHour(){
+  try { return +new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false }).format(new Date()) % 24; }
+  catch (e) { return new Date().getHours(); }
+}
+function isOpen(){ var h = nyHour(); return h >= 8 && h < 20; }
+function drawOpen(){
+  var open = isOpen();
+  $("openTxt").textContent = open ? "Open now · drop-off until 8 pm" : "Closed now · opens 8 am";
+  $("openDot").style.background = open ? "#7BC86C" : "#E7B04A";
+}
+
+/* ---------- cooler and prices ---------- */
+function drawCooler(){
+  if (!COOLER || !COOLER.capacity) return;
+  var pct = 100 * COOLER.inCooler / COOLER.capacity, full = pct >= (COOLER.fullPct || 95), busy = pct >= (COOLER.alertPct || 80);
+  $("coolSt").hidden = false;
+  $("coolTxt").textContent = full ? "Cooler full: text first" : busy ? "Cooler filling up" : "Room in the cooler";
+  $("coolDot").style.background = full ? "#E26A55" : busy ? "#E7B04A" : "#7BC86C";
+  syncPlan();
+}
+function drawPrices(){
+  $("pPrice").textContent = money(SVC.privatePrice);
+  $("porkNote").textContent = SVC.porkPct + "%, + " + money(SVC.porkAddOn);
+  $("porkQ").hidden = !SVC.porkInStock; $("porkOut").hidden = SVC.porkInStock;
+  if (!SVC.porkInStock) setPick("pork", "No");
+  drawPrice();
+}
+function loadLive(){
+  if (DEMO) { COOLER = { inCooler: 55, capacity: 150, alertPct: 80, fullPct: 95 }; drawCooler(); return; }
+  fetch(BACKEND + "?scoreboard=1", { cache: "no-store" }).then(function(r){ return r.json(); }).then(function(j){
+    if (!j || !j.ok) return;
+    if (j.cooler) { COOLER = j.cooler; drawCooler(); }
+    if (j.services) { SVC.privatePrice = +j.services.privatePrice || SVC.privatePrice; SVC.porkAddOn = +j.services.porkAddOn || SVC.porkAddOn; SVC.porkInStock = j.services.porkInStock !== false; drawPrices(); }
+  }).catch(function(){});
+}
+
+/* ---------- cut sheet ---------- */
+(function(){
+  var html = "";
+  CUTS.forEach(function(c, i){
+    var size = i > 3, opts = size ? c[1] : c[1].filter(function(o){ return o !== "Ground"; }).concat(["Ground"]);
+    html += '<div class="cutrow" id="cutrow' + i + '"' + (size ? " hidden" : "") + '><b>' + (size ? (i === 4 ? "Steak thickness" : "Roast size") : c[0]) +
+      (size ? "" : (i === 2 ? "<small>back legs</small>" : i === 3 ? "<small>front legs</small>" : "")) + '</b><div class="choices">' +
+      opts.map(function(o){ return '<label class="ch"><input type="radio" name="cut' + i + '" value="' + esc(o) + '"' + (o === (size ? (i === 4 ? "1\"" : "about 2 lb") : "Ground") ? " checked" : "") +
+        '><span>' + esc(CUT_LABEL[o] || o) + '</span></label>'; }).join("") + '</div></div>';
+  });
+  $("cutRows").innerHTML = html;
+})();
+function cutChoice(i){ return pick("cut" + i); }
+function syncCuts(){
+  var any = function(word){ for (var i = 0; i < 4; i++) if (cutChoice(i).indexOf(word) >= 0) return true; return false; };
+  $("cutrow4").hidden = !any("Steaks");
+  $("cutrow5").hidden = !any("oasts");
+}
+function cutsOut(){
+  var o = {};
+  CUTS.forEach(function(c, i){
+    if (i > 3 && $("cutrow" + i).hidden) return;
+    var v = cutChoice(i); if (v) o[c[0]] = v;
+  });
+  return o;
+}
+function cutsLine(){
+  var o = cutsOut();
+  return CUTS.map(function(c, i){
+    var v = o[c[0]]; return i > 3 ? (v ? (i === 4 ? "steaks " : "roasts ") + (CUT_LABEL[v] || v).toLowerCase() : "") : c[0] + ": " + (CUT_LABEL[v] || v || "Ground").toLowerCase();
+  }).filter(Boolean).join(" · ");
+}
+function drawPrice(){
+  var pork = SVC.porkInStock && pick("pork") === "Yes";
+  $("priceBox").innerHTML = "<span>Processing</span><b>" + money(SVC.privatePrice) + "</b>" +
+    (pork ? "<span>Pork fat</span><b>+ " + money(SVC.porkAddOn) + "</b>" : "") +
+    '<span class="tot">Due at pickup</span><b class="tot">' + money(SVC.privatePrice + (pork ? SVC.porkAddOn : 0)) + "</b>";
+}
+
+/* ---------- steps ---------- */
+var STEPS = ["plan", "deer", "you", "cuts", "send"];
+var at = 0;
+function steps(){ return STEPS.filter(function(s){ return s !== "cuts" || pick("type") === "Private"; }); }
+function show(i, focus){
+  var list = steps(); at = Math.max(0, Math.min(i, list.length - 1));
+  document.querySelectorAll(".step").forEach(function(s){ s.hidden = s.dataset.step !== list[at]; });
+  $("progTxt").textContent = "Step " + (at + 1) + " of " + list.length + " · " + document.querySelector('.step[data-step="' + list[at] + '"]').dataset.title;
+  $("progBar").style.width = (100 * (at + 1) / list.length) + "%";
+  $("back").hidden = at === 0;
+  $("next").textContent = list[at] === "send" ? "Send my pre-check" : "Next";
+  $("err").textContent = "";
+  if (list[at] === "send") drawReview();
+  if (list[at] === "cuts") { syncCuts(); drawPrice(); }
+  saveDraft();
+  if (focus !== false) toTop();
+  tellParent();
+}
+function toTop(){
+  var card = $("card");
+  try {
+    if (window.parent !== window) window.parent.postMessage({ hgDropoffScrollTo: Math.max(0, card.getBoundingClientRect().top + window.scrollY - 12) }, "*");
+    else if (card.getBoundingClientRect().top < 0) card.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (e) {}
+  var h = document.querySelector(".step:not([hidden]) h2"); if (h) { h.setAttribute("tabindex", "-1"); h.focus({ preventScroll: true }); }
+}
+
+function syncPlan(){
+  var t = pick("type"), w = $("coolWarn"), msg = "";
+  if (COOLER && COOLER.capacity) {
+    var pct = 100 * COOLER.inCooler / COOLER.capacity;
+    if (pct >= (COOLER.fullPct || 95)) msg = "The cooler is full right now. Text (508) 687-6255 before you drive over.";
+    else if (pct >= (COOLER.alertPct || 80) && t === "Cold storage") msg = "The cooler is filling up and donated deer come first. Text us before bringing a deer for cold storage.";
+  }
+  w.textContent = msg; w.hidden = !msg;
+  $("licHint").textContent = t === "Donated" ? "on your license · needed to donate" : "on your license · optional";
+  $("addrQ").hidden = t !== "Donated";
+}
+function syncDeer(){
+  var deer = pick("deer"), t = pick("type");
+  $("ptsQ").hidden = deer !== "Antlered buck";
+  $("skullQ").hidden = !(deer === "Antlered buck" && t !== "Cold storage");
+  $("ammoQ").hidden = !/slug|Muzzle/.test(pick("tw"));
+  $("fdWarn").hidden = pick("fd") !== "No";
+}
+var pts = 0;
+function drawPts(){ $("pts").textContent = pts || "\u2013"; }
+$("ptsDn").onclick = function(){ pts = Math.max(1, pts - 1); drawPts(); saveDraft(); };
+$("ptsUp").onclick = function(){ pts = Math.min(40, pts + 1); drawPts(); saveDraft(); };
+$("cfna").onchange = function(){ $("cf").disabled = this.checked; if (this.checked) $("cf").value = ""; };
+
+$("f").addEventListener("change", function(e){
+  // The error line is left alone here: clearing it would move the Next button up under a finger mid-tap.
+  var n = e.target.name;
+  syncPlan(); syncDeer();
+  if (/^cut|^pork$/.test(n)) { syncCuts(); drawPrice(); }
+  if (n === "eta") $("etaWarn").hidden = e.target.value !== "Tomorrow" || pick("when") !== "1";
+  saveDraft(); tellParent();
+  // Step 1 is one tap: choosing moves on.
+  if (n === "type") setTimeout(function(){ show(1); }, 180);
+});
+$("back").onclick = function(){ show(at - 1); };
+
+function check(step){
+  var t = pick("type"), deer = pick("deer");
+  if (step === "plan" && !t) return "Choose donate, process it for me, or cold storage.";
+  if (step === "deer") {
+    if (!deer) return "Choose which deer.";
+    if (deer === "Antlered buck" && !(pts >= 1)) return "Tap + to count the points 1 inch and longer.";
+    if (deer === "Antlered buck" && t !== "Cold storage" && !pick("skull")) return "Say whether you want the skull and antlers back.";
+    if (!pick("when")) return "Say whether you shot it today or yesterday.";
+    if (!pick("town")) return "Choose the town it was taken in.";
+    if (!pick("tw")) return "Say how it was taken.";
+    if (!pick("fd")) return "Say whether it was field dressed within 4 hours.";
+  }
+  if (step === "you") {
+    var ph = g("ph").replace(/\D/g, "").replace(/^1(?=\d{10}$)/, ""), lic = g("lic").replace(/\D/g, "");
+    if (!g("fn") || !g("ln")) return "Enter your first and last name.";
+    if (ph.length !== 10) return "Enter a 10-digit phone number.";
+    if (g("em") && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(g("em"))) return "That email doesn’t look right. Fix it or leave it empty.";
+    if (t === "Donated" && !lic) return "Enter your MassWildlife customer ID. It’s needed to donate.";
+    if (lic && (lic.length < 5 || lic.length > 8)) return "Your MassWildlife customer ID is 5 to 8 digits.";
+    if (!$("cfna").checked && !g("cf")) return "Enter your confirmation number, or tick that the state system wouldn’t give you one.";
+    if (t === "Donated" && (!g("ad1") || !g("adt") || !g("adz"))) return "Enter your mailing address so Tick Free MV can mail your check.";
+  }
+  if (step === "send" && !pick("eta")) return "Say when you’ll get here.";
+  return "";
+}
+function bad(step){
+  var m = check(step); if (!m) return false;
+  $("err").textContent = m; tellParent(); return true;
+}
+
+/* ---------- review ---------- */
+function shotIso(){ var d = new Date(Date.now() - (+pick("when") || 0) * 864e5); return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2); }
+function deerName(){ var d = pick("deer"); return d === "Sub-legal adult male" ? "Spike buck under 3 in." : d === "Antlered buck" ? "Antlered buck, " + pts + " points" : d; }
+function drawReview(){
+  var t = pick("type"), rows = [];
+  var plan = { "Donated": "Donate", "Private": "Process it for me (" + money(SVC.privatePrice + (SVC.porkInStock && pick("pork") === "Yes" ? SVC.porkAddOn : 0)) + " at pickup)", "Cold storage": "Cold storage" }[t];
+  rows.push(["plan", "Plan", plan]);
+  rows.push(["deer", "Deer", deerName() + (pick("skull") && !$("skullQ").hidden ? ", skull " + (pick("skull") === "Yes" ? "kept" : "not kept") : "") + " · " +
+    (pick("when") === "1" ? "shot yesterday" : "shot today") + " in " + pick("town") + " · " + pick("tw").toLowerCase() + (pick("am") && !$("ammoQ").hidden ? " (" + pick("am").toLowerCase() + ")" : "") +
+    " · field dressed within 4 h: " + pick("fd").toLowerCase()]);
+  rows.push(["you", "You", g("fn") + " " + g("ln") + " · " + g("ph") + (g("em") ? " · " + g("em") : "") +
+    (g("lic") ? " · ID " + g("lic") : "") + " · " + ($("cfna").checked ? "no confirmation number" : "confirmation " + g("cf").toUpperCase()) +
+    (t === "Donated" ? " · " + g("ad1") + ", " + g("adt") + " " + g("adz") : "")]);
+  if (t === "Private") rows.push(["cuts", "Cuts", cutsLine() + " · " + (SVC.porkInStock && pick("pork") === "Yes" ? "pork fat added" : "all venison")]);
+  $("rev").innerHTML = rows.map(function(r){
+    return '<div><div><dt>' + esc(r[1]) + '</dt><dd>' + esc(r[2]) + '</dd></div><button type="button" data-edit="' + r[0] + '">Edit</button></div>';
+  }).join("");
+  $("rev").querySelectorAll("[data-edit]").forEach(function(b){ b.onclick = function(){ show(steps().indexOf(b.dataset.edit)); }; });
+}
+
+/* ---------- send ---------- */
+function fields(){
+  var t = pick("type"), deer = pick("deer");
+  return { firstName: g("fn"), lastName: g("ln"), phone: g("ph"), email: g("em"), type: t, deer: deer,
+    points: deer === "Antlered buck" ? String(pts) : "", skull: deer === "Antlered buck" && t !== "Cold storage" ? pick("skull") === "Yes" : undefined,
+    shotDate: shotIso(), townOfHarvest: pick("town"), customerId: g("lic"), confirmation: $("cfna").checked ? "" : g("cf"), noConfirmation: $("cfna").checked,
+    takenWith: pick("tw"), ammunition: $("ammoQ").hidden ? "" : pick("am"),
+    address: t === "Donated" ? g("ad1") + ", " + g("adt") + ", " + (g("ads") || "MA").toUpperCase() + " " + g("adz") : "",
+    dressed4h: pick("fd") === "Yes", comingAt: pick("eta"), notes: g("nt"), website: g("web"),
+    cuts: t === "Private" ? cutsOut() : undefined, porkFat: t === "Private" ? SVC.porkInStock && pick("pork") === "Yes" : undefined };
+}
+function SEND(body){
+  if (DEMO) return new Promise(function(r){ setTimeout(function(){ r({ ok: true, ref: "DEMO", inHours: true }); }, 500); });
+  return fetch(BACKEND, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify({ action: "precheck", fields: body }) })
+    .then(function(r){ return r.json(); }, function(){ throw new Error("No connection. Try again, or text (508) 687-6255."); });
+}
+$("f").addEventListener("submit", function(e){
+  e.preventDefault();
+  var list = steps(), step = list[at];
+  if (bad(step)) return;
+  if (step !== "send") { show(at + 1); return; }
+  for (var i = 0; i < list.length; i++) if (check(list[i])) { show(i); bad(list[i]); return; }
+  var b = $("next"); b.disabled = true; b.textContent = "Sending…";
+  SEND(fields()).then(function(j){
+    if (!j || !j.ok) throw new Error((j && j.error) || "That didn’t go through. Try again, or text (508) 687-6255.");
+    remember();
+    $("code").textContent = j.ref;
+    var t = pick("type");
+    $("doneMsg").textContent = (j.inHours === false ? "We’re closed right now (open 8 am to 8 pm). Text (508) 687-6255 to arrange drop-off. " : "") + "Show this code at the counter.";
+    $("doneLast").textContent = t === "Private" ? "Sign your cut sheet. We’ll call when your meat is ready." : t === "Donated" ? "Take a copy of your record. Tick Free MV mails your check." : "Pick it up within 7 days.";
+    $("textCode").href = "sms:+15086876255?&body=" + encodeURIComponent("Pre-check code " + j.ref);
+    $("f").hidden = true; $("progWrap").hidden = true; $("done").hidden = false;
+    clearDraft(); toTop(); tellParent();
+  }).catch(function(x){ $("err").textContent = x.message; tellParent(); })
+    .then(function(){ b.disabled = false; b.textContent = "Send my pre-check"; });
+});
+$("again").onclick = function(){
+  var keep = ["fn", "ln", "ph", "em", "lic", "ad1", "adt", "ads", "adz"].map(function(id){ return [id, $(id).value]; });
+  $("f").reset(); keep.forEach(function(k){ $(k[0]).value = k[1]; });
+  pts = 0; drawPts(); $("cf").disabled = false;
+  syncPlan(); syncDeer(); drawPrices();
+  $("f").hidden = false; $("progWrap").hidden = false; $("done").hidden = true; show(0);
+};
+
+/* ---------- this phone only: remembered details and an unsent draft ----------
+   Per-viewer conveniences. Storage can be missing or blocked, so the page works without it. */
+var KEY_ME = "hgDropoffMe", KEY_DRAFT = "hgDropoffDraft";
+var ME_IDS = ["fn", "ln", "ph", "em", "lic", "ad1", "adt", "ads", "adz"];
+function remember(){
+  try {
+    if ($("remember").checked) { var o = {}; ME_IDS.forEach(function(id){ o[id] = $(id).value; }); localStorage.setItem(KEY_ME, JSON.stringify(o)); }
+    else localStorage.removeItem(KEY_ME);
+  } catch (e) {}
+}
+function saveDraft(){
+  try {
+    var o = { at: Date.now(), step: at, pts: pts, v: {}, r: {} };
+    ["fn", "ln", "ph", "em", "lic", "cf", "ad1", "adt", "ads", "adz", "nt"].forEach(function(id){ o.v[id] = $(id).value; });
+    o.v.cfna = $("cfna").checked;
+    document.querySelectorAll('#f input[type=radio]:checked').forEach(function(x){ o.r[x.name] = x.value; });
+    sessionStorage.setItem(KEY_DRAFT, JSON.stringify(o));
+  } catch (e) {}
+}
+function clearDraft(){ try { sessionStorage.removeItem(KEY_DRAFT); } catch (e) {} }
+function restore(){
+  var me = null, d = null;
+  try { me = JSON.parse(localStorage.getItem(KEY_ME) || "null"); } catch (e) {}
+  try { d = JSON.parse(sessionStorage.getItem(KEY_DRAFT) || "null"); } catch (e) {}
+  if (me) ME_IDS.forEach(function(id){ if (me[id] != null) $(id).value = me[id]; });
+  if (d && Date.now() - d.at < 6 * 36e5) {
+    Object.keys(d.v || {}).forEach(function(id){ if (id === "cfna") { $("cfna").checked = !!d.v.cfna; $("cf").disabled = !!d.v.cfna; } else if ($(id) && d.v[id] !== "") $(id).value = d.v[id]; });
+    Object.keys(d.r || {}).forEach(function(n){ setPick(n, d.r[n]); });
+    pts = d.pts || 0; drawPts();
+    return d.step || 0;
+  }
+  return 0;
+}
+
+/* When embedded on homegroundmv.com, tell the frame how tall to be. */
+function tellParent(){
+  try { if (window.parent !== window) window.parent.postMessage({ hgDropoffHeight: Math.ceil(document.body.getBoundingClientRect().height) }, "*"); } catch (e) {}
+}
+window.addEventListener("resize", tellParent);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(tellParent);
+
+drawOpen(); setInterval(drawOpen, 60000);
+var startAt = restore();
+syncPlan(); syncDeer(); drawPrices();
+show(startAt, false);
+loadLive();
+</script>
+</body>
+</html>
