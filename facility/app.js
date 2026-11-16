@@ -981,6 +981,9 @@
     const office = (isMgr() || isIntake)
       ? group('Managers') +
         big('martin', 'Donation report', 'Rows for Martin’s sheet', 'alt') +
+        (isMgr() ? big('privpause', s.privateOpen === false ? 'Private processing: PAUSED' : 'Private processing: open',
+          s.privateOpen === false ? (s.privateNote ? s.privateNote + ' · ' : '') + 'tap to resume' : 'Pause it when you can’t take private deer. The public pages follow within a minute',
+          s.privateOpen === false ? 'red' : 'view') : '') +
         big('daily', 'Log book', 'Sanitizer, thermometer, complaints, tight tank, cash') +
         /* Managers only, and moved here on 7 November: cold storage fees have not been approved or
            announced yet (Joe), so what is owed is not a figure anyone at the counter should be
@@ -1019,6 +1022,8 @@
     frame('home', '',
       (note ? '<div class="note ok">' + note + '</div>' : '') +
       '<div id="alerts">' + alertsHtml() + dropCardsHtml() + '</div><div id="push"></div>' +
+      (s.privateOpen === false && seesCounter() ? '<div class="note warn"><b>Private processing is paused</b>' + (s.privateNote ? ' (' + esc(s.privateNote) + ')' : '') +
+        '. Donated deer and cold storage are open as usual.</div>' : '') +
       (lead ? leadCard(lead) : '') + clockStrip +
       /* One slim red button, on the first screen (Joe, 12 November). Need help went into the
          "Need help, supplies, messages" group on 8 November and stays first in it; but that made
@@ -1632,7 +1637,7 @@
       (d['Skull kept'] === 'Yes'
         ? '<div class="note warn" style="font-size:17px"><b>Keep the skull and antlers.</b> ' +
           (d.Status === 'Released' ? 'It went with the deer.' :
-            'Tag the head with ' + esc(band(d.Band)) + ' at the skinning station and set it aside — it does not go in the waste barrel.') +
+            'The antler band reads SAVE FOR HUNTER, ' + esc(band(d.Band)) + '. Once skinned, the head goes in the original deer cooler for the hunter to pick up. It does not go in the waste barrel.') +
           '</div>' : '') +
       (owe && live && !owe.settled
         ? '<div class="note bad" style="font-size:17px"><b>$' + owe.owing + ' owing</b>' +
@@ -1647,7 +1652,8 @@
         : d['First pack #'] ? '<div class="note warn" style="font-size:17px">Label the 2 lb packages in order from <b>' + esc(d['First pack #']) + '</b>: ' + esc(d['First pack #']) + ', ' + esc(('000' + (parseInt(d['First pack #'], 10) + 1)).slice(-4)) + ', …</div>' : '') +
       (d.Status === 'Released' ? '<div class="status">Released ' + esc(d.Released) + ' to ' + esc(d['Released to']) + '</div>' : '') +
       tagPhotoRow(d) +
-      '<div class="actions">' + payBtn + act + moveBtn + (live && !isViewer() ? '<button class="btn ghost" data-a="print">Print band</button>' : '') + editBtn + undoBtn + voidBtn + '</div><div class="form"></div></div>';
+      '<div class="actions">' + payBtn + act + moveBtn + (live && !isViewer() ? '<button class="btn ghost" data-a="print">Print band</button>' : '') +
+      (live && !isViewer() && antlerBandFor(d) ? '<button class="btn ghost" data-a="antlerprint">Print antler band</button>' : '') + editBtn + undoBtn + voidBtn + '</div><div class="form"></div></div>';
   }
 
   /* Starting work while clocked out is how hours go missing: nobody forgets to clock in on purpose,
@@ -1743,6 +1749,7 @@
        and not hung is the one thing in the building that cannot wait, and the duty can. */
     if (kind === 'start' && !isViewer() && opsDuty().blocking) return opsStop(box, after);
     if (kind === 'print') return printBand(d);
+    if (kind === 'antlerprint') return printAntlerBand(d);
     if (kind === 'tagshow' || kind === 'scrshow') return showTagImg(d, kind === 'tagshow' ? 'tag' : 'screen', box);
     if (kind === 'tagadd') return addTagPhoto(d, box, after);
     if (kind === 'grind') return grind(d, box, after);
@@ -1795,7 +1802,10 @@
            then means retracting a row from a state record. */
         (isMgr()
           ? (d['Sent to Martin']
-              ? '<p class="status"><b>Type: ' + esc(d.Type) + '.</b> It cannot be changed here — this deer is already on MassWildlife’s sheet. Speak to Martin about retracting the row first.</p>'
+              ? '<p class="status"><b>This deer is already on MassWildlife’s sheet.</b> Change its type only once Martin has changed it on his sheet.</p>' +
+                '<label class="choice"><input id="e_martin" type="checkbox"> <span>Martin has already changed this deer on his sheet</span></label>' +
+                '<label for="e_type">Type</label><select id="e_type" disabled>' + opts(['Donated', 'Private', 'Cold storage'], d.Type) + '</select>' +
+                '<p class="status">Changing this moves the money with it: the TFMV payment, the hunter’s price, the cut sheet and any storage charge.</p>'
               : '<label for="e_type">Type</label><select id="e_type">' + opts(['Donated', 'Private', 'Cold storage'], d.Type) + '</select>' +
                 '<p class="status">Changing this moves the money with it: the TFMV payment, the hunter’s price, the cut sheet and any storage charge. A storage charge is waived rather than deleted, so the record of it stays.</p>')
           : '') +
@@ -1824,7 +1834,9 @@
         PLACES.filter(p => p !== placeOf(d)).map(p => '<label class="choice"><input type="radio" name="mv" value="' + p + '"> <span><b>' + p + '</b></span></label>').join(''),
       skin: () => (d['Skull kept'] === 'Yes'
           ? '<div class="note warn" style="font-size:17px"><b>This hunter wants the skull and antlers.</b> ' +
-            'Tag the head with ' + esc(band(d.Band)) + ' and set it aside before you carry on.</div>' : '') +
+            'Check the antler band reads SAVE FOR HUNTER, ' + esc(band(d.Band)) + ', and put the head in the <b>original deer cooler</b>. ' +
+            'Saving this texts the hunter that it is ready for pickup there.</div>'
+          : antlerBandFor(d) ? '<div class="note ok">The hunter gave up the head. Its antler band reads <b>OK TO DISCARD</b>; it goes out with the waste.</div>' : '') +
         '<p class="status">Records who skinned this deer. The $' + esc(s.skinRate || 25) +
         ' skinning premium goes to whoever is named here, whether or not they process it.</p>' +
         (isMgr() ? '<label>Skinned by</label><select id="sk">' + (st.home.staff || []).map(x => '<option value="' + esc(x.number) + '"' + (x.number === st.staff.number ? ' selected' : '') + '>' + esc(x.name + ' (' + x.number + ')') + '</option>').join('') + '</select>'
@@ -1862,7 +1874,8 @@
         : '') +
         (d['Skull kept'] === 'Yes' && !d['Skinner']
           ? '<div class="note warn" style="font-size:17px"><b>This hunter wants the skull and antlers.</b> ' +
-            'The head comes off here — tag it with ' + esc(band(d.Band)) + ' and set it aside, do not bin it.</div>' : '') +
+            'The head comes off here. Check the antler band reads SAVE FOR HUNTER, ' + esc(band(d.Band)) + ', and put it in the <b>original deer cooler</b>, do not bin it. ' +
+            'Ticking it as skinned texts the hunter that it is ready for pickup there.</div>' : '') +
         '<div class="note warn" style="font-size:17px">Tag confirmation number: <b>' + esc(d['MassWildlife confirmation'] || 'none recorded') + '</b></div>' +
         '<label class="choice"><input id="f0" type="checkbox"> The confirmation number on the deer\'s tag matches</label>' +
         (d['Skinner name'] ? '<div class="note ok">Skinned by <b>' + esc(d['Skinner name']) + '</b>' + (d['Skinned at'] ? ' · ' + esc(d['Skinned at']) : '') + '. The skinning premium is theirs.</div><input id="f8" type="checkbox" checked hidden>'
@@ -1968,6 +1981,7 @@
        depend on the rest of the screen being right. */
     document.getElementById('fx').onclick = () => { box.innerHTML = ''; };
     const on = (id, ev, fn) => { const el = document.getElementById(id); if (el) el[ev] = fn; };
+    on('e_martin', 'onchange', e => { const sel = document.getElementById('e_type'); if (sel) sel.disabled = !e.target.checked; });
     if (kind === 'release') on('f1', 'onchange', e => {
       const f3 = document.getElementById('f3'); if (f3) f3.hidden = e.target.value !== 'other'; });
     /* Square leaves the app, so whatever is needed to finish has to be handed over before it goes.
@@ -2017,7 +2031,8 @@
         const changes = {};
         fields.forEach(k => { if (document.getElementById('e_' + k)) changes[k] = v('e_' + k).trim(); });
         // Only on the form for a manager, and only while the deer is off Martin's sheet.
-        if (document.getElementById('e_type')) changes.type = v('e_type').trim();
+        if (document.getElementById('e_type') && !document.getElementById('e_type').disabled) changes.type = v('e_type').trim();
+        if ((document.getElementById('e_martin') || {}).checked) changes.martinChanged = true;
         if (document.getElementById('e_tribalTag')) changes.tribalTag = v('e_tribalTag').trim();
         if (document.getElementById('e_townOfHarvest')) changes.townOfHarvest = v('e_townOfHarvest').trim();
         if (document.getElementById('e_tribal') && document.getElementById('e_tribal').checked) {
@@ -2045,6 +2060,8 @@
             if (!out.changed) { toast('Nothing changed.'); return; }
             toast(out.changed + (out.changed === 1 ? ' change saved' : ' changes saved') + ' on ' + d.Band);
             if (out.martin) toast('Flagged: MassWildlife’s copy of this row needs correcting.', true);
+            if (changes.skull && changes.skull !== (d['Skull kept'] || '') && d['Type'] !== 'Cold storage')
+              toast('Skull answer is now ' + changes.skull + '. Print a new antler band from the card and swap it on the rack.', true);
             refresh(); if (after) after();
           })
           .catch(e => { btn.disabled = false; err(e.offline ? 'Needs signal to correct a record.' : e.message); });
@@ -2306,7 +2323,11 @@
       '<div class="note ok">Band number: <b id="genid">enter the date of the shot below</b><br><span class="status">Every deer gets one here, printed on the intake band. It stays with the deer from intake to release.</span></div>' +
       '<label>What is happening to this deer?</label>' +
       '<label class="choice"><input type="radio" name="type" value="Donated"> <span><b>Donated</b> (Share the Harvest). TFMV mails the hunter a check: $' + esc(s.payDoe || 150) + ' a doe, $' + esc(s.payBuck || 100) + ' a buck (any male deer).</span></label>' +
-      '<label class="choice"><input type="radio" name="type" value="Private"> <span><b>Private</b>: processed for the hunter, $' + esc(s.privatePrice || 250) + '.</span></label>' +
+      (s.privateOpen === false
+        // v108: paused. Intake can't choose it; a manager can, with the override below.
+        ? '<label class="choice" style="opacity:' + (isMgr() ? '1' : '.55') + '"><input type="radio" name="type" value="Private"' + (isMgr() ? '' : ' disabled') + '> <span><b>Private: PAUSED</b>' +
+          (s.privateNote ? ' (' + esc(s.privateNote) + ')' : '') + '. ' + (isMgr() ? 'You can still take one with the manager override.' : 'Offer donation or cold storage, or ask a manager.') + '</span></label>'
+        : '<label class="choice"><input type="radio" name="type" value="Private"> <span><b>Private</b>: processed for the hunter, $' + esc(s.privatePrice || 250) + '.</span></label>') +
       '<label class="choice"><input type="radio" name="type" value="Cold storage"> <span><b>Cold storage only</b>: the hunter hangs it and collects it. Not processed. ' +
         (s.coldCharging
           ? '<b>$' + esc(s.coldFee || 50) + '</b>, covering ' + esc(s.coldDays || 7) + ' days \u2014 then $' + esc(s.coldWeekFee || 50) + ' a week. Free if they donate a deer this season.'
@@ -2323,8 +2344,8 @@
          and a rack ends up in the barrel. A rack in the barrel does not come back. Asking the
          hunter while he is standing there costs two seconds (Joe, 7 November). */
       '<div id="skullbox" hidden><label>Does he want the skull and antlers back?</label>' +
-      '<label class="choice"><input type="radio" name="skull" value="Yes"> <span><b>Yes</b> — keep the head. It is tagged with the band and set aside at the skinning station.</span></label>' +
-      '<label class="choice"><input type="radio" name="skull" value="No"> <span><b>No</b> — the head goes out with the waste.</span></label></div>' +
+      '<label class="choice"><input type="radio" name="skull" value="Yes"> <span><b>Yes</b> — keep the head. It gets a <b>SAVE FOR HUNTER</b> antler band now and is set aside at the skinning station.</span></label>' +
+      '<label class="choice"><input type="radio" name="skull" value="No"> <span><b>No</b> — the head goes out with the waste. It gets an <b>OK TO DISCARD</b> antler band now.</span></label></div>' +
       // Only the hunter knows this, so it is asked at the door. It decides how hard the wound
       // channel is trimmed later, and it is the one thing that makes the lead question answerable.
       '<div class="grid2"><div><label for="tw">Taken with</label><select id="tw"><option value="">Choose\u2026</option><option>Archery</option><option>Shotgun slug</option><option>Muzzleloader</option><option>Not known</option></select></div>' +
@@ -2359,6 +2380,11 @@
          storage reminder is emailed, and a private hunter gets told when his meat is ready. Asking
          only on donated deer meant losing it on the two kinds where somebody is coming back. */
       '<div><label for="hem">Hunter email <span class="hint">the W-9 goes here, and collection reminders</span></label><input id="hem" type="email" inputmode="email" autocomplete="email" autocapitalize="off"></div>' +
+      /* Asked out loud, ticked only on a yes (Joe, 14 Nov). Shown only when there will be something
+         to pick up. A hunter who never texts the drop-off line has no other way to agree, and
+         without it the pickup texts never reach him (backend 88). */
+      '<div id="txtbox" hidden style="grid-column:1/-1"><label class="choice" style="margin:0"><input id="txtok" type="checkbox"> <span><b>Text me when it\u2019s ready for pickup</b> \u2014 ask him. ' +
+        'Only pickup texts: his skull once it is skinned, his venison once it is ready. He can reply STOP any time.</span></label></div>' +
       /* The state's system for confirming a deer is not always up, so a hunter can be standing here
          with a legal deer and no number (Joe, 12 November). Refusing the deer for that punishes the
          hunter for the state's outage. Ticked, the deer is checked in with the number blank and a
@@ -2450,6 +2476,16 @@
        invite a "No" that could get a rack binned that was never ours to bin. */
     const skullAsked = () => v('deer') === 'Antlered buck' &&
       ((document.querySelector('input[name=type]:checked') || {}).value || '') !== 'Cold storage';
+    /* Something to pick up: his venison (private) or his rack (skull kept, never cold storage). */
+    const txtAsked = () => {
+      const t = (document.querySelector('input[name=type]:checked') || {}).value || '';
+      return t === 'Private' || (skullAsked() && ((document.querySelector('input[name=skull]:checked') || {}).value === 'Yes'));
+    };
+    const syncTxt = () => {
+      const box = document.getElementById('txtbox'); if (!box) return;
+      const show = txtAsked(); box.hidden = !show;
+      if (!show) document.getElementById('txtok').checked = false;
+    };
     const syncSkull = () => {
       const show = skullAsked();
       document.getElementById('ptsbox').hidden = v('deer') !== 'Antlered buck';
@@ -2457,7 +2493,11 @@
       // Changing away clears the answer, so it cannot be saved against a doe because somebody
       // picked the wrong line and then corrected it.
       if (!show) document.querySelectorAll('input[name=skull]').forEach(r => { r.checked = false; });
+      const sv = document.getElementById('save');
+      if (sv) sv.textContent = show ? 'Check in and print 2 bands' : 'Check in and print band';
+      syncTxt();
     };
+    document.querySelectorAll('input[name=skull]').forEach(r => r.addEventListener('change', syncTxt));
     document.getElementById('deer').onchange = syncSkull;
     /* ---- pre-checked drop-offs (v106) ----
        What a hunter typed on the public form, for intake to check rather than retype. A tap fills
@@ -2700,10 +2740,15 @@
     function showPrivBox() {
       const pb = document.getElementById('privbox');
       if (!pb) return;
+      const overWas = !!(document.getElementById('privover') || {}).checked;
       const pork = document.getElementById('pork');
       const price = Number(s.privatePrice || 300) + ((pork && pork.checked) ? Number(s.porkAddOn || 20) : 0);
       const keep = (document.getElementById('ppay') || {}).value || '';
       pb.innerHTML =
+        (S().privateOpen === false
+          ? '<div class="note bad"><b>Private processing is paused.</b> Only take this deer if you mean to.</div>' +
+            '<label class="choice"><input id="privover" type="checkbox"' + (overWas ? ' checked' : '') + '> <span><b>Manager override:</b> take this private deer while paused. It goes on the record with your number.</span></label>'
+          : '') +
         '<div class="note warn" style="font-size:17px"><b>$' + price + ' for custom processing</b>' +
         ((pork && pork.checked) ? ', including the pork fat add-on' : '') +
         '. <b>Due before it is cut.</b> We will still take the deer and hang it, but it does not go ' +
@@ -2803,6 +2848,9 @@
       if (!b) return err('Enter the date of the shot: the band number is built from it.');
       if (deerList().some(d => band(d.Band) === b && d.Status !== 'Released')) return err('Band ' + b + ' is already in the cooler.');
       if (!type) return err('Choose donated, private or cold storage only.');
+      const privPaused = type === 'Private' && S().privateOpen === false;
+      if (privPaused && !isMgr()) return err('Private processing is paused' + (S().privateNote ? ' (' + S().privateNote + ')' : '') + '. Offer donation or cold storage, or ask a manager to check it in.');
+      if (privPaused && !(document.getElementById('privover') || {}).checked) return err('Private processing is paused. Tick the manager override to take this one anyway.');
       if (!v('deer')) return err('Choose doe, button buck, sub-legal adult male or antlered buck.');
       const pts = parseInt(v('pts'), 10);
       if (v('deer') === 'Antlered buck' && !(pts >= 1 && pts <= 40)) return err('Count the points 1 inch and longer and enter the number.');
@@ -2811,6 +2859,8 @@
         return err('Ask him whether he wants the skull and antlers back. Once the head goes out with the waste it is gone, so this one is not left blank.');
       }
       if (!v('fn') || !v('ln')) return err('Enter the hunter\'s first and last name.');
+      const txtYes = txtAsked() && !!(document.getElementById('txtok') || {}).checked;
+      if (txtYes && String(v('ph')).replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '').length !== 10) return err('He wants a text when it\u2019s ready: enter his mobile number.');
       /* A tribal deer has no MassWildlife customer ID and no confirmation number: ticking the box
          hides and clears both. The two checks below used to demand them anyway, so a tribal deer
          could not be checked in with the box ticked at all (Joe, 11 November). What it must have
@@ -2858,6 +2908,7 @@
       const noCall = document.getElementById('nocallout');
       const f = { band: b, iap: iap === 'Yes', type, deer: v('deer'), points: v('deer') === 'Antlered buck' ? pts : '', firstName: v('fn'), lastName: v('ln'), customerId: lic, hunterPhone: v('ph'), confirmation: tribal ? '' : v('cf'), takenWith: v('tw'), ammunition: v('am'),
         skull: skullAsked() ? skullPick === 'Yes' : undefined,
+        textConsent: txtYes || undefined,
         notCallout: !!(noCall && noCall.checked),
         cuts: type === 'Private' ? readCuts() : '',
         address: (type === 'Donated' && !noAddr) ? v('ad1') + ', ' + v('adt') + ', ' + (v('ads') || 'MA').toUpperCase() + ' ' + v('adz') : '',
@@ -2883,7 +2934,8 @@
         notes: (v('nt') + (clash ? ' [confirmation also on band ' + band(clash.Band) + ', entered on purpose]' : '') +
           (noCf ? ' [no MassWildlife confirmation number at check-in: hunter unable to obtain one]' : '')).trim(),
         intakeWeight: v('iw'), weighedAs: document.getElementById('wa').value,
-        porkFat: type === 'Private' && !!document.getElementById('pork') && document.getElementById('pork').checked };
+        porkFat: type === 'Private' && !!document.getElementById('pork') && document.getElementById('pork').checked,
+        privateOverride: privPaused || undefined };
       queue('intake', f, 'Check-in ' + b);
       if (tagLost) enqueuePhoto(b, 'tag', lostTagImage(lostFields(b)));
       else if (tagShot) enqueuePhoto(b, 'tag', tagShot);
@@ -2907,7 +2959,10 @@
       if (type === 'Private' && pmeth && pmeth.value) {
         queue('paydeer', { band: b, method: pmeth.value.replace(/^.*—\s*/, '') }, 'Processing payment ' + b);
       }
-      printBand({ Band: b, Intake: stamp(), Type: type, Deer: f.deer, 'MassWildlife confirmation': f.confirmation });
+      const inRow = { Band: b, Intake: stamp(), Type: type, Deer: f.deer, 'MassWildlife confirmation': f.confirmation,
+        'Antler points': f.points, 'Hunter name': (f.firstName + ' ' + f.lastName).trim(),
+        'Skull kept': f.skull === true ? 'Yes' : f.skull === false ? 'No' : '' };
+      printBand(inRow).then(() => { if (antlerBandFor(inRow)) return printAntlerBand(inRow); });
       showBoard();
       toast('Band ' + b + ' checked in.', true);
     };
@@ -2942,7 +2997,9 @@
       '#label .bw{position:absolute;width:7.4in;height:1.05in;display:flex;align-items:center;gap:.12in;' +
       (rot ? 'left:1.09in;top:' + off + 'in;transform-origin:0 0;transform:rotate(90deg)}' : 'left:.04in;top:' + off + 'in}') +
       '#label .bt{font-size:11pt;font-weight:800;letter-spacing:1px;padding:.04in .08in;border:2px solid #000;white-space:nowrap}' +
-      '#label .bt.don{background:#000;color:#fff}#label .bi{font-size:24pt;font-weight:800;line-height:1;white-space:nowrap}' +
+      '#label .bt.don{background:#000;color:#fff}' +
+      '#label .ba{font-size:20pt;font-weight:900;letter-spacing:1px;line-height:1;padding:.06in .1in;border:3px solid #000;white-space:nowrap}' +
+      '#label .ba.keep{background:#000;color:#fff}#label .bi{font-size:24pt;font-weight:800;line-height:1;white-space:nowrap}' +
       '#label .bx{font-size:10pt;font-weight:700;line-height:1.25;white-space:nowrap}#label .bq{width:.95in;height:.95in;flex:0 0 auto}#label .bq svg{width:100%;height:100%}}';
   }
   async function printBand(d) {
@@ -2957,12 +3014,70 @@
       (bc ? ' · ' + esc(bc.toUpperCase()) : '') + '</div>' +
       '<div class="bx">' + esc((d.Deer || '').toUpperCase()) + (d['MassWildlife confirmation'] ? ' · ' + (/^mw/i.test(d['MassWildlife confirmation']) ? '' : 'MW ') + esc(d['MassWildlife confirmation']) : '') + '</div></div>' +
       '<div class="bq">' + qr.createSvgTag({ cellSize: 2, margin: 0, scalable: true }) + '</div></div>';
-    setTimeout(() => window.print(), 80);
+    return printNow();
+  }
+
+  /* Resolves once the print dialog for the label on screen has closed, so a second band never
+     replaces the first while it is still printing. On the intake laptop window.print() blocks
+     until the dialog closes; where it returns at once, afterprint is waited for instead. */
+  function printNow() {
+    return new Promise(ok => {
+      let done = false;
+      const fin = () => { if (done) return; done = true; window.removeEventListener('afterprint', fin); setTimeout(ok, 150); };
+      window.addEventListener('afterprint', fin);
+      setTimeout(() => {
+        const t = Date.now();
+        try { window.print(); } catch (e) { fin(); return; }
+        setTimeout(fin, Date.now() - t > 300 ? 0 : 60000);
+      }, 80);
+    });
+  }
+
+  /* The antler band (Joe, 14 November). Same roll, same printer, straight after the intake band,
+     and it goes round the antlers at the door. Every antlered buck that will be skinned here gets
+     one either way, so a head with no band is a question rather than a default: SAVE FOR HUNTER,
+     or OK TO DISCARD. Cold storage leaves whole and is never asked, and a blank answer (deer in
+     before 7 November) prints nothing rather than guess. */
+  const antlerBandFor = d => !!d && /antlered/i.test(d.Deer || d['Deer'] || '') && d.Type !== 'Cold storage' &&
+    (d['Skull kept'] === 'Yes' || d['Skull kept'] === 'No');
+  /* What a rack scan shows first (v110). Big enough to read at arm's length in a cooler. */
+  function rackBanner(d) {
+    const keep = d['Skull kept'] === 'Yes';
+    const where = !keep ? 'The hunter gave up the head. It goes out with the waste.'
+      : d.Status === 'Released' && d['Skinner'] ? 'The deer has been collected. Check the rack went with it.'
+      : d['Skinner'] ? 'Skinned: the head belongs in the original deer cooler, waiting for the hunter.'
+      : 'Not skinned yet: the head is still on the deer.';
+    return '<div class="card" style="background:' + (keep ? '#000;color:#fff' : '#fff;color:#000') + ';border:4px solid #000;text-align:center;padding:18px 12px">' +
+      '<div style="font-size:34px;font-weight:900;letter-spacing:2px;line-height:1.1">' + (keep ? 'SAVE FOR HUNTER' : 'OK TO DISCARD') + '</div>' +
+      '<div style="font-size:18px;font-weight:700;margin-top:6px">' + esc(d['Hunter name'] || '') + (d['Antler points'] ? ' · ' + esc(d['Antler points']) + ' points' : '') + '</div>' +
+      '<div style="font-size:15px;margin-top:6px">' + esc(where) + '</div></div>';
+  }
+
+  async function printAntlerBand(d) {
+    if (!antlerBandFor(d)) { toast('No antler band: the skull question was not answered for this deer.'); return; }
+    try { await loadQR(); } catch (e) { toast(e.message); return; }
+    bandCss();
+    const keep = d['Skull kept'] === 'Yes', w = parse(d.Intake), bc = colourOf(d);
+    const last = (d['Hunter last name'] || splitName(d['Hunter name'] || '').last || d['Hunter name'] || '').toUpperCase();
+    const qr = window.qrcode(0, 'M'); qr.addData(deerLink(d.Band) + '&r=1'); qr.make();
+    toast((keep ? 'SAVE FOR HUNTER' : 'OK TO DISCARD') + ' antler band for ' + band(d.Band) + '. Put it round the antlers.', true);
+    document.getElementById('label').innerHTML = '<div class="bw">' +
+      '<div class="ba' + (keep ? ' keep">SAVE FOR HUNTER' : '">OK TO DISCARD') + '</div>' +
+      '<div><div class="bi">' + esc(band(d.Band)) + '</div>' +
+      '<div class="bx">ANTLERS' + (d['Antler points'] ? ' · ' + esc(d['Antler points']) + ' PTS' : '') +
+        (keep ? (last ? ' · ' + esc(last) : '') : ' · HUNTER GAVE UP THE HEAD') + '</div>' +
+      '<div class="bx">IN ' + (w ? w.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase() + ' ' + (w.getMonth() + 1) + '/' + w.getDate() : '') +
+        (bc ? ' · ' + esc(bc.toUpperCase()) : '') + '</div></div>' +
+      '<div class="bq">' + qr.createSvgTag({ cellSize: 2, margin: 0, scalable: true }) + '</div></div>';
+    return printNow();
   }
 
   /* ---------- scan a band: QR from the band opens that deer with its processing urgency ---------- */
   let pendingBand = (location.hash.match(/[#&]d=([^&]+)/) || [])[1] || null;
-  if (pendingBand) { pendingBand = band(decodeURIComponent(pendingBand)); history.replaceState(null, '', location.pathname + location.search); }
+  /* The antler band's QR adds r=1: open the card as "whose rack is this", not as a carcass coming
+     out of the cooler (v110). Held by band, so it lasts through redraws and ends on another deer. */
+  let rackView = null;
+  if (pendingBand) { pendingBand = band(decodeURIComponent(pendingBand)); if (/[#&]r=1/.test(location.hash)) rackView = pendingBand; history.replaceState(null, '', location.pathname + location.search); }
   let shownBand = null;
   /* What a scan is FOR, from 8 November: taking a deer out of the cooler (Joe). Urgency is read
      off the band colour and the board, so the scan no longer needs to be a lookup.
@@ -2983,6 +3098,7 @@
 
   function showDeer(b, fromScan) {
     b = band(b); shownBand = b;
+    if (rackView && rackView !== b) rackView = null;
     const d = deerList().filter(x => band(x.Band) === b).pop();
     if (!d) {
       frame('deer', 'Band ' + esc(b), '<div class="card"><div class="note warn">This band isn\'t in the app\'s list. It may have been released over a week ago, or the list needs refreshing.</div>' +
@@ -2999,17 +3115,18 @@
       : '<div class="card"><b>' + esc(d.Status === 'Processing' ? 'Being processed' : d.Status === 'Ready' ? 'Processed: ready for pickup or delivery' : d.Status) + '</b></div>';
     /* The band is the screen's identity, so moving from one deer to another is a navigation and
        lands at the top, while redrawing the same deer keeps the scroll. */
-    frame('deer', 'Band ' + esc(band(d.Band)), head + deerCard(d) + '<button class="btn ghost" id="ds" style="width:100%;margin-top:8px">Scan another band</button>', false, band(d.Band));
+    const rack = rackView === b && antlerBandFor(d);
+    frame('deer', 'Band ' + esc(band(d.Band)), (rack ? rackBanner(d) : head) + deerCard(d) + '<button class="btn ghost" id="ds" style="width:100%;margin-top:8px">Scan another band</button>', false, band(d.Band));
     const c = $app.querySelector('[data-band]');
     c.querySelectorAll('[data-a]').forEach(x => x.onclick = () => act(x.dataset.a, d, c.querySelector('.form'), () => showDeer(b)));
     document.getElementById('ds').onclick = () => showScan();
     // The band's QR code opens this view. The tag is what gets compared with the deer at checkout,
     // so it is put on screen without a tap (v105).
-    { const tb = c.querySelector('[data-a="tagshow"]'); if (tb) tb.click(); }
+    if (!rack) { const tb = c.querySelector('[data-a="tagshow"]'); if (tb) tb.click(); }
     // Arrived from a scan: open the form for what you are plainly about to do. Clicking the real
     // button rather than calling act() keeps the clock-in nudge and everything else that hangs
     // off it.
-    if (fromScan) {
+    if (fromScan && !rack) {
       const auto = outAction(d);
       const btn = auto && c.querySelector('[data-a="' + auto + '"]');
       if (btn) btn.click();
@@ -3035,7 +3152,12 @@
         cv.width = v.videoWidth; cv.height = v.videoHeight; cx.drawImage(v, 0, 0);
         const r = window.jsQR(cx.getImageData(0, 0, cv.width, cv.height).data, cv.width, cv.height, { inversionAttempts: 'dontInvert' });
         const m = r && String(r.data).match(/[#&]d=([^&]+)/);
-        if (m) { stopScan(); return showDeer(decodeURIComponent(m[1]), true); }
+        if (m) {
+          stopScan();
+          const rb = decodeURIComponent(m[1]), isRack = /[#&]r=1/.test(String(r.data));
+          rackView = isRack ? band(rb) : null;
+          return showDeer(rb, !isRack);
+        }
         if (r) msg('<div class="note warn">That QR code isn\'t a Home Ground band.</div>');
       }
       requestAnimationFrame(tick);
@@ -4755,7 +4877,36 @@
         : '<b>Most of the wait is the app, and that can be worked on.</b> Send Joe these figures.') + '</div>';
   }
 
-  const GO = { supplies: () => showSupplies(), status: showStatus, speed: showSpeed, board: showBoard, intake: showIntake, shifts: () => showShifts(), messages: showMessages, help: showHelp,
+  /* Pause or resume private processing (v108, backend 86). One switch, read by the public Deer
+     Dashboard, the drop-off form, the text replies and this app's own check-in. */
+  function showPrivPause() {
+    const s = S(), paused = s.privateOpen === false;
+    frame('privpause', 'Private processing',
+      '<div class="card">' +
+      (paused
+        ? '<div class="note bad" style="font-size:17px"><b>Paused</b>' + (s.privateNote ? ': ' + esc(s.privateNote) : '') + '</div>' +
+          '<p class="status">Hunters see it on the Deer Dashboard and the drop-off form, and the first text reply tells them. ' +
+          'Check-in asks for a manager override. Donated deer and cold storage are open as usual.</p>' +
+          '<button class="btn" id="ppgo" style="width:100%">Resume private processing</button>'
+        : '<div class="note ok" style="font-size:17px"><b>Open</b>: taking private deer.</div>' +
+          '<p class="status">Pausing it changes the Deer Dashboard and the drop-off form within a minute, adds a line to the first text reply, ' +
+          'and stops a private check-in unless a manager overrides. Donated deer and cold storage are not affected.</p>' +
+          '<label for="ppnote">Note for hunters <span class="hint">optional, e.g. Back Dec 1</span></label><input id="ppnote" type="text" maxlength="60">' +
+          '<button class="btn" id="ppgo" style="width:100%;margin-top:10px;background:var(--bad)">Pause private processing</button>') +
+      '<div id="pperr" class="err"></div></div>');
+    document.getElementById('ppgo').onclick = async () => {
+      const b = document.getElementById('ppgo'); b.disabled = true; b.textContent = paused ? 'Resuming…' : 'Pausing…';
+      try {
+        const out = await call({ action: 'privateopen', open: paused, note: paused ? '' : (document.getElementById('ppnote') || {}).value || '' });
+        st.home.settings = Object.assign({}, st.home.settings || {}, { privateOpen: out.privateOpen, privateNote: out.privateNote || '' }); save();
+        showHome(out.privateOpen ? 'Private processing resumed.' : 'Private processing paused. The public pages show it within a minute.');
+      } catch (e) {
+        document.getElementById('pperr').textContent = e.offline ? 'This needs signal. Try again in a moment.' : e.message;
+        b.disabled = false; b.textContent = paused ? 'Resume private processing' : 'Pause private processing';
+      }
+    };
+  }
+  const GO = { privpause: showPrivPause, supplies: () => showSupplies(), status: showStatus, speed: showSpeed, board: showBoard, intake: showIntake, shifts: () => showShifts(), messages: showMessages, help: showHelp,
     numbers: showNumbers, daily: showDaily, team: showTeam, martin: () => showMartin(), scan: () => showScan(),
     preop: showPreop, opssop: showOpSsop, corrective: () => showCorrective(), records: showRecords,
     closeout: showCloseOut,
@@ -5226,5 +5377,5 @@
     else { showHome(); refresh(true); }
     flush();
   } else showLogin(pendingBand ? 'Sign in to see band ' + pendingBand + '.' : '');
-  window.addEventListener('hashchange', () => { const m = location.hash.match(/[#&]d=([^&]+)/); if (m && st.staff) { history.replaceState(null, '', location.pathname); showDeer(decodeURIComponent(m[1])); } });
+  window.addEventListener('hashchange', () => { const m = location.hash.match(/[#&]d=([^&]+)/); if (m && st.staff) { rackView = /[#&]r=1/.test(location.hash) ? band(decodeURIComponent(m[1])) : null; history.replaceState(null, '', location.pathname); showDeer(decodeURIComponent(m[1])); } });
 })();

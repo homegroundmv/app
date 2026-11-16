@@ -6,6 +6,12 @@
 <meta name="description" content="Live season totals from the Home Ground deer processing facility on Martha’s Vineyard: deer brought in, venison to island families, and room in the cooler.">
 <title>Deer Dashboard</title>
 <link rel="icon" href="../icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#4B5320">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Deer Dashboard">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Public+Sans:wght@400;500;600;700&family=Zilla+Slab:wght@500;600;700&display=swap">
@@ -136,6 +142,8 @@ h2{font-family:var(--display);font-weight:700;font-size:23px;margin:0 0 4px;colo
 .act li{margin:2px 0}
 .hl{color:var(--orange);font-weight:700}
 .act .price{font-family:var(--num);font-size:24px;font-weight:700;color:var(--orange)}
+.act .paused{display:inline-block;font-family:var(--body);font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;background:var(--bad);color:#fff;border-radius:4px;padding:3px 8px;vertical-align:4px}
+.act.off ul{color:var(--muted)}
 .cta{display:inline-block;margin-top:10px;background:var(--orange);color:#fff;text-decoration:none;font-weight:600;padding:9px 14px;border-radius:6px;font-size:14px}
 .cta:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 /* services on the left; land on the right, hunters below landowners */
@@ -165,7 +173,7 @@ footer p{margin:4px 0;max-width:70ch}
         <div class="asof" id="asof">Updated Thursday, Nov 12</div>
         <a class="site" href="https://homegroundmv.com" target="_blank" rel="noopener">homegroundmv.com</a>
         <div class="asof" id="stale" hidden>Showing the last saved figures. The live numbers will be back shortly.</div>
-        <div class="light" id="light" role="status"><i id="lightDot"></i><div><span id="lightText">Room in the cooler</span><small id="lightSub">55 of 150 rail spots in use</small></div></div>
+        <div class="light" id="light" role="status"><i id="lightDot"></i><div><span id="lightText">Room in the cooler</span><small id="lightSub">55 of 100 rail spots in use</small></div></div>
       </div>
     </div>
   </div>
@@ -243,8 +251,8 @@ footer p{margin:4px 0;max-width:70ch}
         </ul>
       </div>
       <div class="act">
-        <h4>Private processing <span class="price">$300</span></h4>
-        <ul>
+        <h4>Private processing <span class="price" id="privPrice">$300</span></h4>
+        <ul id="privList">
           <li>2 lb ground chubs and vacuum-packed cuts</li>
           <li>All venison, or add pork fat for $20</li>
           <li>One deer, one hunter: your meat is never mixed</li>
@@ -278,7 +286,7 @@ footer p{margin:4px 0;max-width:70ch}
       </div>
       </div>
     </div>
-    <p class="dropnote">Dropping off a deer? <a href="https://www.homegroundmv.com/drop-off" target="_top">Pre-check it here</a></p>
+    <p class="dropnote">Dropping off a deer? <a href="https://homegroundmv.github.io/app/dropoff/" target="_top">Use the Deer Drop-Off app</a></p>
   </section>
 
 
@@ -299,7 +307,8 @@ var RENDER = [];
 var DATA = {
   asOf: "11/12/2026 18:05",
   total: 80, lastSeasonApprox: 50,
-  cooler: { hanging: 55, capacity: 150, alertPct: 80, fullPct: 95 },
+  services: { privatePrice: 300, porkAddOn: 20, privateOpen: true, privateNote: "" },
+  cooler: { hanging: 55, capacity: 100, alertPct: 80, fullPct: 95 },
   lbsDonated: 526, mealsDonated: 263,
   donatedWaiting: 41, mealsPerDonatedDeer: 11.4,
   kinds: [
@@ -332,6 +341,23 @@ function fitLogo(){
 fitLogo();
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitLogo);
 window.addEventListener("resize", fitLogo);
+
+// Private processing: open or paused (backend 86, the managers' switch in the Facility app)
+var PRIV_OPEN_HTML = null;
+RENDER.push(function(){
+  var sv = DATA.services || {}, list = $("privList"), card = list && list.parentNode;
+  if (!list) return;
+  if (PRIV_OPEN_HTML === null) PRIV_OPEN_HTML = list.innerHTML;
+  var paused = sv.privateOpen === false;
+  card.classList.toggle("off", paused);
+  $("privPrice").innerHTML = paused ? '<span class="paused">Paused</span>' : "$" + (sv.privatePrice || 300);
+  if (paused) {
+    list.innerHTML = "<li>Not taking deer for private processing right now" + (sv.privateNote ? " (" + String(sv.privateNote).replace(/[<>&"]/g, "") + ")" : "") + "</li>" +
+      "<li>Donation and cold storage are open as usual</li>";
+  } else {
+    list.innerHTML = PRIV_OPEN_HTML.replace(/add pork fat for \$\d+/, "add pork fat for $" + (sv.porkAddOn || 20));
+  }
+});
 
 // the big numbers
 RENDER.push(function(){
@@ -480,7 +506,8 @@ function fromBackend(j){
       { key:"short",  label:"Spike bucks under 3 in.", n:j.kinds.spike,    sex:"m" },
       { key:"buck",   label:"Antlered bucks",          n:j.kinds.antlered, sex:"m" }
     ],
-    use: j.use, weekStart: j.weekStart, weeks: j.weeks, points: pts, pointsNotRecorded: j.pointsNotRecorded
+    use: j.use, weekStart: j.weekStart, weeks: j.weeks, points: pts, pointsNotRecorded: j.pointsNotRecorded,
+    services: j.services || DATA.services
   };
 }
 function load(){

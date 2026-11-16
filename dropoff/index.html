@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="Bringing a deer to the Home Ground facility on Martha’s Vineyard? Pre-check it from your phone and show your code at the counter.">
-<title>Deer Drop-Off Pre-Check</title>
+<meta name="description" content="Bringing a deer to the Home Ground facility on Martha’s Vineyard? Donate it, have us process it, or hang it in cold storage. Check it in from your phone and show your code at the counter.">
+<title>Deer Drop-Off</title>
 <link rel="icon" href="../icon-192.png">
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#4B5320">
@@ -93,6 +93,9 @@ h2{font-family:var(--display);font-weight:700;font-size:25px;margin:0 0 4px;colo
 .ch span{display:flex;flex-direction:column;justify-content:center;min-height:52px;height:100%;border:1.5px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--bg);font-weight:600;font-size:15.5px;line-height:1.25}
 .ch span small{font-weight:400;color:var(--muted);font-size:13px;margin-top:3px}
 .ch input:checked + span{border-color:var(--orange);background:var(--pick);box-shadow:0 0 0 1px var(--orange) inset}
+.ch input:disabled{cursor:not-allowed}
+.ch input:disabled + span{opacity:.6;background:var(--band);cursor:not-allowed}
+.ch .paused{display:inline-block;font-family:var(--body);font-style:normal;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;background:var(--bad);color:#fff;border-radius:4px;padding:2px 7px}
 .ch input:focus-visible + span{outline:2px solid var(--orange);outline-offset:2px}
 .big3 .ch span{min-height:96px;padding:14px 16px;font-weight:400;font-size:14.5px;color:var(--muted)}
 .big3 .ch span b{font-family:var(--display);font-size:21px;color:var(--brown);display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-bottom:2px}
@@ -158,12 +161,28 @@ textarea{min-height:76px}
 .btn2.solid{background:var(--orange);color:#fff}
 
 /* "Keep Pre-Check on your phone": shown in a browser, gone once it is running from the home screen. */
-.getapp{margin-top:16px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
-.getapp b{display:block;font-weight:700}
-.getapp p{margin:4px 0 0;font-size:14.5px;color:var(--muted)}
-.getapp .btn2{width:100%;margin-top:10px}
-.getapp [hidden]{display:none}
 
+/* One-time "save to your home screen" sheet (14 Nov), opened only from the text link */
+.sheetbg{position:fixed;inset:0;background:rgba(20,18,10,.55);z-index:20}
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:21;background:var(--surface);color:var(--ink);border-radius:16px 16px 0 0;padding:18px 18px calc(58px + env(safe-area-inset-bottom,0px));max-width:560px;margin:0 auto;box-shadow:0 -6px 30px rgba(0,0,0,.25)}
+.sheet h3{font-family:var(--display);font-size:22px;margin:0 36px 4px 0;color:var(--brown)}
+.sheet .x{position:absolute;top:10px;right:10px;width:40px;height:40px;border:0;background:none;font-size:26px;line-height:1;color:var(--muted);cursor:pointer}
+.sheet ol{list-style:none;margin:12px 0 0;padding:0;counter-reset:s}
+.sheet li{counter-increment:s;display:grid;grid-template-columns:30px 1fr;gap:10px;align-items:center;padding:10px 0;border-top:1px solid var(--line);font-size:16px}
+.sheet li:first-child{border-top:0}
+.sheet li::before{content:counter(s);width:30px;height:30px;border-radius:50%;background:var(--orange);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center}
+.sheet .ico{display:inline-flex;vertical-align:-5px;width:24px;height:24px;border:1.5px solid var(--line);border-radius:6px;align-items:center;justify-content:center;margin:0 2px;color:#2F7DF6;background:var(--bg)}
+.sheet .ico svg{width:16px;height:16px}
+.sheet .small{font-size:13.5px;color:var(--muted);margin:10px 0 0}
+.sheet .btn2{width:100%;margin-top:12px}
+.sheet .lead{margin:0;color:var(--muted);font-size:15px}
+.sheet h3:focus{outline:none}
+.point{position:fixed;left:50%;bottom:calc(6px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:22;color:#F4B66A;font-size:40px;line-height:1;pointer-events:none;animation:bob 1s ease-in-out infinite;text-shadow:0 2px 6px rgba(0,0,0,.5)}
+.point.top{bottom:auto;top:6px;left:auto;right:18px;transform:none}
+@keyframes bob{50%{translate:0 8px}}
+.point.top{animation-name:bobup}
+@keyframes bobup{50%{translate:0 -8px}}
+@media (prefers-reduced-motion:reduce){ .point{animation:none} }
 footer{margin:28px 0 30px;padding-top:14px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
 footer p{margin:4px 0}
 footer a{color:var(--orange)}
@@ -175,8 +194,8 @@ footer a{color:var(--orange)}
   <div class="wrap">
     <a class="plate" href="https://homegroundmv.com" target="_blank" rel="noopener" aria-label="Home Ground website"><img alt="Home Ground" src="../logo.png"></a>
     <div>
-      <h1>Deer Drop-Off Pre-Check</h1>
-      <p class="tag">Check your deer in from the truck. Show your code at the counter.</p>
+      <h1>Deer Drop-Off</h1>
+      <p class="tag"><b>Donate · Process it for me · Cold storage</b><br>Check your deer in from the truck. Show your code at the counter.</p>
       <div class="status">
         <span class="st" id="openSt"><i id="openDot"></i><span id="openTxt">Open 8 am – 8 pm daily</span></span>
         <span class="st" id="coolSt" hidden><i id="coolDot"></i><span id="coolTxt">Room in the cooler</span></span>
@@ -214,7 +233,7 @@ footer a{color:var(--orange)}
         <h2>What would you like done with your deer?</h2>
         <div class="choices c1 big3" role="radiogroup" aria-label="What would you like done with your deer">
           <label class="ch"><input type="radio" name="type" value="Donated"><span><b>Donate it</b>Processed free for the Island Food Pantry. Tick Free MV pays you $150 a doe, $100 a buck, and you earn a replacement antlerless permit.</span></label>
-          <label class="ch"><input type="radio" name="type" value="Private"><span><b>Process it for me <em id="pPrice">$300</em></b>Your own deer, your cuts. 2 lb ground packages and vacuum-packed cuts. Paid at pickup.</span></label>
+          <label class="ch" id="privCard"><input type="radio" name="type" value="Private"><span><b>Process it for me <em id="pPrice">$300</em></b><span id="privDesc">Your own deer, your cuts. 2 lb ground packages and vacuum-packed cuts. Paid at pickup.</span></span></label>
           <label class="ch"><input type="radio" name="type" value="Cold storage"><span><b>Cold storage</b>Hung whole, skin on, in the cooler. Pick it up within 7 days.</span></label>
         </div>
         <div class="warnbox" id="coolWarn" hidden></div>
@@ -364,16 +383,19 @@ footer a{color:var(--orange)}
         <a class="btn2 solid" href="https://www.google.com/maps/dir/?api=1&amp;destination=41.394750%2C-70.680694" target="_blank" rel="noopener">Directions</a>
         <a class="btn2" id="textCode" href="sms:+15086876255">Text us the code</a>
       </div>
-      <button class="btn2" id="again" type="button" style="width:100%;margin-top:10px">Pre-check another deer</button>
+      <button class="btn2" id="again" type="button" style="width:100%;margin-top:10px">Check in another deer</button>
     </div>
   </div>
 
-  <div class="getapp" id="getapp" hidden>
-    <b>Keep Pre-Check on your phone</b>
-    <p id="getappHow">Add this page to your home screen and it opens like an app, one tap from the truck.</p>
-    <button class="btn2" id="getappBtn" type="button" hidden>Add to my home screen</button>
-    <a class="btn2" id="getappOpen" href="https://homegroundmv.github.io/app/dropoff/" target="_blank" rel="noopener" hidden>Open the app page</a>
+  <!-- one-time setup, only when he arrives from the text link (?app=1) -->
+  <div class="sheetbg" id="appbg" hidden></div>
+  <div class="sheet" id="appsheet" role="dialog" aria-modal="true" aria-labelledby="appsheetH" hidden>
+    <button class="x" id="appx" type="button" aria-label="Close">×</button>
+    <h3 id="appsheetH">Save Deer Drop-Off to your home screen</h3>
+    <div id="appsteps"></div>
+    <button class="btn2" id="appskip" type="button">Not now, just check in my deer</button>
   </div>
+  <div class="point" id="apppoint" aria-hidden="true" hidden>↓</div>
 
   <footer>
     <p>Your details go only to Home Ground’s check-in staff. Nothing you enter is shown publicly.</p>
@@ -388,7 +410,7 @@ footer a{color:var(--orange)}
    stock and cooler space come from the public ?scoreboard=1 reply, which carries no personal data. */
 var BACKEND = "https://script.google.com/macros/s/AKfycbwJbxYLDa5uAXwuHI_kF7vD_Panq2ZxNNV2EFofWqJAZkQRWy0j9Ns7ceKQ4-8zwUo3/exec";
 var DEMO = false;   // the mockup sets this: nothing is sent
-var SVC = { privatePrice: 300, porkAddOn: 20, porkInStock: true, porkPct: 10 };
+var SVC = { privatePrice: 300, porkAddOn: 20, porkInStock: true, porkPct: 10, privateOpen: true, privateNote: "" };
 var COOLER = null;
 // The intake app's cut sheet (app.js CUTS), same order and words. First four default to Ground.
 var CUTS = [["Backstraps", ["Whole", "Steaks", "Butterflied", "Ground"]], ["Tenderloins", ["Whole", "Ground"]],
@@ -398,7 +420,7 @@ var CUT_LABEL = { "Half roasts, half ground": "Half roasts, half ground", "3/4\"
 
 function $(id){ return document.getElementById(id); }
 function pick(n){ var x = document.querySelector('input[name="' + n + '"]:checked'); return x ? x.value : ""; }
-function setPick(n, v){ var x = document.querySelector('input[name="' + n + '"][value="' + v + '"]'); if (x) x.checked = true; }
+function setPick(n, v){ document.querySelectorAll('input[name="' + n + '"]').forEach(function(x){ if (x.value === v) x.checked = true; }); }   // by value, not a selector: 1" has a quote in it
 function g(id){ return ($(id).value || "").trim(); }
 function esc(s){ return String(s == null ? "" : s).replace(/[&<>"]/g, function(c){ return { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]; }); }
 function money(n){ return "$" + Number(n || 0).toLocaleString("en-US"); }
@@ -426,19 +448,40 @@ function drawCooler(){
 }
 function drawPrices(){
   $("pPrice").textContent = money(SVC.privatePrice);
+  if (SVC.privateOpen === false) setTimeout(drawPrivate, 0);   // the price line becomes the Paused badge again
   $("porkNote").textContent = SVC.porkPct + "%, + " + money(SVC.porkAddOn);
   $("porkQ").hidden = !SVC.porkInStock; $("porkOut").hidden = SVC.porkInStock;
   if (!SVC.porkInStock) setPick("pork", "No");
   drawPrice();
 }
 function loadLive(){
-  if (DEMO) { COOLER = { inCooler: 55, capacity: 150, alertPct: 80, fullPct: 95 }; drawCooler(); return; }
+  if (DEMO) { COOLER = { inCooler: 55, capacity: 100, alertPct: 80, fullPct: 95 }; drawCooler(); return; }
   fetch(BACKEND + "?scoreboard=1", { cache: "no-store" }).then(function(r){ return r.json(); }).then(function(j){
     if (!j || !j.ok) return;
     if (j.cooler) { COOLER = j.cooler; drawCooler(); }
-    if (j.services) { SVC.privatePrice = +j.services.privatePrice || SVC.privatePrice; SVC.porkAddOn = +j.services.porkAddOn || SVC.porkAddOn; SVC.porkInStock = j.services.porkInStock !== false; drawPrices(); }
+    if (j.services) { SVC.privatePrice = +j.services.privatePrice || SVC.privatePrice; SVC.porkAddOn = +j.services.porkAddOn || SVC.porkAddOn; SVC.porkInStock = j.services.porkInStock !== false;
+      SVC.privateOpen = j.services.privateOpen !== false; SVC.privateNote = j.services.privateNote || ""; drawPrices(); drawPrivate(); }
   }).catch(function(){});
 }
+
+/* ---------- private processing paused (backend 86) ----------
+   The managers' switch in the Facility app. While it's off, the card can't be chosen and says why. */
+function drawPrivate(){
+  var r = document.querySelector('input[name="type"][value="Private"]'); if (!r) return;
+  var paused = SVC.privateOpen === false;
+  r.disabled = paused;
+  $("pPrice").innerHTML = paused ? '<span class="paused">Paused</span>' : money(SVC.privatePrice);
+  $("privDesc").textContent = paused
+    ? "Private processing is paused right now" + (SVC.privateNote ? " (" + SVC.privateNote + ")" : "") + ". You can still donate your deer or bring it for cold storage."
+    : "Your own deer, your cuts. 2 lb ground packages and vacuum-packed cuts. Paid at pickup.";
+  if (paused && r.checked) {
+    r.checked = false;
+    show(0);
+    $("err").textContent = "Private processing was paused while you were filling this in. Choose donate or cold storage.";
+    tellParent();
+  }
+}
+document.addEventListener("visibilitychange", function(){ if (document.visibilityState === "visible") loadLive(); });
 
 /* ---------- cut sheet ---------- */
 (function(){
@@ -489,7 +532,7 @@ function show(i, focus){
   $("progTxt").textContent = "Step " + (at + 1) + " of " + list.length + " · " + document.querySelector('.step[data-step="' + list[at] + '"]').dataset.title;
   $("progBar").style.width = (100 * (at + 1) / list.length) + "%";
   $("back").hidden = at === 0;
-  $("next").textContent = list[at] === "send" ? "Send my pre-check" : "Next";
+  $("next").textContent = list[at] === "send" ? "Send my drop-off" : "Next";
   $("err").textContent = "";
   if (list[at] === "send") drawReview();
   if (list[at] === "cuts") { syncCuts(); drawPrice(); }
@@ -545,6 +588,7 @@ $("back").onclick = function(){ show(at - 1); };
 function check(step){
   var t = pick("type"), deer = pick("deer");
   if (step === "plan" && !t) return "Choose donate, process it for me, or cold storage.";
+  if (t === "Private" && SVC.privateOpen === false) return "Private processing is paused right now. Choose donate or cold storage.";
   if (step === "deer") {
     if (!deer) return "Choose which deer.";
     if (deer === "Antlered buck" && !(pts >= 1)) return "Tap + to count the points 1 inch and longer.";
@@ -622,11 +666,11 @@ $("f").addEventListener("submit", function(e){
     var t = pick("type");
     $("doneMsg").textContent = (j.inHours === false ? "We’re closed right now (open 8 am to 8 pm). Text (508) 687-6255 to arrange drop-off. " : "") + "Show this code at the counter.";
     $("doneLast").textContent = t === "Private" ? "Sign your cut sheet. We’ll call when your meat is ready." : t === "Donated" ? "Take a copy of your record. Tick Free MV mails your check." : "Pick it up within 7 days.";
-    $("textCode").href = "sms:+15086876255?&body=" + encodeURIComponent("Pre-check code " + j.ref);
+    $("textCode").href = "sms:+15086876255?&body=" + encodeURIComponent("Drop-off code " + j.ref);
     $("f").hidden = true; $("progWrap").hidden = true; $("done").hidden = false;
     clearDraft(); toTop(); tellParent();
   }).catch(function(x){ $("err").textContent = x.message; tellParent(); })
-    .then(function(){ b.disabled = false; b.textContent = "Send my pre-check"; });
+    .then(function(){ b.disabled = false; b.textContent = "Send my drop-off"; });
 });
 $("again").onclick = function(){
   var keep = ["fn", "ln", "ph", "em", "lic", "ad1", "adt", "ads", "adz"].map(function(id){ return [id, $(id).value]; });
@@ -679,40 +723,72 @@ function tellParent(){
 window.addEventListener("resize", tellParent);
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(tellParent);
 
-/* A hunter can keep this page on his phone like an app (Joe, 14 Nov 2026). It has its own manifest
-   and a small service worker, so "Add to Home Screen" gives it its own icon and it opens full
-   screen, even with no signal. The box says how, in the words for the phone in his hand:
-   - already running from the home screen: say nothing;
-   - embedded on homegroundmv.com: a frame cannot be installed, so send him to the page itself;
-   - Android Chrome: it offers its own prompt, so show one button;
-   - iPhone, and anything else: the two taps, in words. */
+/* A hunter can keep this page on his phone like an app (Joe, 14 Nov 2026): it has its own manifest
+   and a small service worker, so it gets its own icon and opens full screen, even with no signal.
+   Installing is not part of the page (Joe, 14 Nov). The text reply on the drop-off line sends him to
+   homegroundmv.com/precheck, which lands here with ?app=1, and only then does a one-time screen
+   say how to save it, in the words for the phone in his hand. */
 (function(){
-  var box = $("getapp"), how = $("getappHow"), btn = $("getappBtn"), openPage = $("getappOpen"), ask = null;
+  var ua = navigator.userAgent || "", ask = null, open = false;
+  try { if (location.protocol === "https:" && window.parent === window && "serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(function(){}); } catch (e) {}
+  window.addEventListener("beforeinstallprompt", function(e){ e.preventDefault(); ask = e; if (open) draw(); });
   var installed = false;
   try { installed = window.navigator.standalone === true || window.matchMedia("(display-mode: standalone)").matches; } catch (e) {}
-  if (installed) return;
-  if (window.parent !== window) {
-    how.textContent = "Open the app page, then add it to your home screen. After that it is one tap from the truck.";
-    openPage.hidden = false;
-  } else {
-    how.textContent = /iPhone|iPad|iPod/.test(navigator.userAgent)
-      ? "Tap the Share button, then “Add to Home Screen”. It opens like an app, one tap from the truck."
-      : "Open your browser’s menu, then tap “Add to Home screen” or “Install app”. It opens like an app, one tap from the truck.";
-    window.addEventListener("beforeinstallprompt", function(e){
-      e.preventDefault(); ask = e;
-      how.textContent = "It opens like an app, one tap from the truck.";
-      btn.hidden = false; tellParent();
-    });
-    btn.addEventListener("click", function(){
-      if (!ask) return;
-      ask.prompt();
-      if (ask.userChoice) ask.userChoice.then(function(c){ if (c && c.outcome === "accepted") { box.hidden = true; tellParent(); } });
-      ask = null; btn.hidden = true;
-    });
-    window.addEventListener("appinstalled", function(){ box.hidden = true; tellParent(); });
-    try { if (location.protocol === "https:" && "serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(function(){}); } catch (e) {}
+  if (!/[?&]app=1\b/.test(location.search)) return;
+  var inAppView = /FBAN|FBAV|FB_IAB|Instagram|Line\/|Snapchat|Twitter|LinkedInApp|GSA\/|; wv\)/.test(ua);
+  // Take ?app=1 off the address now, so the page he saves (and any reload) opens straight to the form.
+  // Not inside Facebook and the like: "Open in Safari" opens this address, and the steps must come too.
+  if (!inAppView) try { history.replaceState(null, "", location.pathname + location.search.replace(/([?&])app=1\b&?/, "$1").replace(/[?&]$/, "") + location.hash); } catch (e) {}
+  if (installed || window.parent !== window) return;
+
+  var ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  var ipad = /iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  var inApp = /FBAN|FBAV|FB_IAB|Instagram|Line\/|Snapchat|Twitter|LinkedInApp|GSA\/|; wv\)/.test(ua);
+  var iosOther = ios && /CriOS|FxiOS|EdgiOS/.test(ua);
+  var PAGE = "https://homegroundmv.github.io/app/dropoff/?app=1";
+  var ICO = function(svg){ return '<span class="ico"><svg viewBox="0 0 24 24" ' + svg + '</svg></span>'; };
+  var SHARE = ICO('fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M8 7l4-4 4 4"/><path d="M6 11v9h12v-9"/>');
+  var PLUS = ICO('fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 8v8M8 12h8"/>');
+  var DOTS = ICO('fill="currentColor"><circle cx="6" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="18" cy="12" r="1.8"/>');
+  var MENU = ICO('fill="currentColor"><circle cx="12" cy="6" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="18" r="1.8"/>');
+  var LEAD = '<p class="lead">Do it once and Deer Drop-Off is one tap from the truck next time.</p>';
+
+  function draw(){
+    var h = "Save Deer Drop-Off to your home screen", body, point = false;
+    if (inApp) {
+      h = "Open this in your browser first";
+      body = '<ol><li><span>Tap ' + DOTS + ' or ' + MENU + ' at the top of this screen.</span></li><li><span>Choose <b>Open in ' + (ios ? "Safari" : "browser") + '</b>.</span></li><li><span>It opens there, with the steps to save it.</span></li></ol>' +
+        '<p class="small">Facebook, Instagram and some texting apps open links in their own viewer, which can’t save anything to your home screen.</p>' +
+        '<button class="btn2 solid" type="button" id="appcopy">Copy the link</button>';
+    } else if (ask) {
+      body = LEAD + '<button class="btn2 solid" type="button" id="appinstall">Install the app</button><p class="small">Your phone asks you to confirm. That’s it.</p>';
+    } else if (ios) {
+      point = (ipad || iosOther) ? "top" : "bottom";
+      body = LEAD + '<ol><li><span>Tap Share ' + SHARE + (iosOther ? ' at the top right, next to the address.' : ipad ? ' at the top of the screen.' : ' at the bottom of the screen. On newer iPhones it’s inside ' + DOTS + '.') + '</span></li>' +
+        '<li><span>Tap <b>Add to Home Screen</b> ' + PLUS + '. You may need to scroll down to find it.</span></li><li><span>Tap <b>Add</b>. The Deer Drop-Off icon appears on your home screen.</span></li></ol>';
+    } else {
+      point = "top";
+      body = LEAD + '<ol><li><span>Tap your browser’s menu ' + MENU + ' at the top right.</span></li><li><span>Tap <b>Install app</b> or <b>Add to Home screen</b>.</span></li><li><span>Tap <b>Install</b> or <b>Add</b>.</span></li></ol>';
+    }
+    $("appsheetH").textContent = h; $("appsteps").innerHTML = body;
+    var p = $("apppoint"); p.hidden = !point; p.className = "point" + (point === "top" ? " top" : ""); p.textContent = point === "top" ? "↑" : "↓";
+    var c = $("appcopy");
+    if (c) c.onclick = function(){
+      var ok = function(){ c.textContent = "Copied. Paste it into " + (ios ? "Safari" : "Chrome") + "."; };
+      try { navigator.clipboard.writeText(PAGE).then(ok, function(){ prompt("Copy this link:", PAGE); }); } catch (e) { prompt("Copy this link:", PAGE); }
+    };
+    var ib = $("appinstall");
+    if (ib) ib.onclick = function(){
+      var a = ask; ask = null; if (!a) return;
+      a.prompt();
+      if (a.userChoice) a.userChoice.then(function(r){ if (r && r.outcome === "accepted") close(); else draw(); }); else close();
+    };
   }
-  box.hidden = false;
+  function close(){ open = false; $("appbg").hidden = true; $("appsheet").hidden = true; $("apppoint").hidden = true; }
+  $("appx").onclick = close; $("appbg").onclick = close; $("appskip").onclick = close;
+  document.addEventListener("keydown", function(e){ if (e.key === "Escape" && open) close(); });
+  window.addEventListener("appinstalled", close);
+  setTimeout(function(){ open = true; draw(); $("appbg").hidden = false; $("appsheet").hidden = false; var hh = $("appsheetH"); hh.tabIndex = -1; hh.focus({ preventScroll: true }); }, 350);
 })();
 
 drawOpen(); setInterval(drawOpen, 60000);

@@ -1,7 +1,7 @@
 {
-  "name": "Deer Drop-Off Pre-Check",
+  "name": "Deer Drop-Off",
   "short_name": "Deer Drop-Off",
-  "description": "Pre-check a deer from the truck and show your code at the Home Ground counter.",
+  "description": "Donate a deer, have it processed, or hang it in cold storage: check it in from the truck and show your code at the Home Ground counter.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
