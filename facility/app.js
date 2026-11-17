@@ -104,6 +104,8 @@
   st.outbox = st.outbox || [];
   st.device = st.device || uid();
   st.home = st.home || {};
+  // Check-ins the server recorded under a different band (v116, see rebanded()). Kept a week.
+  st.reband = (st.reband || []).filter(r => Date.now() - (r.landed || 0) < 7 * 864e5);
   st.hunters = st.hunters || { at: 0, list: [] };
   function save() { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { /* keep in memory */ } }
   save();
@@ -228,8 +230,8 @@
   }
 
   /* ---------- outbox: deer actions and log entries wait here until sent ---------- */
-  function queue(action, fields, label) {
-    st.outbox.push({ clientId: uid(), action, fields, at: stamp(), label, created: Date.now(), by: st.number });
+  function queue(action, fields, label, extra) {
+    st.outbox.push(Object.assign({ clientId: uid(), action, fields, at: stamp(), label, created: Date.now(), by: st.number }, extra || {}));
     /* Thrown away the moment the action is queued, not when it finishes sending. Screens are
        redrawn immediately after a tap — openCheckout calls showDesk() on the next line — and the
        send is still in flight at that point, so a cache left standing would repaint the deer that
@@ -240,6 +242,32 @@
   }
   // Blank is allowed (not every deer is weighed at the door); otherwise 0 to 500 lb, as the backend rules.
   const weightOk = w => String(w == null ? '' : w).trim() === '' || (Number(w) >= 0 && Number(w) <= 500);
+  /* ---------- a check-in recorded under another band (v116) ----------
+     The band number is chosen and PRINTED on this phone before the check-in is sent. If another
+     phone sent a deer under the same number first, the server gives this one the next free number.
+     It always said so in its reply, and the app never read it: the band on the carcass said one
+     number, the record another, and the payment and the tag photo queued behind the check-in went
+     to the OTHER phone's deer, because they still carried the old number.
+
+     Now the reply is read. The change is kept here, shown on every screen until somebody says the
+     band is replaced, with the band to print again; and anything this phone queued for that
+     number while its own check-in was still on its way is sent to the number the deer really has. */
+  function rebandFor(b, created) {
+    b = band(b); if (!b || !created) return null;
+    return (st.reband || []).find(r => r.from === b && created >= r.queued && created <= (r.settled || r.landed + 60000)) || null;
+  }
+  function rebanded(it, to) {
+    const from = band((it.fields || {}).band);
+    if ((st.reband || []).some(r => r.id === it.clientId)) return;
+    const r = { id: it.clientId, from: from, to: to, queued: it.created || 0, landed: Date.now(), settled: 0, by: st.number,
+      print: it.print ? Object.assign({}, it.print, { Band: to }) : null, done: false };
+    st.reband = (st.reband || []).concat(r); save();
+    toast('Band ' + from + ' was already in use. This deer is recorded as ' + to + '. Print its band again.');
+    status();
+    /* Once the board has caught up, this phone can see both deer, and "band " + from means the
+       other one again. Until then it can only mean this phone's own deer. */
+    refresh(true).then(() => { r.settled = Date.now(); save(); });
+  }
   let flushing = false;
   async function flush() {
     if (flushing || !st.pin) return;
@@ -249,7 +277,9 @@
         if (it.error) continue;
         if (it.by && it.by !== st.number) continue;   // someone else's entry (or demo vs real): it waits for them to sign in here again
         try {
-          await call({ action: it.action, fields: it.fields, at: it.at, clientId: it.clientId });
+          const mv = it.action === 'intake' ? null : rebandFor((it.fields || {}).band, it.created);
+          const out = await call({ action: it.action, fields: mv ? Object.assign({}, it.fields, { band: mv.to }) : it.fields, at: it.at, clientId: it.clientId });
+          if (it.action === 'intake' && out && out.band && band(out.band) !== band((it.fields || {}).band)) rebanded(it, band(out.band));
           st.outbox = st.outbox.filter(x => x.clientId !== it.clientId);
         } catch (e) {
           if (e.fatal) it.error = e.message; else break;
@@ -303,7 +333,8 @@
         if (it.error || (it.by && it.by !== st.number)) continue;
         if (st.outbox.some(x => x.action === 'intake' && !x.error && band((x.fields || {}).band) === it.band)) continue;
         try {
-          await call({ action: 'tagphoto', band: it.band, kind: it.kind, data: it.data, clientId: it.id });
+          const mv = rebandFor(it.band, it.created);   // v116: the photo follows its deer to the band it was recorded under
+          await call({ action: 'tagphoto', band: mv ? mv.to : it.band, kind: it.kind, data: it.data, clientId: it.id });
           await pDel(it.id);
           photoQ = photoQ.filter(x => x.id !== it.id);
         } catch (e) {
@@ -639,6 +670,14 @@
           : '<span class="pill wait">No signal</span> <span class="status">Nothing is updating. Last fetched ' +
             esc(st.synced || '—') + '</span>');
     el.innerHTML = queue +
+      /* v116. Stays until somebody says the band on the carcass has been replaced: a toast is gone
+         in seconds, and this is two deer about to be mixed up. */
+      (st.reband || []).filter(r => !r.done && (!r.by || r.by === st.number)).map(r =>
+        '<div class="note bad" data-rb="' + esc(r.id) + '"><b>Band ' + esc(r.from) + ' was already in use.</b> ' +
+        'Another phone checked a deer in under that number first, so this deer is recorded as <b>' + esc(r.to) + '</b>. ' +
+        'The band you printed is wrong. Print it again and replace it, or the two deer will be mixed up.<br>' +
+        (r.print ? '<button class="btn" data-rbprint="' + esc(r.id) + '" style="margin-top:6px">Print band ' + esc(r.to) + '</button> ' : '') +
+        '<button class="plain" data-rbdone="' + esc(r.id) + '">Done, the band is replaced</button></div>').join('') +
       /* A refused entry is a real deer somebody typed in at the door. This used to offer one
          button — "Remove it" — with no confirmation and no way to put right whatever was wrong,
          so the obvious tap destroyed the record. Twice, on 8 November. Now it says what to do
@@ -671,6 +710,14 @@
           (st.slow.lockMs > 300 ? ' (waiting on another request ' + (st.slow.lockMs / 1000).toFixed(1) + 's)' : '') +
           ' · connection ' + (Math.max(0, st.slow.total - st.slow.ms) / 1000).toFixed(1) + 's</div>'
         : '');
+    el.querySelectorAll('[data-rbprint]').forEach(b => b.onclick = () => {
+      const r = (st.reband || []).find(x => x.id === b.dataset.rbprint);
+      if (r && r.print) printBand(r.print, true);
+    });
+    el.querySelectorAll('[data-rbdone]').forEach(b => b.onclick = () => {
+      const r = (st.reband || []).find(x => x.id === b.dataset.rbdone);
+      if (r) { r.done = true; save(); status(); }
+    });
     el.querySelectorAll('[data-drop]').forEach(b => b.onclick = () => {
       const it = st.outbox.find(x => x.clientId === b.dataset.drop);
       const what = it ? (it.label || it.action) : 'this entry';
@@ -2960,7 +3007,10 @@
         intakeWeight: v('iw'), weighedAs: document.getElementById('wa').value,
         porkFat: type === 'Private' && !!document.getElementById('pork') && document.getElementById('pork').checked,
         privateOverride: privPaused || undefined };
-      queue('intake', f, 'Check-in ' + b);
+      const inRow = { Band: b, Intake: stamp(), Type: type, Deer: f.deer, 'MassWildlife confirmation': f.confirmation,
+        'Antler points': f.points, 'Hunter name': (f.firstName + ' ' + f.lastName).trim(),
+        'Skull kept': f.skull === true ? 'Yes' : f.skull === false ? 'No' : '' };
+      queue('intake', f, 'Check-in ' + b, { print: inRow });   // v116: kept so the band can be printed again if the server renumbers it
       if (tagLost) enqueuePhoto(b, 'tag', lostTagImage(lostFields(b)));
       else if (tagShot) enqueuePhoto(b, 'tag', tagShot);
       if (tagLost && scrShot) enqueuePhoto(b, 'screen', scrShot);
@@ -2983,9 +3033,6 @@
       if (type === 'Private' && pmeth && pmeth.value) {
         queue('paydeer', { band: b, method: pmeth.value.replace(/^.*—\s*/, '') }, 'Processing payment ' + b);
       }
-      const inRow = { Band: b, Intake: stamp(), Type: type, Deer: f.deer, 'MassWildlife confirmation': f.confirmation,
-        'Antler points': f.points, 'Hunter name': (f.firstName + ' ' + f.lastName).trim(),
-        'Skull kept': f.skull === true ? 'Yes' : f.skull === false ? 'No' : '' };
       printBand(inRow, true);
       showBoard();
       toast('Band ' + b + ' checked in.', true);
