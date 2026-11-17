@@ -2962,7 +2962,7 @@
       const inRow = { Band: b, Intake: stamp(), Type: type, Deer: f.deer, 'MassWildlife confirmation': f.confirmation,
         'Antler points': f.points, 'Hunter name': (f.firstName + ' ' + f.lastName).trim(),
         'Skull kept': f.skull === true ? 'Yes' : f.skull === false ? 'No' : '' };
-      printBand(inRow).then(() => { if (antlerBandFor(inRow)) return printAntlerBand(inRow); });
+      printBand(inRow, true);
       showBoard();
       toast('Band ' + b + ' checked in.', true);
     };
@@ -2992,8 +2992,14 @@
   function bandCss() {
     const s = S(), off = Number(s.bandOffset == null ? 2.5 : s.bandOffset), rot = s.bandRotate !== false;
     let c = document.getElementById('band-css'); if (!c) { c = document.createElement('style'); c.id = 'band-css'; document.head.appendChild(c); }
-    c.textContent = '@media print{@page{size:1.125in 11.5in;margin:0}html,body{margin:0;padding:0;background:#fff}' +
-      '#label{position:absolute;left:0;top:0;width:1.125in;height:11.5in;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#000}' +
+    c.textContent = '@media print{@page{size:1.125in 11.5in;margin:0}html,body{margin:0;padding:0;background:#fff;height:auto;min-height:0}' +
+      /* The screen behind the band is taken out of the print altogether (v113). Hidden but still
+         laid out, on a page 1-1/8 in. wide, it ran to extra blank pages after the band. */
+      'body>*:not(#label){display:none!important}' +
+      '#label{position:absolute;left:0;top:0;width:1.125in;font-family:Arial,Helvetica,sans-serif;color:#000}' +
+      /* One .bp per band, each exactly one page down from the last (v113): two bands are two
+         pages of one print job. */
+      '#label .bp{position:absolute;left:0;width:1.125in;height:11.5in;overflow:hidden}' +
       '#label .bw{position:absolute;width:7.4in;height:1.05in;display:flex;align-items:center;gap:.12in;' +
       (rot ? 'left:1.09in;top:' + off + 'in;transform-origin:0 0;transform:rotate(90deg)}' : 'left:.04in;top:' + off + 'in}') +
       '#label .bt{font-size:11pt;font-weight:800;letter-spacing:1px;padding:.04in .08in;border:2px solid #000;white-space:nowrap}' +
@@ -3002,35 +3008,36 @@
       '#label .ba.keep{background:#000;color:#fff}#label .bi{font-size:24pt;font-weight:800;line-height:1;white-space:nowrap}' +
       '#label .bx{font-size:10pt;font-weight:700;line-height:1.25;white-space:nowrap}#label .bq{width:.95in;height:.95in;flex:0 0 auto}#label .bq svg{width:100%;height:100%}}';
   }
-  async function printBand(d) {
+  /* v113: one print job, one window.print(). v109 to v112 opened a second print window for the
+     antler band once the first had closed, which only works where window.print() holds the page
+     until the dialog shuts. On an iPhone or iPad it returns at once, the second request landed on
+     top of the first and no print window appeared at all (Joe, 16 November). Now the antler band
+     is page two of the same job: same roll, straight after the intake band, one dialog. */
+  function printPages(pages) {
+    document.getElementById('label').innerHTML = pages.map((h, i) =>
+      '<div class="bp" style="top:' + (i * 11.5) + 'in">' + h + '</div>').join('');
+    setTimeout(() => window.print(), 80);
+  }
+  async function printBand(d, withAntler) {
     try { await loadQR(); } catch (e) { toast(e.message); return; }
     bandCss();
+    const pages = [intakeBandHtml(d)];
+    if (withAntler && antlerBandFor(d)) {
+      pages.push(antlerBandHtml(d));
+      toast((d['Skull kept'] === 'Yes' ? 'SAVE FOR HUNTER' : 'OK TO DISCARD') + ' antler band for ' + band(d.Band) + ' prints second. Put it round the antlers.', true);
+    }
+    printPages(pages);
+  }
+  function intakeBandHtml(d) {
     const w = parse(d.Intake), bc = colourOf(d);
     const qr = window.qrcode(0, 'M'); qr.addData(deerLink(d.Band)); qr.make();
-    document.getElementById('label').innerHTML = '<div class="bw">' +
+    return '<div class="bw">' +
       '<div class="bt' + (d.Type === 'Donated' ? ' don">DONATED' : '">PRIVATE') + '</div>' +
       '<div><div class="bi">' + esc(band(d.Band)) + '</div>' +
       '<div class="bx">IN ' + (w ? w.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase() + ' ' + (w.getMonth() + 1) + '/' + w.getDate() : '') +
       (bc ? ' · ' + esc(bc.toUpperCase()) : '') + '</div>' +
       '<div class="bx">' + esc((d.Deer || '').toUpperCase()) + (d['MassWildlife confirmation'] ? ' · ' + (/^mw/i.test(d['MassWildlife confirmation']) ? '' : 'MW ') + esc(d['MassWildlife confirmation']) : '') + '</div></div>' +
       '<div class="bq">' + qr.createSvgTag({ cellSize: 2, margin: 0, scalable: true }) + '</div></div>';
-    return printNow();
-  }
-
-  /* Resolves once the print dialog for the label on screen has closed, so a second band never
-     replaces the first while it is still printing. On the intake laptop window.print() blocks
-     until the dialog closes; where it returns at once, afterprint is waited for instead. */
-  function printNow() {
-    return new Promise(ok => {
-      let done = false;
-      const fin = () => { if (done) return; done = true; window.removeEventListener('afterprint', fin); setTimeout(ok, 150); };
-      window.addEventListener('afterprint', fin);
-      setTimeout(() => {
-        const t = Date.now();
-        try { window.print(); } catch (e) { fin(); return; }
-        setTimeout(fin, Date.now() - t > 300 ? 0 : 60000);
-      }, 80);
-    });
   }
 
   /* The antler band (Joe, 14 November). Same roll, same printer, straight after the intake band,
@@ -3057,11 +3064,14 @@
     if (!antlerBandFor(d)) { toast('No antler band: the skull question was not answered for this deer.'); return; }
     try { await loadQR(); } catch (e) { toast(e.message); return; }
     bandCss();
+    toast((d['Skull kept'] === 'Yes' ? 'SAVE FOR HUNTER' : 'OK TO DISCARD') + ' antler band for ' + band(d.Band) + '. Put it round the antlers.', true);
+    printPages([antlerBandHtml(d)]);
+  }
+  function antlerBandHtml(d) {
     const keep = d['Skull kept'] === 'Yes', w = parse(d.Intake), bc = colourOf(d);
     const last = (d['Hunter last name'] || splitName(d['Hunter name'] || '').last || d['Hunter name'] || '').toUpperCase();
     const qr = window.qrcode(0, 'M'); qr.addData(deerLink(d.Band) + '&r=1'); qr.make();
-    toast((keep ? 'SAVE FOR HUNTER' : 'OK TO DISCARD') + ' antler band for ' + band(d.Band) + '. Put it round the antlers.', true);
-    document.getElementById('label').innerHTML = '<div class="bw">' +
+    return '<div class="bw">' +
       '<div class="ba' + (keep ? ' keep">SAVE FOR HUNTER' : '">OK TO DISCARD') + '</div>' +
       '<div><div class="bi">' + esc(band(d.Band)) + '</div>' +
       '<div class="bx">ANTLERS' + (d['Antler points'] ? ' · ' + esc(d['Antler points']) + ' PTS' : '') +
@@ -3069,7 +3079,6 @@
       '<div class="bx">IN ' + (w ? w.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase() + ' ' + (w.getMonth() + 1) + '/' + w.getDate() : '') +
         (bc ? ' · ' + esc(bc.toUpperCase()) : '') + '</div></div>' +
       '<div class="bq">' + qr.createSvgTag({ cellSize: 2, margin: 0, scalable: true }) + '</div></div>';
-    return printNow();
   }
 
   /* ---------- scan a band: QR from the band opens that deer with its processing urgency ---------- */
