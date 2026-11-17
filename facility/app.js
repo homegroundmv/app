@@ -238,6 +238,8 @@
     Object.keys(refreshedAt).forEach(k => { delete refreshedAt[k]; });
     save(); flush();
   }
+  // Blank is allowed (not every deer is weighed at the door); otherwise 0 to 500 lb, as the backend rules.
+  const weightOk = w => String(w == null ? '' : w).trim() === '' || (Number(w) >= 0 && Number(w) <= 500);
   let flushing = false;
   async function flush() {
     if (flushing || !st.pin) return;
@@ -647,7 +649,16 @@
          rule that has since been fixed. */
       bad.map(i => '<div class="note bad">' + esc(i.label) + ' was not accepted: ' + esc(i.error) +
         '<br><span class="status">Everything typed is still here. Put right whatever it objected to, then send it again.</span><br>' +
-        '<button class="btn" data-retry="' + esc(i.clientId) + '" style="margin-top:6px">Send it again</button> ' +
+        /* v114 (Joe, 16 November): a check-in refused for its weight could be sent again but not
+           changed, so it could never go through. The weight is the one thing wrong with it, so
+           the weight is what is offered here. */
+        (i.action === 'intake' && /intake weight/i.test(i.error)
+          ? '<label for="fw_' + esc(i.clientId) + '" style="margin-top:6px">Weight (lb) <span class="hint">it was typed as ' + esc((i.fields || {}).intakeWeight) + '. Correct it, or clear it to leave the weight blank</span></label>' +
+            '<input id="fw_' + esc(i.clientId) + '" type="number" inputmode="decimal" min="0" max="500" step="0.1" value="' + esc((i.fields || {}).intakeWeight) + '">' +
+            '<div class="err" id="fwe_' + esc(i.clientId) + '"></div>' +
+            '<button class="btn" data-fixw="' + esc(i.clientId) + '" style="margin-top:6px">Save the weight and send it again</button> '
+          : '') +
+        '<button class="btn' + (i.action === 'intake' && /intake weight/i.test(i.error) ? ' ghost' : '') + '" data-retry="' + esc(i.clientId) + '" style="margin-top:6px">Send it again</button> ' +
         '<button class="plain" data-drop="' + esc(i.clientId) + '">Discard it</button></div>').join('') +
       /* Shown only after something was actually slow, and only for a few minutes. It is for
          telling somebody what happened, not decoration. */
@@ -666,6 +677,16 @@
       // Name what goes, and make it a decision rather than a reflex.
       if (!confirm('Discard "' + what + '"?\n\nThis throws away what was typed. It cannot be got back, and if the deer is in the cooler it will have no record at all.')) return;
       st.outbox = st.outbox.filter(x => x.clientId !== b.dataset.drop); save(); status();
+    });
+    el.querySelectorAll('[data-fixw]').forEach(b => b.onclick = () => {
+      const it = st.outbox.find(x => x.clientId === b.dataset.fixw);
+      if (!it) return;
+      const w = (document.getElementById('fw_' + it.clientId) || {}).value || '';
+      if (!weightOk(w)) { document.getElementById('fwe_' + it.clientId).textContent = 'Enter a weight up to 500 lb, or clear it.'; return; }
+      b.disabled = true; b.textContent = 'Sending…';
+      it.fields = Object.assign({}, it.fields, { intakeWeight: w });
+      it.error = '';
+      save(); flush();
     });
     el.querySelectorAll('[data-retry]').forEach(b => b.onclick = () => {
       const it = st.outbox.find(x => x.clientId === b.dataset.retry);
@@ -2859,6 +2880,9 @@
         return err('Ask him whether he wants the skull and antlers back. Once the head goes out with the waste it is gone, so this one is not left blank.');
       }
       if (!v('fn') || !v('ln')) return err('Enter the hunter\'s first and last name.');
+      /* v114 (Joe, 16 November): the backend refuses a weight over 500 lb, and it refuses the whole
+         check-in with it. Caught here, a slipped digit is fixed while the form is still open. */
+      if (!weightOk(v('iw'))) return err('Check the weight: ' + v('iw') + ' lb is not a deer. Type it again, or leave it blank.');
       const txtYes = txtAsked() && !!(document.getElementById('txtok') || {}).checked;
       if (txtYes && String(v('ph')).replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '').length !== 10) return err('He wants a text when it\u2019s ready: enter his mobile number.');
       /* A tribal deer has no MassWildlife customer ID and no confirmation number: ticking the box
