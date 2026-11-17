@@ -204,8 +204,29 @@
       err.offline = true; throw err;
     } finally { if (timer) clearTimeout(timer); }
     let out;
-    try { out = await res.json(); } catch (e) { const err = new Error('The server sent back something unexpected (status ' + res.status + ').'); err.fatal = true; throw err; }
+    /* v117. Three kinds of answer that are not a yes, and they used to be two.
+
+       A REFUSAL (fatal) is the server reading the request and saying no: that band is in the
+       cooler, that weight is impossible. Sending it again unchanged gets the same answer, so a
+       person has to look.
+
+       BUSY is the server never getting to it. Backend 95 says so in as many words when the wait
+       for the document lock runs out; a page that is not JSON at all is Google answering in place
+       of our script. Both were being filed as refusals, so a check-in that only needed sending
+       again was marked "not accepted", stopped being sent, and sat in the strip at the top beside
+       a Discard button. Busy is neither refused nor offline: queued work stays queued and is sent
+       again on its own, and a button that was tapped says the server is busy, not "needs signal".
+
+       When the backend itself says busy, nothing was read or written, so the same request goes
+       once more straight away before anybody is told anything. */
+    try { out = await res.json(); }
+    catch (e) { const err = new Error('The server did not answer properly (status ' + res.status + '). Try again in a moment.'); err.busy = true; st.busy = { at: Date.now() }; throw err; }
+    if (!out.ok && out.busy) {
+      if (!body.__again) { await new Promise(r => setTimeout(r, 1500)); return call(Object.assign({}, body, { __again: true, __fresh: true })); }
+      const e = new Error(out.error || 'The server is busy. Try again in a moment.'); e.busy = true; st.busy = { at: Date.now() }; throw e;
+    }
     if (!out.ok) { const e = new Error(out.error || 'Something went wrong.'); e.fatal = true; throw e; }
+    st.busy = null;
     /* Keep the last slow request, so "it took fifteen seconds" can be answered with where the
        fifteen seconds went instead of a guess. The server reports its own time and how much of
        it was spent queueing behind another request; whatever is left over is the trip there and
@@ -268,6 +289,15 @@
        other one again. Until then it can only mean this phone's own deer. */
     refresh(true).then(() => { r.settled = Date.now(); save(); });
   }
+  /* v117: after a busy answer the queue is tried again on its own, a little later each time. The
+     45-second poll only runs on Home and the board, so without this a check-in made from the
+     front desk waited until somebody happened to go back there. */
+  let busyT = null, busyN = 0;
+  function busyAgain() {
+    if (busyT) return;
+    busyN = Math.min(busyN + 1, 5);
+    busyT = setTimeout(() => { busyT = null; flush(); }, [8000, 15000, 30000, 60000, 60000][busyN - 1]);
+  }
   let flushing = false;
   async function flush() {
     if (flushing || !st.pin) return;
@@ -281,8 +311,15 @@
           const out = await call({ action: it.action, fields: mv ? Object.assign({}, it.fields, { band: mv.to }) : it.fields, at: it.at, clientId: it.clientId });
           if (it.action === 'intake' && out && out.band && band(out.band) !== band((it.fields || {}).band)) rebanded(it, band(out.band));
           st.outbox = st.outbox.filter(x => x.clientId !== it.clientId);
+          busyN = 0;
         } catch (e) {
-          if (e.fatal) it.error = e.message; else break;
+          if (e.fatal) {
+            it.error = e.message;
+            /* v117: said where it will be seen. The refusal used to appear only in the strip at
+               the top of the screen, which is off the top of a phone the moment the board is
+               scrolled, so a check-in could sit refused with nobody the wiser. */
+            toast((it.label || it.action) + ' was not accepted: ' + e.message + ' It is at the top of the screen to put right.');
+          } else { if (e.busy) busyAgain(); break; }
         }
         save();
       }
@@ -338,7 +375,7 @@
           await pDel(it.id);
           photoQ = photoQ.filter(x => x.id !== it.id);
         } catch (e) {
-          if (e.offline) break;
+          if (e.offline || e.busy) break;   // v117: a busy server is not a refused photo
           if (/ yet\./.test(e.message)) continue;
           it.error = e.message; await pPut(it);
           toast('The tag photo for band ' + it.band + ' did not save: ' + e.message);
@@ -653,6 +690,7 @@
       ? '<button class="plain" id="qbtn"><span class="pill wait">' + waiting.length + ' waiting to send</span>' +
         ' <span class="status">' + (st.queueOpen ? 'hide' : 'what’s waiting?') + '</span></button> ' +
         (navigator.onLine ? '' : '<span class="status">No signal. They\'ll send on their own.</span>') +
+        (navigator.onLine && st.busy && Date.now() - st.busy.at < 120000 ? '<span class="status" id="busynote">The server is busy. They\'ll send on their own.</span>' : '') +
         '<div id="qbox"' + (st.queueOpen ? '' : ' hidden') + ' style="margin-top:6px">' +
         waiting.map(i => '<div class="trow"><div><b>' + esc(i.label || i.action) + '</b><br>' +
           '<span class="status">' + esc(sinceWords(i.created)) +
@@ -733,14 +771,14 @@
       b.disabled = true; b.textContent = 'Sending…';
       it.fields = Object.assign({}, it.fields, { intakeWeight: w });
       it.error = '';
-      save(); flush();
+      noToast(); save(); flush();
     });
     el.querySelectorAll('[data-retry]').forEach(b => b.onclick = () => {
       const it = st.outbox.find(x => x.clientId === b.dataset.retry);
       if (!it) return;
       b.disabled = true; b.textContent = 'Sending…';
       it.error = '';          // back in the queue; flush() skips anything still carrying an error
-      save(); flush();
+      noToast(); save(); flush();
     });
     const qb = document.getElementById('qbtn');
     if (qb) qb.onclick = () => { st.queueOpen = !st.queueOpen; save(); status(); };
@@ -760,6 +798,8 @@
      happens to be, and NOTHING scrolls. Falls back to the old inline slot if the strip is missing,
      so an older index.html still shows messages rather than swallowing them. */
   let toastT = null;
+  // v117: a refusal is toasted now, so sending the entry again takes that toast down.
+  function noToast() { const el = document.getElementById('toast'); if (el) el.innerHTML = ''; }
   function toast(msg, ok) {
     const html = '<div class="note ' + (ok ? 'ok' : 'bad') + '">' + esc(msg) + '</div>';
     const el = document.getElementById('toast');
