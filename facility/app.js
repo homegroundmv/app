@@ -4369,6 +4369,13 @@
     });
   };
 
+  /* Which deer under "Packaging to fill in" somebody has checked (v115). Kept here, outside the
+     screen, because the screen redraws itself: after rows are marked as sent, after Compare marks
+     some as already there, after some packaging is marked done. Every redraw used to bring every
+     box back checked, so the two deer you had NOT typed in were one tap from being recorded as on
+     Martin's sheet, and off this list for good. Now a box is checked only because somebody
+     checked it, and stays that way until the app is closed. */
+  const pkTicked = {};
   async function showMartin(data, note) {
     frame('martin', 'Donation report', '<div id="mbox"><p class="status">Loading…</p></div>');
     const box = document.getElementById('mbox');
@@ -4469,6 +4476,8 @@
       // vanished from this screen and its packaging never reached him.
       (() => {
         const pk = data.packaging || [];
+        // A deer that has left the list takes its check with it (v115).
+        Object.keys(pkTicked).forEach(b => { if (!pk.some(x => x.band === b)) delete pkTicked[b]; });
         if (!pk.length) return '<div class="card"><b>Packaging to fill in</b>' +
           '<p class="status">Nothing waiting.' + (data.waiting ? ' ' + data.waiting + ' donated deer ' + (data.waiting === 1 ? 'is' : 'are') + ' on his sheet and not packaged yet — they appear here when they are finished.' : '') + '</p></div>';
         /* Stacked (v103). The tickbox label lays its children out side by side, so the name, the
@@ -4480,7 +4489,7 @@
         const val = (col, head, v) => '<div class="pkval" style="display:flex;gap:8px;align-items:baseline;padding:3px 0">' +
           '<b style="min-width:18px">' + col + '</b> <span style="flex:1">' + head + '</span> <b style="font-size:17px">' + esc(v || '\u2014') + '</b></div>';
         const row = x => '<div class="trow" style="display:block">' +
-          (isMgr() ? '<label class="choice" style="margin:0"><input type="checkbox" data-pk="' + esc(x.band) + '" checked> ' : '<div>') +
+          (isMgr() ? '<label class="choice" style="margin:0"><input type="checkbox" data-pk="' + esc(x.band) + '"' + (pkTicked[x.band] ? ' checked' : '') + '> ' : '<div>') +
           '<span class="pkbody" style="flex:1;min-width:0;display:block">' +
           '<b>' + esc(x.customerId || '(no Customer ID)') + '</b> ' + esc(x.hunter) +
           '<div class="status">in ' + esc(x.dateIn) + ' \u00b7 seal ' + esc(x.confirmation || '\u2014') + ' \u00b7 on his sheet ' + esc(x.sent) + '</div>' +
@@ -4496,11 +4505,11 @@
              Pressed early it takes the deer off this card for good while his sheet is still
              blank, so say both things plainly: what the ticks select, and that typing comes
              first. */
-          (isMgr() ? '<p class="status"><b>Check the ones you have actually typed in</b>, then press the button at the bottom — it records that his sheet is up to date, it does not fill it in for you. Uncheck anything you did not get to; it stays on this list.</p>' : '') +
+          (isMgr() ? '<p class="status"><b>Check each one as you type it in</b>, then press the button at the bottom — it records that his sheet is up to date, it does not fill it in for you. Anything left unchecked stays on this list.</p>' : '') +
           pk.map(row).join('') +
           (isViewer() ? '' : openSheetBtn(8)) +
           (isViewer() ? '' : isMgr()
-            ? '<button class="btn ghost" id="pksent" style="width:100%;margin-top:8px">I\'ve filled these in: mark them done</button>'
+            ? '<button class="btn ghost" id="pksent" style="width:100%;margin-top:8px">Check the ones you have filled in</button>'
             : '<p class="status">A manager marks them as filled in.</p>') +
           '<div id="pkout"></div></div>';
       })() +
@@ -4781,6 +4790,13 @@
       catch (e) { ms.disabled = false; toast(e.offline ? 'Needs signal.' : e.message); }
     };
     const pks = document.getElementById('pksent');
+    /* The button says what it is about to do (v115): how many deer it will record as filled in. */
+    const pkLabel = () => { if (!pks) return; const k = box.querySelectorAll('[data-pk]:checked').length;
+      pks.textContent = k ? 'Mark ' + k + ' as filled in on his sheet' : 'Check the ones you have filled in'; };
+    Array.prototype.forEach.call(box.querySelectorAll('[data-pk]'), c => {
+      c.onchange = () => { if (c.checked) pkTicked[c.dataset.pk] = 1; else delete pkTicked[c.dataset.pk]; pkLabel(); };
+    });
+    pkLabel();
     if (pks) pks.onclick = async () => {
       const bands = Array.prototype.map.call(box.querySelectorAll('[data-pk]:checked'), c => c.dataset.pk);
       if (!bands.length) { document.getElementById('pkout').innerHTML = '<div class="note warn">Check the ones you filled in first.</div>'; return; }
