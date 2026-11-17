@@ -117,6 +117,17 @@
   // Who is shown the counter's screens. The backend decides (seesCounter there, backend 76); this
   // only keeps a processor from being offered a tile that would answer with a refusal.
   const seesCounter = () => atDoor() || isViewer();
+  /* v118. Backend 96 stopped sending hunters' phone numbers, emails and addresses to anyone who is
+     not a manager or on intake. That closes the door; this empties the room. A phone keeps what it
+     was last sent: the hunter roster (kept six hours for the check-in form) and the last answer of
+     each screen. So a phone that is, or has just become, a processor's or a view-only one drops
+     both. `always` is for a sign-in, where the last person on this phone may have been on intake. */
+  const dropContactUnlessCounter = always => {
+    if (!st.staff || atDoor()) return;
+    if (!always && st.gate118) return;
+    st.hunters = { at: 0, list: [] }; st.screens = {}; st.gate118 = 1; save();
+  };
+  dropContactUnlessCounter(false);
 
   /* ---------- backend ---------- */
   /* ---------- screens that can open on what we already know ----------
@@ -506,6 +517,7 @@
      log has seen. Fetched rarely and cached, so the counter still gets suggestions with no signal.
      It never fills a field on its own — a wrong ID filled quietly is worse than typing one. */
   async function loadHunters(force) {
+    if (!atDoor()) return [];   // v118: the roster is for the check-in form, which only the counter has
     const age = Date.now() - (st.hunters.at || 0);
     if (!force && st.hunters.list.length && age < 6 * 36e5) return st.hunters.list;
     try {
@@ -900,7 +912,7 @@
     const go = async () => {
       const btn = document.getElementById('go'); btn.disabled = true;
       st.number = document.getElementById('num').value.trim(); st.pin = document.getElementById('pin').value.trim();
-      try { const out = await call({ action: 'login' }); st.staff = out.staff; st.number = out.staff.number; save(); showHome(); refresh().then(() => { if (pendingBand) { const b = pendingBand; pendingBand = null; showDeer(b); } }); flush(); }
+      try { const out = await call({ action: 'login' }); st.staff = out.staff; st.number = out.staff.number; dropContactUnlessCounter(true); save(); showHome(); refresh().then(() => { if (pendingBand) { const b = pendingBand; pendingBand = null; showDeer(b); } }); flush(); }
       catch (e) { st.pin = ''; save(); showLogin(e.offline ? 'No signal. Sign-in needs a connection.' : e.message); }
     };
     document.getElementById('go').onclick = go;
@@ -4606,6 +4618,13 @@
          hunter. So the ones nobody can email are listed separately: that is a phone call, not a
          button, and lumping the two together is how the second kind never gets done. */
       (() => {
+        /* v118: the list is names with an email and a phone number against each, so backend 96
+           sends it to managers and intake only. Everyone else is told how many are outstanding. */
+        if (data.taxHidden) return '<div class="card" id="taxcard"><b>Tax forms</b><p class="status">' +
+          (data.taxCount
+            ? '<b>' + data.taxCount + (data.taxCount === 1 ? ' donating hunter has' : ' donating hunters have') +
+              ' not been sent the W-9.</b> A manager or whoever is on intake sees the list and sends them.'
+            : 'Every donating hunter has had the W-9. Nothing to chase.') + '</p></div>';
         const tx = data.tax || [];
         if (!tx.length) return '<div class="card"><b>Tax forms</b><p class="status">Every donating hunter has had the W-9. Nothing to chase.</p></div>';
         const can = tx.filter(x => x.email), cant = tx.filter(x => !x.email);
