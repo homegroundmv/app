@@ -391,7 +391,7 @@ footer a{color:var(--orange)}
   <div class="sheetbg" id="appbg" hidden></div>
   <div class="sheet" id="appsheet" role="dialog" aria-modal="true" aria-labelledby="appsheetH" hidden>
     <button class="x" id="appx" type="button" aria-label="Close">×</button>
-    <h3 id="appsheetH">Save Deer Drop-Off to your home screen</h3>
+    <h3 id="appsheetH">Add the Deer Drop-Off app to your phone</h3>
     <div id="appsteps"></div>
     <button class="btn2" id="appskip" type="button">Not now, just check in my deer</button>
   </div>
@@ -400,7 +400,8 @@ footer a{color:var(--orange)}
   <footer>
     <p>Your details go only to Home Ground’s check-in staff. Nothing you enter is shown publicly.</p>
     <p>Tribal harvest? Check in at the counter. Questions? Text <a href="sms:+15086876255">(508) 687-6255</a>.</p>
-    <p><a href="../dashboard/" target="_top">See the Island Deer Dashboard</a></p>
+    <!-- Taken off for now (Joe, 17 Nov 2026). To put it back, restore this line:
+    <p><a href="../dashboard/" target="_top">See the Island Deer Dashboard</a></p> -->
   </footer>
 </main>
 
@@ -751,21 +752,21 @@ if (document.fonts && document.fonts.ready) document.fonts.ready.then(tellParent
   var PLUS = ICO('fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 8v8M8 12h8"/>');
   var DOTS = ICO('fill="currentColor"><circle cx="6" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="18" cy="12" r="1.8"/>');
   var MENU = ICO('fill="currentColor"><circle cx="12" cy="6" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="18" r="1.8"/>');
-  var LEAD = '<p class="lead">Do it once and Deer Drop-Off is one tap from the truck next time.</p>';
+  var LEAD = '<p class="lead">It installs on your phone like any other app, free, with nothing to sign up for. Do it once and Deer Drop-Off is one tap from the truck next time.</p>';
 
   function draw(){
-    var h = "Save Deer Drop-Off to your home screen", body, point = false;
+    var h = "Add the Deer Drop-Off app to your phone", body, point = false;
     if (inApp) {
       h = "Open this in your browser first";
-      body = '<ol><li><span>Tap ' + DOTS + ' or ' + MENU + ' at the top of this screen.</span></li><li><span>Choose <b>Open in ' + (ios ? "Safari" : "browser") + '</b>.</span></li><li><span>It opens there, with the steps to save it.</span></li></ol>' +
-        '<p class="small">Facebook, Instagram and some texting apps open links in their own viewer, which can’t save anything to your home screen.</p>' +
+      body = '<ol><li><span>Tap ' + DOTS + ' or ' + MENU + ' at the top of this screen.</span></li><li><span>Choose <b>Open in ' + (ios ? "Safari" : "browser") + '</b>.</span></li><li><span>It opens there, with the steps to install the app.</span></li></ol>' +
+        '<p class="small">Facebook, Instagram and some texting apps open links in their own viewer, which can’t install an app.</p>' +
         '<button class="btn2 solid" type="button" id="appcopy">Copy the link</button>';
     } else if (ask) {
       body = LEAD + '<button class="btn2 solid" type="button" id="appinstall">Install the app</button><p class="small">Your phone asks you to confirm. That’s it.</p>';
     } else if (ios) {
       point = (ipad || iosOther) ? "top" : "bottom";
       body = LEAD + '<ol><li><span>Tap Share ' + SHARE + (iosOther ? ' at the top right, next to the address.' : ipad ? ' at the top of the screen.' : ' at the bottom of the screen. On newer iPhones it’s inside ' + DOTS + '.') + '</span></li>' +
-        '<li><span>Tap <b>Add to Home Screen</b> ' + PLUS + '. You may need to scroll down to find it.</span></li><li><span>Tap <b>Add</b>. The Deer Drop-Off icon appears on your home screen.</span></li></ol>';
+        '<li><span>Tap <b>Add to Home Screen</b> ' + PLUS + '. You may need to scroll down to find it.</span></li><li><span>Tap <b>Add</b>. The Deer Drop-Off app appears on your home screen.</span></li></ol>';
     } else {
       point = "top";
       body = LEAD + '<ol><li><span>Tap your browser’s menu ' + MENU + ' at the top right.</span></li><li><span>Tap <b>Install app</b> or <b>Add to Home screen</b>.</span></li><li><span>Tap <b>Install</b> or <b>Add</b>.</span></li></ol>';
