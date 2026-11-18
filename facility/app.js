@@ -109,7 +109,13 @@
   st.hunters = st.hunters || { at: 0, list: [] };
   function save() { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { /* keep in memory */ } }
   save();
-  const S = () => st.home.settings || { coolerCap: 30, coolerAlert: 80, startBy: 72, maxHold: 120, maxAtOnce: 6, slots: [], pieceRate: 125, minWage: 15, pkgSize: 2, fatDonated: 10, fatPrivate: 10, privatePrice: 250, porkAddOn: 20, porkInStock: true, pantries: [], helpHours: 4, skinRate: 25, skinHourly: 25, otherHourly: 25, intakeFee: 10, maxSkinners: 5, mhu1Cap: 12, loneGrace: 30, preopItems: [], opItems: [], closeItems: [] };
+  /* v119. Used only until the server's settings arrive. These are the backend's own fallbacks (backend 97), which are the
+     values the Settings tab is seeded with: the app said 30 deer in the cooler and start by 72 hours where the backend
+     said 100 and 96. */
+  const S = () => st.home.settings || { coolerCap: 100, coolerAlert: 80, startBy: 96, maxHold: 120, maxAtOnce: 9, slots: [], pieceRate: 125, minWage: 15, pkgSize: 2, fatDonated: 10, fatPrivate: 10, privatePrice: 300, porkAddOn: 20, porkInStock: true, pantries: [], helpHours: 4, skinRate: 25, skinHourly: 25, otherHourly: 25, intakeFee: 10, maxSkinners: 5, mhu1Cap: 20, loneGrace: 30, preopItems: [], opItems: [], closeItems: [] };
+  /* A setting where 0 is an answer: a fee, a payment, a grace. `x || 25` reads a 0 from the sheet as "not set" and
+     shows 25; this shows the 0, and falls back only when the server sent nothing. */
+  const nz = (v, d) => (v == null || v === '' || !isFinite(Number(v)) ? d : v);
   const isMgr = () => !!(st.staff && st.staff.manager);
   // Who a hunter is likely to text or ring: the published number reaches a manager or intake staff.
   const atDoor = () => isMgr() || /intake/i.test((st.staff && st.staff.role) || '');
@@ -1008,8 +1014,8 @@
         (here.length ? '<div class="status">Also here: ' + esc(here.map(x => x.name).join(', ')) + '</div>' : '') +
         '</div><button class="btn alt" id="clock">Clock out</button></div>' +
         (alone ? '<div class="note warn"><b>You are the only one clocked in.</b> Keep your phone on you.</div>' : '') +
-        (h.expectedOut ? '<div class="status">You get a nudge ' + esc(s.loneGrace || 30) + ' minutes after ' + t12(h.expectedOut) +
-          ' if you have not clocked out, and the managers hear at ' + esc(s.mgrGrace || 60) + ' minutes.</div>' : '') +
+        (h.expectedOut ? '<div class="status">You get a nudge ' + esc(nz(s.loneGrace, 30)) + ' minutes after ' + t12(h.expectedOut) +
+          ' if you have not clocked out, and the managers hear at ' + esc(nz(s.mgrGrace, 60)) + ' minutes.</div>' : '') +
         /* What you are doing right now, and a tap to change it — managers only (Joe, 7 November).
            A processor's pay is the deer: $125 a deer processed and $25 a deer skinned, read off
            the board, so a processor just clocks in and out. A manager's day is two jobs paid two
@@ -1680,7 +1686,7 @@
      door costs nothing and settles it. */
   function owedOn(d) {
     if (!d || d.Type !== 'Private') return null;
-    const price = Number(d['Hunter price ($)'] || S().privatePrice || 300) || 0;
+    const price = Number(d['Hunter price ($)'] || nz(S().privatePrice, 300)) || 0;
     const paid = Number(d['Paid ($)'] || 0) || 0;
     const owing = Math.max(0, Math.round((price - paid) * 100) / 100);
     return { price: price, paid: paid, owing: owing, settled: owing <= 0 };
@@ -1693,7 +1699,7 @@
     const u = d.Status === 'Hanging' && !isCold ? urgency(d) : null;
     // Cold storage is not waiting to be processed, so the processing clock would mislabel it. Its
     // own limit is the Society's: five days, longer while there is room — a hunter to ring.
-    const cls = d.Status !== 'Hanging' ? '' : isCold ? (h >= (s.coldDays || 5) * 24 ? ' amber' : '')
+    const cls = d.Status !== 'Hanging' ? '' : isCold ? (h >= (s.coldDays || 7) * 24 ? ' amber' : '')
       : (h >= s.maxHold ? ' red' : h >= s.startBy ? ' amber' : '');
     const mineOrMgr = d['Processor number'] === st.staff.number || isMgr();
     /* The counter: taking a deer in, taking money for one, handing one back. Managers and intake
@@ -1957,7 +1963,7 @@
             'Check the antler band reads SAVE FOR HUNTER, ' + esc(band(d.Band)) + ', and put the head in the <b>original deer cooler</b>. ' +
             'Saving this texts the hunter that it is ready for pickup there.</div>'
           : antlerBandFor(d) ? '<div class="note ok">The hunter gave up the head. Its antler band reads <b>OK TO DISCARD</b>; it goes out with the waste.</div>' : '') +
-        '<p class="status">Records who skinned this deer. The $' + esc(s.skinRate || 25) +
+        '<p class="status">Records who skinned this deer. The $' + esc(nz(s.skinRate, 25)) +
         ' skinning premium goes to whoever is named here, whether or not they process it.</p>' +
         (isMgr() ? '<label>Skinned by</label><select id="sk">' + (st.home.staff || []).map(x => '<option value="' + esc(x.number) + '"' + (x.number === st.staff.number ? ' selected' : '') + '>' + esc(x.name + ' (' + x.number + ')') + '</option>').join('') + '</select>'
           : '<p class="status">Skinned by: <b>' + esc(st.staff.name + ' (' + st.staff.number + ')') + '</b></p>') +
@@ -1999,7 +2005,7 @@
         '<div class="note warn" style="font-size:17px">Tag confirmation number: <b>' + esc(d['MassWildlife confirmation'] || 'none recorded') + '</b></div>' +
         '<label class="choice"><input id="f0" type="checkbox"> The confirmation number on the deer\'s tag matches</label>' +
         (d['Skinner name'] ? '<div class="note ok">Skinned by <b>' + esc(d['Skinner name']) + '</b>' + (d['Skinned at'] ? ' · ' + esc(d['Skinned at']) : '') + '. The skinning premium is theirs.</div><input id="f8" type="checkbox" checked hidden>'
-          : '<label class="choice"><input id="f8" type="checkbox"> Skinned and head removed inside MHU #1 <span class="hint">You get the $' + esc(s.skinRate || 25) + ' skinning premium for it</span></label>') +
+          : '<label class="choice"><input id="f8" type="checkbox"> Skinned and head removed inside MHU #1 <span class="hint">You get the $' + esc(nz(s.skinRate, 25)) + ' skinning premium for it</span></label>') +
         (d['Antimicrobial spray'] === 'Yes' ? '<input id="f9" type="checkbox" checked hidden>'
           : '<label class="choice"><input id="f9" type="checkbox"> Antimicrobial spray applied in MHU #1</label>') +
         (isMgr() ? '<label>Processor</label><select id="fp">' + (st.home.staff || []).map(x => '<option value="' + esc(x.number) + '"' + (x.number === st.staff.number ? ' selected' : '') + '>' + esc(x.name + ' (' + x.number + ')') + '</option>').join('') + '</select>'
@@ -2054,7 +2060,7 @@
         '<div class="calc" id="calc"></div>' +
         (d.Type === 'Donated' && !d['First pack #'] ? '<div class="note bad">Tap <b>Get package numbers</b> before grinding, so the labels run in order.</div>' : '') +
         '<div class="note ' + (fatOn ? 'warn">Grind with <b>' + esc(fatPct) + '% pork fat</b>.' : 'ok">All-venison grind: <b>no pork fat</b>.') + '</div>' +
-        (fatOn && d.Type !== 'Donated' ? '<label class="choice"><input id="f7" type="checkbox"> Out of pork fat: grind all venison and take the $' + esc(s.porkAddOn || 20) + ' off the hunter\'s price</label>' : '') +
+        (fatOn && d.Type !== 'Donated' ? '<label class="choice"><input id="f7" type="checkbox"> Out of pork fat: grind all venison and take the $' + esc(nz(s.porkAddOn, 20)) + ' off the hunter\'s price</label>' : '') +
         // The one hazard in this process that reaches a food pantry as an undeclared allergen. It is
         // asked here, at the bench, by the person who applied the stickers — not assumed afterwards.
         // CCP 4. The wording follows how the deer was taken, because a broadhead and a lead slug
@@ -2442,21 +2448,21 @@
       '<label class="choice"><input type="radio" name="iap" value="No"> <span><b>No</b>: any other hunter</span></label>' +
       '<div class="note ok">Band number: <b id="genid">enter the date of the shot below</b><br><span class="status">Every deer gets one here, printed on the intake band. It stays with the deer from intake to release.</span></div>' +
       '<label>What is happening to this deer?</label>' +
-      '<label class="choice"><input type="radio" name="type" value="Donated"> <span><b>Donated</b> (Share the Harvest). TFMV mails the hunter a check: $' + esc(s.payDoe || 150) + ' a doe, $' + esc(s.payBuck || 100) + ' a buck (any male deer).</span></label>' +
+      '<label class="choice"><input type="radio" name="type" value="Donated"> <span><b>Donated</b> (Share the Harvest). TFMV mails the hunter a check: $' + esc(nz(s.payDoe, 150)) + ' a doe, $' + esc(nz(s.payBuck, 100)) + ' a buck (any male deer).</span></label>' +
       (s.privateOpen === false
         // v108: paused. Intake can't choose it; a manager can, with the override below.
         ? '<label class="choice" style="opacity:' + (isMgr() ? '1' : '.55') + '"><input type="radio" name="type" value="Private"' + (isMgr() ? '' : ' disabled') + '> <span><b>Private: PAUSED</b>' +
           (s.privateNote ? ' (' + esc(s.privateNote) + ')' : '') + '. ' + (isMgr() ? 'You can still take one with the manager override.' : 'Offer donation or cold storage, or ask a manager.') + '</span></label>'
-        : '<label class="choice"><input type="radio" name="type" value="Private"> <span><b>Private</b>: processed for the hunter, $' + esc(s.privatePrice || 250) + '.</span></label>') +
+        : '<label class="choice"><input type="radio" name="type" value="Private"> <span><b>Private</b>: processed for the hunter, $' + esc(nz(s.privatePrice, 300)) + '.</span></label>') +
       '<label class="choice"><input type="radio" name="type" value="Cold storage"> <span><b>Cold storage only</b>: the hunter hangs it and collects it. Not processed. ' +
         (s.coldCharging
-          ? '<b>$' + esc(s.coldFee || 50) + '</b>, covering ' + esc(s.coldDays || 7) + ' days \u2014 then $' + esc(s.coldWeekFee || 50) + ' a week. Free if they donate a deer this season.'
+          ? '<b>$' + esc(nz(s.coldFee, 50)) + '</b>, covering ' + esc(s.coldDays || 7) + ' days \u2014 then $' + esc(nz(s.coldWeekFee, 50)) + ' a week. Free if they donate a deer this season.'
           : '<b>Free at the moment</b> \u2014 still collected within ' + esc(s.coldDays || 7) + ' days.') +
         '</span></label>' +
       '<div id="feebox" hidden></div>' +
       '<div id="privbox" hidden></div>' +
       (s.porkInStock === false ? '<p class="status" id="porkbox" hidden>Pork fat add-on: not available right now. The grind will be all venison.</p>'
-        : '<label class="choice" id="porkbox" hidden><input id="pork" type="checkbox"> <span>Add pork fat to the ground (' + esc(s.fatPrivate || 10) + '%), <b>+$' + esc(s.porkAddOn || 20) + '</b>. Local-farm pork fat, as available. Without it, the grind is all venison.</span></label>') +
+        : '<label class="choice" id="porkbox" hidden><input id="pork" type="checkbox"> <span>Add pork fat to the ground (' + esc(nz(s.fatPrivate, 10)) + '%), <b>+$' + esc(nz(s.porkAddOn, 20)) + '</b>. Local-farm pork fat, as available. Without it, the grind is all venison.</span></label>') +
       '<label for="deer">Deer</label><select id="deer"><option value="">Choose…</option><option>Doe</option><option>Button buck</option><option>Sub-legal adult male</option><option>Antlered buck</option></select>' +
       '<div id="ptsbox" hidden><label for="pts">Points <span class="hint">count every point 1 inch and longer</span></label><input id="pts" type="number" inputmode="numeric" min="1" max="40" step="1" style="max-width:140px"></div>' +
       /* Antlered bucks only, and deliberately not a tickbox. The head comes off at the skinning
@@ -2862,7 +2868,7 @@
       if (!pb) return;
       const overWas = !!(document.getElementById('privover') || {}).checked;
       const pork = document.getElementById('pork');
-      const price = Number(s.privatePrice || 300) + ((pork && pork.checked) ? Number(s.porkAddOn || 20) : 0);
+      const price = Number(nz(s.privatePrice, 300)) + ((pork && pork.checked) ? Number(nz(s.porkAddOn, 20)) : 0);
       const keep = (document.getElementById('ppay') || {}).value || '';
       pb.innerHTML =
         (S().privateOpen === false
@@ -2926,14 +2932,14 @@
            the forfeiture term stay, because those are not about the money. */
         fb.innerHTML = gate +
           (s.coldCharging
-            ? '<div class="note"><b>$' + (s.coldFee || 50) + '</b> covers ' + (s.coldDays || 7) + ' days, then $' +
-              (s.coldWeekFee || 50) + ' a week. They get a text on day ' + (s.coldRemindDays || 5) +
+            ? '<div class="note"><b>$' + (nz(s.coldFee, 50)) + '</b> covers ' + (s.coldDays || 7) + ' days, then $' +
+              (nz(s.coldWeekFee, 50)) + ' a week. They get a text on day ' + (s.coldRemindDays || 5) +
               ' to collect within 48 hours. <b>Free if they donate a deer this season.</b></div>'
             : '<div class="note ok"><b>No charge for cold storage at the moment.</b> Tell them it is free for now. ' +
               'They still get a text on day ' + (s.coldRemindDays || 5) + ' to collect within 48 hours, and the ' +
               'deer still has to come out of the cooler.</div>') +
           (s.coldCharging && late && s.coldPassCallout
-            ? '<div class="note warn"><b>Outside posted hours, so the $' + (s.calloutFee || 40) +
+            ? '<div class="note warn"><b>Outside posted hours, so the $' + (nz(s.calloutFee, 40)) +
               ' call-out is added</b> — somebody came in specially for this deer. Check the box below if it was not a special trip.' +
               '<label class="choice"><input type="checkbox" id="nocallout"> <span>Not a call-out — we were here anyway</span></label></div>'
             : '') +
@@ -3371,7 +3377,7 @@
       (skinning ? 'skinners' : 'processors') + ' booked at the same moment' +
       (skinning ? ', and skinning places are separate from processing places' : '') +
       '. Cancel any time before you start. Clock in when you arrive.' +
-      (skinning ? ' Skinning is paid at $' + esc(s2().skinRate || 25) + ' a deer skinned.' : '') +
+      (skinning ? ' Skinning is paid at $' + esc(nz(s2().skinRate, 25)) + ' a deer skinned.' : '') +
       '</div></div>' +
       '<div class="chips">' + data.days.map(d => {
         const peak = Math.max(0, ...d.counts);
@@ -4171,10 +4177,10 @@
       '<div class="tiles">' + tile(w.deer, 'Deer processed') + tile(w.skinned === undefined ? '—' : w.skinned, 'Deer skinned') +
       tile(fmt(w.hours), 'Hours clocked') + tile(w.hours ? '$' + fmt(w.perHour) : '—', 'Per hour') + '</div>' +
       row('Processing', '$' + fmt(w.pay), w.deer + ' deer at $' + s.pieceRate) +
-      (w.skinPay ? row('Skinning', '$' + fmt(w.skinPay), (w.skinned || 0) + ' deer at $' + (s.skinRate || 25)) : '') +
-      (w.intakePay ? row('At the door', '$' + fmt(w.intakePay), (w.paidIntakes === undefined ? (w.intakes || 0) : w.paidIntakes) + ' deer at $' + (s.intakeFee || 10) +
+      (w.skinPay ? row('Skinning', '$' + fmt(w.skinPay), (w.skinned || 0) + ' deer at $' + (nz(s.skinRate, 25))) : '') +
+      (w.intakePay ? row('At the door', '$' + fmt(w.intakePay), (w.paidIntakes === undefined ? (w.intakes || 0) : w.paidIntakes) + ' deer at $' + (nz(s.intakeFee, 10)) +
         (w.turnedAway ? ', including ' + w.turnedAway + ' turned away' : '')) : '') +
-      (w.otherPay ? row('Other time', '$' + fmt(w.otherPay), fmt(w.otherHours) + ' h at $' + (s.otherHourly || 25) + ' (cleaning, training, no booking)') : '') +
+      (w.otherPay ? row('Other time', '$' + fmt(w.otherPay), fmt(w.otherHours) + ' h at $' + (nz(s.otherHourly, 25)) + ' (cleaning, training, no booking)') : '') +
       row('This week', '$' + fmt(total), '') +
       '<div class="status" style="margin-top:8px">All clocked time counts, including cleaning, waiting and training.' +
       (w.topUp ? ' Home Ground tops you up to minimum wage: $' + fmt(w.topUp) + ' so far this week.' : '') +
