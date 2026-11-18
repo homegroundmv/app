@@ -1,12 +1,18 @@
 // Home Ground Facility app — keeps the app working with no signal, and shows push notifications.
 // Bump VERSION whenever any app file changes so phones pick up the new copy.
-const VERSION = 'hg-facility-v119';
+const VERSION = 'hg-facility-v120';
 const ICON = 'icon-192.png';
 const SHELL = ['./', 'index.html', 'app.js', 'core.js', 'push.js', 'config.js', 'manifest.webmanifest',
   'logo.png', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png', 'qr.js'];
 
+/* A new version is saved as a complete set or not at all: addAll() fails if any one file fails or
+   comes back as an error page, and the version already on the phone carries on. Each file is
+   fetched with the browser's own HTTP cache bypassed. Without that, GitHub Pages' caching headers
+   can hand back yesterday's app.js for several minutes after an update (6 November), and from
+   v120 that stale file would be saved under the new version's name and served from then on. */
+const fresh = u => new Request(u, { cache: 'reload' });
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL.map(fresh))).then(() => self.skipWaiting()));
 });
 
 // Only clear this app's old copies: the hunter and landowner apps share this web address.
@@ -16,24 +22,37 @@ self.addEventListener('activate', e => {
     .then(() => self.clients.claim()));
 });
 
-/* App files: try the network first (so updates arrive), fall back to the saved copy offline.
-   Calls to the Home Ground backend are never cached.
+/* App files: the saved copy first, the network only for a file that is not saved (v120, picked
+   by Joe on 18 November). Calls to the Home Ground backend are never cached.
 
-   The code files are fetched with the browser's own HTTP cache bypassed. Without that, GitHub
-   Pages' caching headers let a phone keep serving yesterday's app.js for several minutes after
-   an update — which on 6 November had Joe looking at v57 and reporting a fix as missing when it
-   was sitting on the server. Pictures are left alone: they are the only big things here, they
-   never change, and re-downloading the logo on every load would cost more than it saves. */
+   This used to try the network first for every file and fall back to the saved copy only when
+   the network FAILED. A weak signal does not fail, it stalls: the app sat blank while a 430 KB
+   app.js crawled in, with a good copy on the phone the whole time. Now the app opens from the
+   phone at once, signal or not.
+
+   Updates arrive the way they already did: the browser checks sw.js when the app opens, a new
+   version installs as a complete set (above), takes over, and the app shows "A newer version of
+   the app is ready". Until someone taps Reload now, or opens the app again, the phone runs the
+   version it has. That set is never a mix of old and new files.
+
+   Two things the old code got wrong along the way:
+   - It saved WHATEVER the network answered. A 404 or 503 page from GitHub was saved as app.js,
+     and served as app.js the next time the phone had no signal. Only a good answer is saved now.
+   - A file with no saved copy was answered with index.html. For a script that is a page of HTML
+     run as code. Only the opening of the app itself falls back to index.html now. */
 const CODE = /\.(js|html)$|\/$/i;
+const good = res => !!res && res.ok && res.type === 'basic';
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== self.location.origin || !url.pathname.startsWith(new URL(self.registration.scope).pathname)) return;
-  const req = CODE.test(url.pathname) ? new Request(e.request, { cache: 'reload' }) : e.request;
-  e.respondWith(
-    fetch(req)
-      .then(res => { const copy = res.clone(); caches.open(VERSION).then(c => c.put(e.request, copy)); return res; })
-      .catch(() => caches.match(e.request).then(r => r || caches.match('index.html')))
-  );
+  // Opening the app, with or without something after a "?", is always index.html.
+  const nav = e.request.mode === 'navigate';
+  e.respondWith(caches.open(VERSION).then(c =>
+    (nav ? c.match('index.html') : c.match(e.request)).then(hit => hit ||
+      fetch(CODE.test(url.pathname) ? new Request(e.request, { cache: 'reload' }) : e.request).then(res => {
+        if (good(res)) c.put(nav ? 'index.html' : e.request, res.clone());
+        return res;
+      }))));
 });
 
 self.addEventListener('push', e => {
