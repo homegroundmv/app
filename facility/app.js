@@ -2661,7 +2661,7 @@
     const drawPrechecks = list => {
       const box = document.getElementById('prebox'); if (!box) return;
       if (!list || !list.length) { box.innerHTML = ''; return; }
-      box.innerHTML = '<div class="card"><label>Pre-checked online <span class="hint">hunters who filled in the drop-off form. Tap one to fill the form, then check the tag and the deer.</span></label>' +
+      box.innerHTML = '<div class="card"><label>Pre-registered online <span class="hint">hunters who filled in the drop-off form. Tap one to fill the form, then check the tag and the deer.</span></label>' +
         list.map(p => '<div class="prerow" style="display:flex;gap:8px;align-items:center;margin-top:8px">' +
           '<button class="btn alt" style="flex:1;text-align:left" data-pre="' + esc(p.ref) + '"><b>' + esc(p.firstName + ' ' + p.lastName) + '</b> · ' +
             esc(p.deer) + ' · ' + esc(String(p.type).toLowerCase()) + (p.cuts ? ' · cut sheet filled' : '') + ' · code ' + esc(p.ref) + (p.comingAt ? ' · ' + esc(p.comingAt) : '') + '</button>' +

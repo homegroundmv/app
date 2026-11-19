@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="Bringing a deer to the Home Ground facility on Martha’s Vineyard? Donate it, have us process it, or hang it in cold storage. Check it in from your phone and show your code at the counter.">
+<meta name="description" content="Bringing a deer to the Home Ground facility on Martha’s Vineyard? Donate it, have us process it, or hang it in cold storage. Pre-register it from your phone and show your code at the counter.">
 <title>Deer Drop-Off</title>
 <link rel="icon" href="../icon-192.png">
 <link rel="manifest" href="manifest.webmanifest">
@@ -195,7 +195,7 @@ footer a{color:var(--orange)}
     <a class="plate" href="https://homegroundmv.com" target="_blank" rel="noopener" aria-label="Home Ground website"><img alt="Home Ground" src="../logo.png"></a>
     <div>
       <h1>Deer Drop-Off</h1>
-      <p class="tag"><b>Donate · Process it for me · Cold storage</b><br>Check your deer in from the truck. Show your code at the counter.</p>
+      <p class="tag"><b>Donate · Process it for me · Cold storage</b><br>Pre-register your deer from the truck. Show your code at the counter.</p>
       <div class="status">
         <span class="st" id="openSt"><i id="openDot"></i><span id="openTxt">Open 8 am – 8 pm daily</span></span>
         <span class="st" id="coolSt" hidden><i id="coolDot"></i><span id="coolTxt">Room in the cooler</span></span>
@@ -371,7 +371,7 @@ footer a{color:var(--orange)}
 
     <!-- done -->
     <div class="done" id="done" hidden>
-      <div class="k">Your check-in code</div>
+      <div class="k">Your registration code</div>
       <div class="code" id="code">----</div>
       <p id="doneMsg">Show this code at the counter.</p>
       <ol>
@@ -383,7 +383,7 @@ footer a{color:var(--orange)}
         <a class="btn2 solid" href="https://www.google.com/maps/dir/?api=1&amp;destination=41.394750%2C-70.680694" target="_blank" rel="noopener">Directions</a>
         <a class="btn2" id="textCode" href="sms:+15086876255">Text us the code</a>
       </div>
-      <button class="btn2" id="again" type="button" style="width:100%;margin-top:10px">Check in another deer</button>
+      <button class="btn2" id="again" type="button" style="width:100%;margin-top:10px">Register another deer</button>
     </div>
   </div>
 
@@ -393,13 +393,13 @@ footer a{color:var(--orange)}
     <button class="x" id="appx" type="button" aria-label="Close">×</button>
     <h3 id="appsheetH">Add the Deer Drop-Off app to your phone</h3>
     <div id="appsteps"></div>
-    <button class="btn2" id="appskip" type="button">Not now, just check in my deer</button>
+    <button class="btn2" id="appskip" type="button">Not now, just register my deer</button>
   </div>
   <div class="point" id="apppoint" aria-hidden="true" hidden>↓</div>
 
   <footer>
-    <p>Your details go only to Home Ground’s check-in staff. Nothing you enter is shown publicly.</p>
-    <p>Tribal harvest? Check in at the counter. Questions? Text <a href="sms:+15086876255">(508) 687-6255</a>.</p>
+    <p>Your details go only to Home Ground’s staff at the counter. Nothing you enter is shown publicly.</p>
+    <p>Tribal harvest? Register it at the counter. Questions? Text <a href="sms:+15086876255">(508) 687-6255</a>.</p>
     <!-- Taken off for now (Joe, 17 Nov 2026). To put it back, restore this line:
     <p><a href="../dashboard/" target="_top">See the Island Deer Dashboard</a></p> -->
   </footer>
