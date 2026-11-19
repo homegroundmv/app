@@ -458,11 +458,30 @@
     const c = document.createElement('style'); c.id = 'tag-css';
     c.textContent = '.tagpic{display:block;max-width:100%;border-radius:8px;margin-top:8px;border:1px solid #ccc}' +
       '.tagstep{border-top:2px solid #ddd;margin-top:14px;padding-top:10px}.tagstep h3{margin:0 0 6px}' +
-      '.camin{position:absolute;opacity:0;width:1px;height:1px}.tagrow{margin-top:8px}';
+      /* The file inputs are driven by their labels and never seen. The form's own input rule gave
+         them the full width, so, parked where the text would have put them, they hung 33 px off
+         the right edge and the whole check-in form slid sideways on a phone (found by the v122
+         tests). Pinned to the left edge and one pixel square, whatever other rule applies. */
+      '.camin{position:absolute!important;left:0;opacity:0;width:1px!important;min-width:0!important;height:1px!important;padding:0!important;border:0!important;overflow:hidden}.tagrow{margin-top:8px}' +
+      '.camtwo{display:flex;gap:8px;flex-wrap:wrap}.camtwo .btn{flex:1 1 130px;margin:0;text-align:center}';
     document.head.appendChild(c);
   }
-  const camBtn = (id, label) => '<label class="btn alt" for="' + id + '" style="display:inline-block">' + esc(label) + '</label>' +
-    '<input id="' + id + '" class="camin" type="file" accept="image/*" capture="environment">';
+  /* Two ways to give the app a photo (v122). "capture" forces a phone straight to its camera, so
+     with only that input a photo already taken could not be used: the tag photographed at the
+     tailgate before the app was open, or a screenshot the hunter texted over. The second input is
+     the same one without capture, so the phone offers its photo library. Both are read by
+     onCam() below and so take the one path: shrunk, queued, attached to the band. The "…pick" id
+     is always the first id plus "pick". */
+  const camBtn = id => '<div class="camtwo"><label class="btn alt" for="' + id + '">Take photo</label>' +
+    '<label class="btn ghost" for="' + id + 'pick">Choose from photos</label></div>' +
+    '<input id="' + id + '" class="camin" type="file" accept="image/*" capture="environment">' +
+    '<input id="' + id + 'pick" class="camin" type="file" accept="image/*">';
+  /* One handler on both inputs. The value is cleared after reading, so choosing the same picture
+     twice (after a failed try, say) still fires a change. */
+  const onCam = (id, fn) => [id, id + 'pick'].forEach(i => {
+    const el = document.getElementById(i);
+    if (el) el.onchange = async e => { const file = e.target.files && e.target.files[0]; if (!file) return; try { await fn(file); } finally { try { e.target.value = ''; } catch (x) { /* some browsers refuse */ } } };
+  });
   /* On the deer's card: the tag photo, the phone photo, or a way to add one. */
   function tagPhotoRow(d) {
     if (isViewer()) return '';
@@ -494,12 +513,11 @@
   function addTagPhoto(d, box, after) {
     tagCss();
     box.innerHTML = '<p class="status">Photograph the hunter\u2019s tag on band ' + esc(band(d.Band)) + ', close enough to read.</p>' +
-      camBtn('addcam', 'Take a photo of the tag') + '<div class="err" id="adderr"></div>';
-    document.getElementById('addcam').onchange = async e => {
-      const file = e.target.files && e.target.files[0]; if (!file) return;
+      camBtn('addcam') + '<div class="err" id="adderr"></div>';
+    onCam('addcam', async file => {
       try { await enqueuePhoto(d.Band, 'tag', await shrinkPhoto(file)); toast('Tag photo saved for band ' + band(d.Band) + '.', true); if (after) after(); }
       catch (x) { document.getElementById('adderr').textContent = x.message; }
-    };
+    });
   }
   async function refresh(quiet) {
     try {
@@ -847,7 +865,8 @@
       if (x.action === 'skin') { d['Skinner'] = f.skinner || st.staff.number; d['Skinner name'] = f.skinnerName || st.staff.name; d['Skinned at'] = x.at; d['Skinned at station'] = 'Yes'; }
       if (x.action === 'start') {
         if (f.skinned && !d['Skinner']) { d['Skinner'] = f.skinner || f.processor || st.staff.number; d['Skinner name'] = f.processorName || st.staff.name; d['Skinned at'] = x.at; }
-        d.Status = 'Processing'; d['Processing started'] = x.at; d['Processor number'] = f.processor || st.staff.number; d.Butcher = f.processorName || st.staff.name; d['Carcass weight (lb)'] = f.weight; }
+        d.Status = 'Processing'; d['Processing started'] = x.at; d['Processor number'] = f.processor || st.staff.number; d.Butcher = f.processorName || st.staff.name; d['Carcass weight (lb)'] = f.weight;
+        if (num(f.lug) >= 1) d['Lug'] = ('0' + Math.round(num(f.lug))).slice(-2); }
       if (x.action === 'finish') { d.Status = 'Ready'; d['Pounds packaged'] = f.total; d.Packages = num(f.groundPackages) + num(f.intactPackages); }
       if (x.action === 'release') { d.Status = 'Released'; d.Released = x.at; d['Released to'] = f.to; }
     });
@@ -1532,15 +1551,67 @@
     if (!hits.length) return busy || '<p class="status">No deer matches “' + esc(q) + '”.</p>';
     return hits.slice(0, 20).map(d => {
       const bc = colourOf(d), w = whereOf(d);
-      return (d.far ? '<div class="hit">' : '<button type="button" class="hit" data-hit="' + esc(d.Band) + '">') +
+      // Every hit is a button (v122). Older deer used to be plain text: found, and then nothing to tap.
+      return '<button type="button" class="hit" data-hit="' + esc(d.Band) + '"' + (d.far ? ' data-far="1"' : '') + '>' +
         '<span class="dot" style="background:' + (bc ? hexFor(bc) : '#fff') + '"></span>' +
         '<span class="dwho"><b>' + esc(d['Hunter name'] || '—') + (w ? ' · ' + esc(w) : '') + '</b>' +
         '<span class="status">' + esc(stageOf(d)) + '</span>' +
         '<span class="status">' + esc(d['Hunter number'] || '') + ' · ' + esc(d['MassWildlife confirmation'] || 'no confirmation #') + ' · ' + esc(d.Type || '') +
         // On the hit line, so "who is in lug 7" is answered without opening anything.
         (d['Lug'] ? ' · <b>lug ' + esc(d['Lug']) + '</b>' : '') +
-        (d.far ? ' · band ' + esc(d.Band) : '') + '</span></span>' + (d.far ? '</div>' : '</button>');
+        (d.far ? ' · band ' + esc(d.Band) : '') + '</span></span></button>';
     }).join('') + (hits.length > 20 ? '<p class="status">' + (hits.length - 20) + ' more: type more of it.</p>' : '') + busy;
+  }
+  /* What a search hit opens (v122): the few things somebody looking a deer up actually wants, on
+     one screen, with nothing on it that can be changed. The question at the desk is usually "what
+     is his customer ID" or "read me the confirmation number", and the hit line shows neither the
+     ID nor a way to copy anything. It works for any deer in the season, where the full card only
+     exists for the week the board carries; for those, the card is one more tap from here.
+     Read-only for everyone, so a view-only sign-in sees exactly what a manager does. */
+  const copyText = async t => {
+    try { if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(t); return true; } } catch (e) { /* fall through */ }
+    try {
+      const ta = document.createElement('textarea'); ta.value = t; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select(); const ok = document.execCommand('copy'); ta.remove(); return ok;
+    } catch (e) { return false; }
+  };
+  function showSummary(b) {
+    b = band(b);
+    const near = deerList().filter(x => band(x.Band) === b).pop();
+    const d = near || farHits.deer.filter(x => band(x.Band) === b).pop();
+    if (!d) return showDeer(b);
+    const tribal = isTribalDeer(d), has = v => String(v == null ? '' : v).trim() !== '';
+    const line = (id, k, v, copy) => '<div class="sumrow" id="' + id + '" style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--line)">' +
+      '<span style="flex:1"><span class="status" style="display:block">' + esc(k) + '</span><b style="font-size:18px;word-break:break-word">' + esc(has(v) ? v : '—') + '</b></span>' +
+      (copy && has(v) ? '<button type="button" class="btn ghost" data-copy="' + esc(v) + '" style="margin:0">Copy</button>' : '') + '</div>';
+    const opt = (id, k, v) => has(v) ? line(id, k, v) : '';
+    const packs = has(d['First pack #']) ? d['First pack #'] + (has(d['Last pack #']) ? '–' + d['Last pack #'] : ' onward') : '';
+    const donated = d.Type === 'Donated';
+    frame('summary', 'Deer summary', '<div class="card" id="sumcard">' +
+      '<div class="sumrow" id="sum-name" style="padding-bottom:9px"><span class="status" style="display:block">Hunter</span><b style="font-size:22px">' + esc(d['Hunter name'] || '—') + '</b></div>' +
+      // A tribal deer has no MassWildlife customer ID or seal: its number is the tribe's band.
+      line('sum-cid', 'Customer ID', tribal && !has(d['Customer ID']) ? 'None: tribal deer' : d['Customer ID']) +
+      (tribal ? line('sum-conf', 'Tribal tag · Tribal', d['Tribal tag'], true)
+        : line('sum-conf', 'MassWildlife confirmation', d['MassWildlife confirmation'], true)) +
+      line('sum-band', 'Band', band(d.Band), true) +
+      opt('sum-type', 'Type', d.Type) +
+      opt('sum-stage', 'Status', stageOf(d)) +
+      opt('sum-intake', 'Checked in', d.Intake) +
+      opt('sum-town', 'Town of harvest', d['Town of harvest']) +
+      opt('sum-lug', 'Lug', d['Lug']) +
+      opt('sum-packs', 'Package numbers', packs) +
+      (donated ? line('sum-martin', 'Sent to Martin', has(d['Sent to Martin']) ? String(d['Sent to Martin']).split(' ')[0] : 'Not yet') : '') +
+      '</div>' +
+      (near ? '<button class="btn" id="sumopen" style="width:100%;margin-top:8px">Open this deer’s card</button>'
+        : '<p class="status">This deer is from earlier in the season, so it has no card on the board. This summary is all there is to open.</p>') +
+      '<button class="btn ghost" id="sumback" style="width:100%;margin-top:8px">Back to the search</button>', false, b);
+    $app.querySelectorAll('[data-copy]').forEach(x => x.onclick = async () => {
+      const ok = await copyText(x.dataset.copy);
+      x.textContent = ok ? 'Copied' : 'Press and hold to copy';
+      if (ok) setTimeout(() => { if (x.isConnected) x.textContent = 'Copy'; }, 2000);
+    });
+    const so = document.getElementById('sumopen'); if (so) so.onclick = () => showDeer(b);
+    document.getElementById('sumback').onclick = () => showBoard();
   }
   const boardOpen = new Set();     // which dropdowns are open, kept through the 45-second redraws
   const boardDeer = new Set();     // which deer rows are expanded to their full card
@@ -1647,7 +1718,7 @@
     const cb = document.getElementById('clearband');
     if (cb) cb.onclick = () => { bandFilter = ''; showBoard(); };
     const bs = document.getElementById('bsearch'), bh = document.getElementById('bhits');
-    const wireHits = () => bh.querySelectorAll('[data-hit]').forEach(x => x.onclick = () => showDeer(x.dataset.hit));
+    const wireHits = () => bh.querySelectorAll('[data-hit]').forEach(x => x.onclick = () => showSummary(x.dataset.hit));
     let timer = null;
     const paint = () => { if (bs.value === boardQuery) { bh.innerHTML = searchHtml(boardQuery); wireHits(); } };
     bs.oninput = () => {
@@ -1773,7 +1844,7 @@
         : owe && live && owe.settled
           ? '<div class="note ok">Custom processing paid: <b>$' + owe.paid + '</b>' +
             (d['Payment method'] ? ' · ' + esc(d['Payment method']) : '') + '</div>' : '') +
-      (d['Lug'] ? '<div class="note ok"><b>Lug ' + esc(d['Lug']) + '</b> — where this deer\'s trim went</div>' : '') +
+      (d['Lug'] ? '<div class="note ok"><b>Lug ' + esc(d['Lug']) + '</b> — ' + (d.Status === 'Processing' ? 'where this deer\'s meat is now' : 'where this deer\'s trim went') + '</div>' : '') +
       (d['First pack #'] && d['Last pack #'] ? '<div class="note ok"><b>Package numbers ' + esc(d['First pack #']) + '–' + esc(d['Last pack #']) + '</b> (MassWildlife)</div>'
         : d['First pack #'] ? '<div class="note warn" style="font-size:17px">Label the 2 lb packages in order from <b>' + esc(d['First pack #']) + '</b>: ' + esc(d['First pack #']) + ', ' + esc(('000' + (parseInt(d['First pack #'], 10) + 1)).slice(-4)) + ', …</div>' : '') +
       (d.Status === 'Released' ? '<div class="status">Released ' + esc(d.Released) + ' to ' + esc(d['Released to']) + '</div>' : '') +
@@ -2013,7 +2084,16 @@
         '<label>Carcass weight (lb) <span class="hint">On the hanging scale: field dressed, skin and head off</span></label><input id="f1" type="number" inputmode="decimal" min="0" step="0.1">' +
         // Somewhere to say "we didn't weigh it". Without one, a number gets invented, and an
         // invented number is worse than a blank because the yield figure is built on it.
-        '<label class="choice"><input id="f1na" type="checkbox"> Not weighed <span class="hint">No scale reading for this deer. Leaves the weight and the yield blank rather than guessing.</span></label>',
+        '<label class="choice"><input id="f1na" type="checkbox"> Not weighed <span class="hint">No scale reading for this deer. Leaves the weight and the yield blank rather than guessing.</span></label>' +
+        /* The lug, asked when the deer goes ON the table and not only when it comes off (Joe,
+           19 November, v122). Until now the number was written down at Finished, so for the whole
+           time the meat was actually sitting in a lug the record did not say whose it was, which
+           is exactly when somebody walks up to one and asks. Finished still shows the field,
+           filled in from here, for the deer whose trim ended up somewhere else. Required in the
+           app and not by the server, for the same reason as at Finished. */
+        '<label for="slug">Lug number <span class="hint">the number on the lug this deer’s meat is going into</span></label>' +
+        '<input id="slug" type="number" inputmode="numeric" min="1" step="1" max="' + esc(s.lugs || 24) +
+        '" value="' + esc(String(d['Lug'] || '').replace(/^0+/, '')) + '" placeholder="1 to ' + esc(s.lugs || 24) + '">',
       // Donated deer get their numbers before grinding, so by the time this form opens the first
       // number is known and the last one is on the bench in front of them.
       finish: () => '<p class="status">Started ' + esc(d['Processing started'] || '') + ' · carcass ' + esc(d['Carcass weight (lb)'] || '?') + ' lb</p>' +
@@ -2242,6 +2322,12 @@
           // 1 lb and 880 lb both reached the log on 4 November. One slipped finger either way.
           if (wv < 15 || wv > 250) return err(v('f1') + ' lb is outside the range a deer carcass falls in (15–250 lb). Check the scale, or check Not weighed.');
         }
+        const maxLugS = Number(s.lugs) || 24, lugS = Math.round(num(v('slug')));
+        if (!(lugS >= 1 && lugS <= maxLugS)) {
+          return err(v('slug').trim() === ''
+            ? 'Which lug is this deer going into? Read the number off the side of it.'
+            : 'There is no lug ' + esc(v('slug').trim()) + '. The lugs are numbered 1 to ' + maxLugS + '.');
+        }
         const p = isMgr() ? v('fp') : st.staff.number;
         const pn = ((st.home.staff || []).find(x => x.number === p) || st.staff).name;
         /* Priority, asked once and recorded if overridden. Not a block: a processor at six in the
@@ -2257,7 +2343,7 @@
           '\n\nStart ' + d.Band + ' anyway? This is recorded.')) {
           return err('Start ' + ahead[0].Band + ' instead, or confirm the override.');
         }
-        queue('start', { band: d.Band, processor: p, processorName: pn, weight: naW ? 'N/A' : v('f1'), notWeighed: naW, confirmationChecked: true, skinned: true, antimicrobial: true, ack: ahead.length > 0,
+        queue('start', { band: d.Band, processor: p, processorName: pn, weight: naW ? 'N/A' : v('f1'), notWeighed: naW, confirmationChecked: true, skinned: true, antimicrobial: true, ack: ahead.length > 0, lug: lugS,
           unpaidReason: (owe && !owe.settled) ? v('fup').trim() : '' }, 'Start ' + d.Band);
       }
       if (kind === 'finish') {
@@ -2574,12 +2660,12 @@
          app draws the replacement record, and the phone photo is what gets taken. */
       '<div class="tagstep"><h3>Last step: the tag</h3>' +
         '<div id="tagnormal"><p class="status">Photograph the hunter\u2019s tag on the deer, close enough to read.</p>' +
-          camBtn('tagcam', 'Take a photo of the tag') + '<img id="tagprev" class="tagpic" alt="Tag photo" hidden></div>' +
+          camBtn('tagcam') + '<img id="tagprev" class="tagpic" alt="Tag photo" hidden></div>' +
         '<label class="choice" id="taglostrow"><input id="taglost" type="checkbox"> <span><b>Hunter lost their tag</b><br>' +
           '<span class="hint">The app makes a replacement tag record from this check-in and keeps it in place of the photo.</span></span></label>' +
         '<div id="lostbox" hidden>' +
           '<p class="status">Photograph the hunter\u2019s phone showing his confirmed deer on the MassWildlife site.</p>' +
-          camBtn('scrcam', 'Take a photo of his phone') + '<img id="scrprev" class="tagpic" alt="Hunter\u2019s phone" hidden>' +
+          camBtn('scrcam') + '<img id="scrprev" class="tagpic" alt="Hunter\u2019s phone" hidden>' +
           '<div class="status" style="margin-top:10px">The replacement tag record, as it will be kept:</div><img id="ltprev" class="tagpic" alt="Replacement tag record">' +
         '</div>' +
         '<label class="choice"><input id="nocam" type="checkbox"> The camera isn\u2019t working</label>' +
@@ -2701,13 +2787,10 @@
       document.getElementById('tagnormal').hidden = isLost();
       drawLost();
     };
-    const wireCam = (id, prev, set) => {
-      document.getElementById(id).onchange = async e => {
-        const file = e.target.files && e.target.files[0]; if (!file) return;
-        try { const data = await shrinkPhoto(file); set(data); const im = document.getElementById(prev); im.src = data; im.hidden = false; document.getElementById('err').textContent = ''; }
-        catch (x) { document.getElementById('err').textContent = x.message; }
-      };
-    };
+    const wireCam = (id, prev, set) => onCam(id, async file => {
+      try { const data = await shrinkPhoto(file); set(data); const im = document.getElementById(prev); im.src = data; im.hidden = false; document.getElementById('err').textContent = ''; }
+      catch (x) { document.getElementById('err').textContent = x.message; }
+    });
     wireCam('tagcam', 'tagprev', x => { tagShot = x; });
     wireCam('scrcam', 'scrprev', x => { scrShot = x; });
     document.getElementById('taglost').onchange = syncLost;
