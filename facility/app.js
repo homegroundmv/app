@@ -2077,6 +2077,14 @@
           : '') +
         '<div class="grid2"><div><label for="e_takenWith">Taken with</label><select id="e_takenWith">' + opts(['Archery', 'Shotgun slug', 'Muzzleloader', 'Not known'], d['Taken with']) + '</select></div>' +
         '<div><label for="e_ammunition">Ammunition</label><select id="e_ammunition">' + opts(['Lead', 'Non-lead', 'Not known'], d['Ammunition']) + '</select></div></div>' +
+        /* The weight at the door (Joe, 20 November, v125; needs backend 109). It is asked at
+           check-in and often not known until the deer is on the scale later, and there was no way
+           to add it afterward. Labeled as what it is, because the carcass weight from the hanging
+           scale is a different number and is not corrected here. */
+        '<div class="grid2"><div><label for="e_intakeWeight">Weight at intake (lb) <span class="hint">as it came in, hide and head on. Not the carcass weight. Blank if it was not weighed</span></label>' +
+          '<input id="e_intakeWeight" type="number" inputmode="decimal" min="0" max="500" step="0.1" value="' + esc(d['Intake weight (lb)'] || '') + '"></div>' +
+        '<div><label for="e_weighedAs">Weighed as</label><select id="e_weighedAs">' +
+          ['Field dressed', 'Not dressed'].map(x => '<option' + ((d['Weighed as'] || 'Field dressed') === x ? ' selected' : '') + '>' + x + '</option>').join('') + '</select></div></div>' +
         '<label for="e_notes">Notes</label><input id="e_notes" type="text" value="' + esc(d['Notes'] || '') + '">' +
         '<label for="er">Why <span class="hint">goes on the record beside the change</span></label>' + chips('edit', 'er') + '<input id="er" type="text" placeholder="Or type what happened">',
       void: () => '<p class="status">The row stays on the record and is marked voided, with your name and the reason on it. It stops counting in the cooler, on this board, in the totals and on the Donation report. Nothing is deleted.</p>' +
@@ -2322,6 +2330,13 @@
         // Only sent when the question was on the form at all, so a correction to a doe cannot
         // write a skull answer onto a deer that never had one.
         if (document.getElementById('e_skull')) changes.skull = v('e_skull').trim();
+        // v125: the door weight, and how it was weighed. Checked here so a slipped finger is caught
+        // before the round trip; the server holds the same limits.
+        if (document.getElementById('e_intakeWeight')) {
+          const wRaw = v('e_intakeWeight').trim();
+          if (wRaw !== '' && !(Number(wRaw) > 0 && Number(wRaw) <= 500)) return err('Check the weight at intake: a number up to 500 lb, or leave it blank if the deer was not weighed.');
+          changes.intakeWeight = wRaw; changes.weighedAs = v('e_weighedAs');
+        }
         if (!changes.firstName && !changes.lastName) return err('A deer needs a hunter’s name on it.');
         // Live, like a void: the duplicate check and the Martin flag both need the whole log, and
         // replaying a blind correction from a phone that was offline is how records get worse.
