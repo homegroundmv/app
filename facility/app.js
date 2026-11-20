@@ -378,24 +378,34 @@
   }
   const pendingPhoto = (b, kind) => photoQ.find(x => x.band === band(b) && x.kind === kind && !x.error);
   let photoFlushing = false;
+  /* A refused photo used to be refused for good: marked with the error, never sent again, and
+     shown nowhere. From 14 to 20 November the server refused every one of them (it could not
+     reach Google Drive), so every photo taken in those days is still sitting on the phone that
+     took it. v124: each refused photo gets one more try every time the app is opened, so those
+     go up by themselves once backend 108 is in. It says so when one lands, and says nothing when
+     the answer is the same refusal as last time. */
+  const photoRetried = new Set();
   async function flushPhotos() {
     if (photoFlushing || !st.pin) return;
     photoFlushing = true;
     try {
       photoQ = await pAll();
       for (const it of photoQ.slice().sort((a, b) => a.created - b.created)) {
-        if (it.error || (it.by && it.by !== st.number)) continue;
+        if (it.by && it.by !== st.number) continue;
+        const before = it.error || '';
+        if (before) { if (photoRetried.has(it.id)) continue; photoRetried.add(it.id); }
         if (st.outbox.some(x => x.action === 'intake' && !x.error && band((x.fields || {}).band) === it.band)) continue;
         try {
           const mv = rebandFor(it.band, it.created);   // v116: the photo follows its deer to the band it was recorded under
           await call({ action: 'tagphoto', band: mv ? mv.to : it.band, kind: it.kind, data: it.data, clientId: it.id });
           await pDel(it.id);
           photoQ = photoQ.filter(x => x.id !== it.id);
+          if (before) toast('The ' + (it.kind === 'screen' ? 'phone photo' : 'tag photo') + ' for band ' + it.band + ' has saved now.', true);
         } catch (e) {
-          if (e.offline || e.busy) break;   // v117: a busy server is not a refused photo
-          if (/ yet\./.test(e.message)) continue;
+          if (e.offline || e.busy) { photoRetried.delete(it.id); break; }   // v117: a busy server is not a refused photo
+          if (/ yet\./.test(e.message)) { photoRetried.delete(it.id); continue; }
           it.error = e.message; await pPut(it);
-          toast('The tag photo for band ' + it.band + ' did not save: ' + e.message);
+          if (e.message !== before) toast('The tag photo for band ' + it.band + ' did not save: ' + e.message);
         }
       }
     } finally { photoFlushing = false; }
@@ -864,7 +874,7 @@
       if (x.action === 'move') { d.Location = f.to; }
       if (x.action === 'skin') { d['Skinner'] = f.skinner || st.staff.number; d['Skinner name'] = f.skinnerName || st.staff.name; d['Skinned at'] = x.at; d['Skinned at station'] = 'Yes'; }
       if (x.action === 'start') {
-        if (f.skinned && !d['Skinner']) { d['Skinner'] = f.skinner || f.processor || st.staff.number; d['Skinner name'] = f.processorName || st.staff.name; d['Skinned at'] = x.at; }
+        if (f.skinned && !d['Skinner']) { d['Skinner'] = f.skinner || f.processor || st.staff.number; d['Skinner name'] = f.skinnerName || f.processorName || st.staff.name; d['Skinned at'] = x.at; }
         d.Status = 'Processing'; d['Processing started'] = x.at; d['Processor number'] = f.processor || st.staff.number; d.Butcher = f.processorName || st.staff.name; d['Carcass weight (lb)'] = f.weight;
         if (num(f.lug) >= 1) d['Lug'] = ('0' + Math.round(num(f.lug))).slice(-2); }
       if (x.action === 'finish') { d.Status = 'Ready'; d['Pounds packaged'] = f.total; d.Packages = num(f.groundPackages) + num(f.intactPackages); }
@@ -985,7 +995,9 @@
     const act = lead.kind === 'mine'
       ? (donatedNoPack ? '<button class="btn alt" data-la="grind">Get package numbers</button> ' : '') +
         '<button class="btn" data-la="finish">Finished</button>'
-      : '<button class="btn" data-la="start">Start processing</button>';
+      // v124: skinning is its own job, so it is offered here too and not only on the deer's card.
+      : (d['Skinner'] || isViewer() ? '' : '<button class="btn alt" data-la="skin">Skin it</button> ') +
+        '<button class="btn" data-la="start">Start processing</button>';
     return '<div class="lead' + (lead.kind === 'mine' ? ' on' : '') + '" data-band="' + esc(d.Band) + '">' +
       '<div class="lh">' + (lead.kind === 'mine' ? 'On your table' : 'Start this one next') + '</div>' +
       '<div class="lb">' + esc(d.Band) + ' <span class="tag ' + (d.Type === 'Donated' ? 'don">DONATED' : 'prv">PRIVATE') + '</span>' +
@@ -1910,6 +1922,14 @@
      records gap rather than an unskinned deer, and it must not put MHU #1's record in front of
      somebody working in MHU #2 (Joe, 9 Nov). */
   const unitsNeeded = (kind, d) => kind === 'skin' ? ['MHU #1'] : [PRE_UNIT[placeOf(d)] || 'MHU #1'];
+  /* Why a deer cannot be skinned right now, or ''. Only a line marked unacceptable today and not
+     released, on the shared list or MHU #1's. No pre-op record at all is not a reason (v124). */
+  const skinHeld = () => {
+    const p = preopState(), b = (p.units || {})['Both units'], x = (p.units || {})['MHU #1'];
+    if (!p.done) return '';
+    const held = (b && (b.held || []).length) ? b.held : (x && (x.held || []).length) ? x.held : null;
+    return held ? 'Pre-op: ' + few(held) + ' is still not released, so nothing should be using it. Skinning waits for that.' : '';
+  };
   const preopBlock = (kind, d) => {
     const need = unitsNeeded(kind, d).filter(u => !unitReady(u));
     if (!need.length) return null;
@@ -1967,9 +1987,19 @@
       };
       return;
     }
-    if ((kind === 'skin' || kind === 'start') && !isViewer()) {
+    /* Starting a deer needs its unit's pre-op signed. Skinning does not (Joe, 20 November, v124):
+       it was held to the same gate, so a deer could not be skinned at the end of a shift on a day
+       nobody had processed. Skinning is its own job now. What still stops it is a pre-op that WAS
+       signed today and marks something skinning uses unacceptable and not released: somebody
+       having said "do not use this" is not the same as nobody having looked. Backend 108 holds
+       the same line. */
+    if (kind === 'start' && !isViewer()) {
       const g = preopBlock(kind, d);
       if (g) return preopStop(g, d, box, after);
+    }
+    if (kind === 'skin' && !isViewer()) {
+      const why = skinHeld();
+      if (why) return preopStop({ unit: 'MHU #1', other: 'MHU #2', why: why, stale: false }, d, box, after);
     }
     /* Starting a deer only. Skinning is left alone deliberately: a carcass that has been skinned
        and not hung is the one thing in the building that cannot wait, and the duty can. */
@@ -2105,7 +2135,15 @@
         '<div class="note warn" style="font-size:17px">Tag confirmation number: <b>' + esc(d['MassWildlife confirmation'] || 'none recorded') + '</b></div>' +
         '<label class="choice"><input id="f0" type="checkbox"> The confirmation number on the deer\'s tag matches</label>' +
         (d['Skinner name'] ? '<div class="note ok">Skinned by <b>' + esc(d['Skinner name']) + '</b>' + (d['Skinned at'] ? ' · ' + esc(d['Skinned at']) : '') + '. The skinning premium is theirs.</div><input id="f8" type="checkbox" checked hidden>'
-          : '<label class="choice"><input id="f8" type="checkbox"> Skinned and head removed inside MHU #1 <span class="hint">You get the $' + esc(nz(s.skinRate, 25)) + ' skinning premium for it</span></label>') +
+          /* Who skinned it is its own question (Joe, 20 November, v124). Ticking this box used to
+             make whoever was starting the deer its skinner, with no way to say otherwise, so a
+             deer one person skinned and another started paid the premium to the wrong one unless
+             "Skin it" had been tapped first. The processor is still the default: most of the
+             time it is the same person. */
+          : '<label class="choice"><input id="f8" type="checkbox"> Skinned and head removed inside MHU #1</label>' +
+            '<label for="fsk">Who skinned it? <span class="hint">The $' + esc(nz(s.skinRate, 25)) + ' skinning premium goes to them, whoever processes it</span></label>' +
+            '<select id="fsk">' + ((st.home.staff || []).some(x => x.number === st.staff.number) ? (st.home.staff || []) : [st.staff].concat(st.home.staff || []))
+              .map(x => '<option value="' + esc(x.number) + '"' + (x.number === st.staff.number ? ' selected' : '') + '>' + esc(x.name + ' (' + x.number + ')') + '</option>').join('') + '</select>') +
         (d['Antimicrobial spray'] === 'Yes' ? '<input id="f9" type="checkbox" checked hidden>'
           : '<label class="choice"><input id="f9" type="checkbox"> Antimicrobial spray applied in MHU #1</label>') +
         (isMgr() ? '<label>Processor</label><select id="fp">' + (st.home.staff || []).map(x => '<option value="' + esc(x.number) + '"' + (x.number === st.staff.number ? ' selected' : '') + '>' + esc(x.name + ' (' + x.number + ')') + '</option>').join('') + '</select>'
@@ -2359,6 +2397,8 @@
         }
         const p = isMgr() ? v('fp') : st.staff.number;
         const pn = ((st.home.staff || []).find(x => x.number === p) || st.staff).name;
+        const skWho = d['Skinner'] ? '' : (v('fsk') || p);
+        const skName = skWho ? ((st.home.staff || []).find(x => x.number === skWho) || { name: skWho === st.staff.number ? st.staff.name : pn }).name : '';
         /* Priority, asked once and recorded if overridden. Not a block: a processor at six in the
            morning with a good reason and no manager on site should not be stuck. But an override
            nobody can see is the same as no rule at all, so going ahead writes it to the Log. */
@@ -2373,6 +2413,8 @@
           return err('Start ' + ahead[0].Band + ' instead, or confirm the override.');
         }
         queue('start', { band: d.Band, processor: p, processorName: pn, weight: naW ? 'N/A' : v('f1'), notWeighed: naW, confirmationChecked: true, skinned: true, antimicrobial: true, ack: ahead.length > 0, lug: lugS,
+          // v124: only when the deer was skinned here and now. One already skinned keeps its skinner.
+          skinner: skWho, skinnerName: skName,
           unpaidReason: (owe && !owe.settled) ? v('fup').trim() : '' }, 'Start ' + d.Band);
       }
       if (kind === 'finish') {
