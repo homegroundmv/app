@@ -1530,7 +1530,13 @@
   }
   const whereOf = d => d.Status === 'Hanging' || d.Status === 'Processing' ? placeOf(d) : d.Status === 'Ready' ? 'Out of the cooler' : '';
   // Hunter ID, confirmation number, name or band — any part of any of them, case and spaces ignored.
+  /* v123 (Joe, 20 Nov): a search that is a date, 11/20/2026, is "who came in that day". */
+  const dayOf = q => { const m = String(q || '').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); return m ? Number(m[1]) + '/' + Number(m[2]) + '/' + m[3] : ''; };
+  const mdy = dt => (dt.getMonth() + 1) + '/' + dt.getDate() + '/' + dt.getFullYear();
   function searchDeer(q) {
+    const day = dayOf(q);
+    if (day) return deerList().filter(d => String(d.Intake || '').trim().split(' ')[0] === day)
+      .sort((a, b) => String(a.Band).localeCompare(String(b.Band)));
     const k = String(q || '').toLowerCase().replace(/\s+/g, '');
     if (k.length < 2) return [];
     /* 'Lug' included: standing in front of a grey lug, the question is "whose is this", and the
@@ -1546,10 +1552,11 @@
     if (String(q || '').replace(/\s+/g, '').length < 2) return '';
     const near = searchDeer(q), seen = new Set(near.map(d => band(d.Band)));
     const far = farHits.q === q ? farHits.deer.filter(d => !seen.has(band(d.Band))).map(d => Object.assign({ far: true }, d)) : [];
-    const hits = near.concat(far);
+    const hits = near.concat(far), day = dayOf(q), cap = day ? 200 : 20;
     const busy = farHits.busy && farHits.q === q ? '<p class="status">Looking through the rest of the season…</p>' : '';
-    if (!hits.length) return busy || '<p class="status">No deer matches “' + esc(q) + '”.</p>';
-    return hits.slice(0, 20).map(d => {
+    if (!hits.length) return busy || '<p class="status">' + (day ? 'No deer came in on ' + esc(day) + '.' : 'No deer matches “' + esc(q) + '”.') + '</p>';
+    return (day ? '<p class="status" id="bdaycount"><b>' + hits.length + (hits.length === 1 ? ' deer' : ' deer') + '</b> came in on ' + esc(day) + '.</p>' : '') +
+      hits.slice(0, cap).map(d => {
       const bc = colourOf(d), w = whereOf(d);
       // Every hit is a button (v122). Older deer used to be plain text: found, and then nothing to tap.
       return '<button type="button" class="hit" data-hit="' + esc(d.Band) + '"' + (d.far ? ' data-far="1"' : '') + '>' +
@@ -1560,7 +1567,7 @@
         // On the hit line, so "who is in lug 7" is answered without opening anything.
         (d['Lug'] ? ' · <b>lug ' + esc(d['Lug']) + '</b>' : '') +
         (d.far ? ' · band ' + esc(d.Band) : '') + '</span></span></button>';
-    }).join('') + (hits.length > 20 ? '<p class="status">' + (hits.length - 20) + ' more: type more of it.</p>' : '') + busy;
+    }).join('') + (hits.length > cap ? '<p class="status">' + (hits.length - cap) + ' more: type more of it.</p>' : '') + busy;
   }
   /* What a search hit opens (v122): the few things somebody looking a deer up actually wants, on
      one screen, with nothing on it that can be changed. The question at the desk is usually "what
@@ -1602,6 +1609,17 @@
       opt('sum-packs', 'Package numbers', packs) +
       (donated ? line('sum-martin', 'Sent to Martin', has(d['Sent to Martin']) ? String(d['Sent to Martin']).split(' ')[0] : 'Not yet') : '') +
       '</div>' +
+      /* v123 (Joe, 20 Nov): the tag photo, from the search. Backend 107 says whether a deer from
+         earlier in the season has one ('Has tag photo'); before that it did not, and then the
+         button is there and the answer may be "No photo on this deer". Not for a view-only
+         sign-in, as on the card. */
+      (isViewer() ? '' : (tagCss(), '<div class="tagrow" id="sumtag">' +
+        ((near ? d['Tag photo'] : d['Has tag photo'] !== 'No') || pendingPhoto(d.Band, 'tag')
+          ? '<button type="button" class="btn ghost" id="sumtagshow" style="width:100%;margin-top:8px">' + (d['Tag lost'] === 'Yes' ? 'View the replacement tag record' : 'View the tag photo') + '</button>'
+          : '<p class="status" id="sumnotag">No tag photo on this deer' + (d['Tag photo note'] ? ': ' + esc(d['Tag photo note']) : '.') + '</p>') +
+        (near && (d['Harvest screenshot'] || pendingPhoto(d.Band, 'screen'))
+          ? '<button type="button" class="btn ghost" id="sumscrshow" style="width:100%;margin-top:8px">View the hunter\u2019s phone</button>' : '') +
+        '<div class="tagimg" id="sumtagimg"></div></div>')) +
       (near ? '<button class="btn" id="sumopen" style="width:100%;margin-top:8px">Open this deer’s card</button>'
         : '<p class="status">This deer is from earlier in the season, so it has no card on the board. This summary is all there is to open.</p>') +
       '<button class="btn ghost" id="sumback" style="width:100%;margin-top:8px">Back to the search</button>', false, b);
@@ -1610,6 +1628,9 @@
       x.textContent = ok ? 'Copied' : 'Press and hold to copy';
       if (ok) setTimeout(() => { if (x.isConnected) x.textContent = 'Copy'; }, 2000);
     });
+    const tagOut = document.getElementById('sumtagimg');
+    const ts = document.getElementById('sumtagshow'); if (ts) ts.onclick = () => showTagImg(d, 'tag', tagOut);
+    const ss = document.getElementById('sumscrshow'); if (ss) ss.onclick = () => showTagImg(d, 'screen', tagOut);
     const so = document.getElementById('sumopen'); if (so) so.onclick = () => showDeer(b);
     document.getElementById('sumback').onclick = () => showBoard();
   }
@@ -1694,6 +1715,10 @@
       '<button class="plain" id="reload">Refresh now</button></div>' +
       '<div class="card"><label for="bsearch">Find a deer <span class="hint">hunter ID, confirmation # or name</span></label>' +
       '<input id="bsearch" type="text" enterkeyhint="search" autocomplete="off" value="' + esc(boardQuery) + '" placeholder="1690575, MY4M3P or Bellabuono" autocorrect="off" spellcheck="false" autocapitalize="off">' +
+      '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px">' +
+      '<button type="button" class="btn ghost" id="bdaytoday" style="margin:0">Came in today</button>' +
+      '<label for="bday" class="status" style="margin:0">or on</label>' +
+      '<input id="bday" type="date" style="flex:1;min-width:140px;margin:0" aria-label="Deer that came in on another day"></div>' +
       '<div id="bhits">' + searchHtml(boardQuery) + '</div></div>' +
       (bandFilter ? '<div class="note ok">Showing ' + esc(bandFilter) + ' bands only. <button class="plain" id="clearband" style="padding:0">Show them all</button></div>' : '') +
       drop('Cooler', 'Cooler', cooler, coolerInner) +
@@ -1733,6 +1758,10 @@
       paint();
     };
     wireHits();
+    // v123: the day buttons put the date in the search box, so it reads and clears like any search.
+    const byDay = dt => { bs.value = mdy(dt); bs.oninput(); };
+    document.getElementById('bdaytoday').onclick = () => byDay(new Date());
+    document.getElementById('bday').onchange = e => { const m = String(e.target.value).match(/^(\d{4})-(\d\d)-(\d\d)$/); if (m) byDay(new Date(+m[1], +m[2] - 1, +m[3])); };
     // The cooler-duty pointer is the only data-go2 the board draws; wired here because the board
     // does not wire them generally.
     $app.querySelectorAll('[data-go2]').forEach(b => { b.onclick = () => {
@@ -2806,21 +2835,35 @@
     const iapNow = () => (document.querySelector('input[name=iap]:checked') || {}).value;
     const showId = () => { document.getElementById('genid').textContent = genId() || 'enter the date of the shot below'; };
 
-    /* A hunter the log has already seen fills himself in as his name is typed: customer ID, phone,
-       email and mailing address, straight into the fields, no tap.
+    /* A hunter the log has already seen fills himself in once his name is typed: customer ID,
+       phone, email and mailing address, straight into the fields, no tap.
 
        It used to wait for a tap on a suggestion, on the reasoning that a wrong ID filled quietly is
-       worse than one typed. Three weeks of check-ins says otherwise \u2014 Joe, 6 November: not one of
+       worse than one typed. Three weeks of check-ins says otherwise — Joe, 6 November: not one of
        them filled anything, because the suggestion sat below the fold under the shot date and
        nobody tapped what they never saw. A safeguard nobody reaches is not a safeguard. Gabe
        Bellabuono has been through this door seven times and his eight-digit ID has been typed in
        from a phone screen seven times.
 
+       v123 (Joe, 20 November). It filled from the first name alone, surname included, so a new
+       hunter called Josh became the Josh already in the log; and because the surname was one of
+       the fields it had filled, typing a different one cleared it and it was filled straight
+       back. The only way out was to misspell the first name. So now:
+         - nothing is filled, or offered, until BOTH names have something in them;
+         - it fills by itself only when the first and last name typed are exactly a hunter in the
+           log. A part-typed name that matches is offered as a tap, as two matches always were;
+         - the two name fields are never filled in and never cleared, except by tapping a name;
+         - a filled field the counter then types in is theirs: it is not cleared or refilled;
+         - "Not them" stays said, until the name is changed.
+
        What is kept: it only fills a field that is empty, it never touches the confirmation number,
        the date, the deer or the weights, it says in plain words whose record it came from, one tap
        takes it all back out, and a hunter carrying two different customer IDs in the log still
-       fills nothing \u2014 that is the one case where the log does not know the answer. */
-    let autoFrom = null, autoIds = [];
+       fills no ID — that is the one case where the log does not know the answer. */
+    let autoFrom = null, autoIds = [], notThem = '';
+    const FILLS = ['lic', 'ph', 'hem', 'ad1', 'adt', 'ads', 'adz'];
+    const lower = x => String(x || '').trim().toLowerCase();
+    const isTyped = h => lower(h.first) === lower(v('fn')) && lower(h.last) === lower(v('ln'));
     loadHunters().then(() => suggestHunters());
 
     function clearAuto() {
@@ -2828,8 +2871,7 @@
       autoIds = []; autoFrom = null;
     }
     // Fills blanks only. A field the counter typed into is theirs, and one we filled earlier is
-    // ours to correct \u2014 which is what lets a half-typed name that matched the wrong hunter undo
-    // itself as the rest of the name arrives.
+    // ours to correct, until they type in it.
     function put(id, val) {
       const el = document.getElementById(id);
       if (!el || !val) return;
@@ -2837,9 +2879,12 @@
       el.value = val;
       if (autoIds.indexOf(id) < 0) autoIds.push(id);
     }
-    function fillFrom(h) {
+    // Typing in a field we filled makes it the counter's: clearAuto() leaves it alone from then on.
+    FILLS.forEach(id => { const el = document.getElementById(id); if (el) el.addEventListener('input', () => { autoIds = autoIds.filter(x => x !== id); }); });
+    function fillFrom(h, names) {
       const split = (h.otherIds || []).length;          // two IDs on file: the log is not sure, so nor are we
-      put('fn', h.first); put('ln', h.last);
+      // The names only when somebody tapped this hunter, and never as fields of ours to clear.
+      if (names) { const f = document.getElementById('fn'), l = document.getElementById('ln'); if (f && h.first) f.value = h.first; if (l && h.last) l.value = h.last; }
       if (!split) put('lic', h.id);
       put('ph', h.phone); put('hem', h.email);
       const a = splitAddress(h.address);
@@ -2847,51 +2892,51 @@
       autoFrom = h;
       return split;
     }
+    const filledNote = (h, split) =>
+      '<div class="note ok"><b>' + esc(h.name) + '</b> — filled in from ' +
+      (h.lastSeen ? 'the check-in on ' + esc(h.lastSeen) : 'the last check-in') + '. ' +
+      h.deer + (h.deer === 1 ? ' deer' : ' deer') + ' through here. ' +
+      'Check the customer ID against their license before you save. Anything filled in can be changed.' +
+      '<button class="plain" id="hundo" style="margin-top:6px">Not them — clear it</button></div>' +
+      (split
+        ? '<div class="note bad">' + esc(h.name) + ' has more than one customer ID in the log: <b>' +
+          esc([h.id].concat(h.otherIds).join('</b> and <b>')) + '</b>. One is a typo, so the ID has ' +
+          'been left blank. Ask them which it is, and fix the other rows.</div>'
+        : '');
 
     function suggestHunters() {
       const box = document.getElementById('hbox');
       if (!box) return;
-      // Anything we filled from a hunter who no longer matches what is typed goes back out first,
-      // so a wrong ID cannot survive the rest of the name being typed.
-      if (autoFrom) {
-        const still = hunterMatches(v('fn'), v('ln')).some(h => h.name === autoFrom.name);
-        if (!still) clearAuto();
-      }
+      // What we filled from a hunter whose name is no longer the one typed goes back out first, so
+      // a wrong ID cannot survive the name being changed. The name fields themselves are not ours.
+      if (autoFrom && !isTyped(autoFrom)) clearAuto();
+      if (notThem && notThem !== lower(v('fn')) + '|' + lower(v('ln'))) notThem = '';
+      if (!v('fn').trim() || !v('ln').trim()) { box.innerHTML = ''; return; }
       const hits = hunterMatches(v('fn'), v('ln'));
       if (!hits.length) { box.innerHTML = ''; return; }
+      const undo = h => { const u = document.getElementById('hundo'); if (u) u.onclick = () => { clearAuto(); notThem = lower(h.first) + '|' + lower(h.last); suggestHunters(); }; };
 
-      if (hits.length === 1) {
-        const h = hits[0], split = fillFrom(h);
-        box.innerHTML =
-          '<div class="note ok"><b>' + esc(h.name) + '</b> \u2014 filled in from ' +
-          (h.lastSeen ? 'the check-in on ' + esc(h.lastSeen) : 'the last check-in') + '. ' +
-          h.deer + (h.deer === 1 ? ' deer' : ' deer') + ' through here. ' +
-          'Check the customer ID against their license before you save.' +
-          '<button class="plain" id="hundo" style="margin-top:6px">Not them \u2014 clear it</button></div>' +
-          (split
-            ? '<div class="note bad">' + esc(h.name) + ' has more than one customer ID in the log: <b>' +
-              esc([h.id].concat(h.otherIds).join('</b> and <b>')) + '</b>. One is a typo, so the ID has ' +
-              'been left blank. Ask them which it is, and fix the other rows.</div>'
-            : '');
-        const u = document.getElementById('hundo');
-        if (u) u.onclick = () => { clearAuto(); box.innerHTML = ''; };
+      if (autoFrom) { box.innerHTML = filledNote(autoFrom, (autoFrom.otherIds || []).length); undo(autoFrom); return; }
+      const exact = hits.filter(isTyped);
+      if (exact.length === 1 && !notThem) {
+        const h = exact[0], split = fillFrom(h);
+        box.innerHTML = filledNote(h, split); undo(h);
         return;
       }
 
-      // More than one. The log cannot choose between them and neither can we, so it stays a tap.
-      clearAuto();
-      box.innerHTML = '<p class="status">More than one hunter matches \u2014 tap the right one:</p>' +
+      // Part of a name, more than one hunter, or "not them": it stays a tap.
+      box.innerHTML = '<p class="status">' + (notThem ? 'Not filled in. Tap if it is them after all:' : hits.length > 1 ? 'More than one hunter matches — tap the right one:' : 'Been here before? Tap to fill in:') + '</p>' +
         hits.map((h, i) =>
-          '<button class="btn ghost" data-h="' + i + '" style="width:100%;text-align:left">' +
-          '<b>' + esc(h.name) + '</b>' + (h.id ? ' \u00b7 ' + esc(h.id) : ' \u00b7 no customer ID on file') +
+          '<button type="button" class="btn ghost" data-h="' + i + '" style="width:100%;text-align:left">' +
+          '<b>' + esc(h.name) + '</b>' + (h.id ? ' · ' + esc(h.id) : ' · no customer ID on file') +
           '<br><span class="status">' + h.deer + (h.deer === 1 ? ' deer' : ' deer') +
           (h.lastSeen ? ', last on ' + esc(h.lastSeen) : '') +
-          (h.address ? ' \u00b7 ' + esc(h.address) : '') + '</span></button>').join('');
+          (h.address ? ' · ' + esc(h.address) : '') + '</span></button>').join('');
       box.querySelectorAll('[data-h]').forEach(b => b.onclick = () => {
         const h = hits[+b.dataset.h];
-        fillFrom(h);
-        box.innerHTML = '<div class="note ok">Filled in from ' + esc(h.name) + '\u2019s last check-in. ' +
-          'Check the customer ID against their license before you save.</div>';
+        notThem = '';
+        const split = fillFrom(h, true);
+        box.innerHTML = filledNote(h, split); undo(h);
       });
     }
     ['fn', 'ln'].forEach(id => { const el = document.getElementById(id); if (el) el.oninput = suggestHunters; });
