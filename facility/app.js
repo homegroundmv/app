@@ -2509,6 +2509,11 @@
     const checklist = '<div class="note warn" id="cdlist" style="font-size:17px"><b>Cooler checklist, after every deer</b>' +
       '<ul style="margin:8px 0 0;padding-left:22px">' +
       cd.lines.map(it => '<li style="margin:6px 0"><b>' + esc(it) + '</b></li>').join('') + '</ul></div>';
+    /* v126 / backend 110 (Joe, 20 November: "remove the checkbox ... requiring a check to establish
+       the cooler is organized. Just text will suffice"). Unless Settings says the duty is recorded,
+       the list is all there is: no button to press, nothing outstanding, nothing on the board. An
+       older backend does not send `recorded`, and is treated as it always was. */
+    if (cd.recorded === false) return onBoard ? '' : '<div class="card" id="cdtext">' + checklist + '</div>';
     if (!cd.outstanding && !cd.waitingOnGrace) {
       return onBoard ? '' :
         '<div class="card">' + checklist + '<p class="status">Cooler squared away' + (cd.lastDone ? ' at ' + esc(cd.lastDone) : '') +
@@ -3786,13 +3791,62 @@
         (claimed && x.callout ? ' · call-out' : '') + '</div>' +
         '<div class="actions">' +
         (!claimed ? '<button class="btn" data-claim="' + esc(x.id) + '">I\'ll take it</button>' : '') +
+        // v126: answer the hunter from the Home Ground line, not from somebody's own phone.
+        (x.phone && atDoor() ? '<button class="btn alt" data-droptext="' + esc(x.id) + '">Text the hunter</button>' : '') +
         (x.mine || d.manager ? '<button class="btn ghost" data-dropcancel="' + esc(x.id) + '">Cancel</button>' : '') +
         '</div>' +
         (!claimed && !d.onSite ? '<div class="status">Not clocked in, so this would be a call-out: $' + d.calloutFee + ' flat.</div>' : '') +
         '</div>';
     }).join('');
   }
+  /* The conversation with a hunter who texted the drop-off line (v126, backend 110; Joe, 20
+     November). He had been answering from his own phone, which gives his number to everybody who
+     brings in a deer. A reply typed here goes out from the Home Ground number. Managers and intake
+     only. It is asked for when opened, and needs signal: a reply that might or might not have gone
+     is worse than one that plainly has not. */
+  async function showDropTexts(id, note) {
+    frame('droptexts', 'Text the hunter', '<div id="dtx"><p class="status">Loading the conversation…</p></div>', false, id);
+    const box = document.getElementById('dtx');
+    let t;
+    try { t = await call({ action: 'dropthread', id: id }); }
+    catch (e) { box.innerHTML = '<div class="note bad">' + esc(e.offline ? 'The conversation needs signal.' : e.message) + '</div>' +
+      '<button class="btn ghost" id="dtback">Back</button>'; document.getElementById('dtback').onclick = () => showHome(); return; }
+    const draw = (t, said) => {
+      const who = t.hunter || t.phone || 'the hunter';
+      box.innerHTML = '<div class="card"><b>' + esc(who) + '</b>' + (t.hunter && t.phone ? ' · <a href="tel:' + esc(t.phone.replace(/[^\d+]/g, '')) + '">' + esc(t.phone) + '</a>' : '') +
+        '<div id="dtlist" style="margin-top:10px">' + (t.texts.length ? t.texts.map(m =>
+          '<div class="dtmsg" data-dir="' + m.dir + '" style="margin:8px 0;display:flex;justify-content:' + (m.dir === 'out' ? 'flex-end' : 'flex-start') + '">' +
+          '<div style="max-width:86%;padding:9px 12px;border-radius:12px;border:1px solid var(--line);background:' + (m.dir === 'out' ? 'var(--paper)' : '#fff') + '">' +
+          '<div style="white-space:pre-wrap;word-break:break-word">' + esc(m.body) + '</div>' +
+          '<div class="status">' + esc(m.dir === 'out' ? (m.auto ? 'Sent automatically' : 'Sent by ' + (m.by || 'us')) : 'From the hunter') + ' · ' + esc(m.at) + '</div></div></div>').join('')
+          : '<p class="status">No texts with this hunter in the last three days.</p>') + '</div></div>' +
+        (said ? '<div class="note ok" id="dtsaid">' + esc(said) + '</div>' : '') +
+        (t.canReply
+          ? '<div class="card"><label for="dtbody">Your reply <span class="hint">goes out as a text from ' + esc(t.line || 'the Home Ground line') + ', signed Home Ground. Your own number is never shown</span></label>' +
+            '<textarea id="dtbody" maxlength="' + esc(t.max || 300) + '" rows="3" autocapitalize="sentences"></textarea>' +
+            '<div class="status" id="dtcount">0 of ' + esc(t.max || 300) + '</div><div class="err" id="dterr"></div>' +
+            '<button class="btn" id="dtsend" style="width:100%">Send text</button></div>'
+          : '<div class="note warn" id="dtwhy">' + esc(t.why || 'A text cannot be sent to this hunter.') + '</div>') +
+        '<button class="btn ghost" id="dtback" style="width:100%;margin-top:8px">Back</button>';
+      document.getElementById('dtback').onclick = () => showHome();
+      const ta = document.getElementById('dtbody'), send = document.getElementById('dtsend');
+      if (!ta) return;
+      ta.oninput = () => { document.getElementById('dtcount').textContent = ta.value.length + ' of ' + (t.max || 300); };
+      const cid = uid();   // one id per reply typed, so a retry of the same send texts him once
+      send.onclick = async () => {
+        const body = ta.value.trim();
+        if (!body) { document.getElementById('dterr').textContent = 'Type the message first.'; return; }
+        send.disabled = true; send.textContent = 'Sending…';
+        try { draw(await call({ action: 'dropreply', id: id, text: body, clientId: 'txt-' + cid }), 'Sent.'); }
+        catch (e) { send.disabled = false; send.textContent = 'Send text';
+          document.getElementById('dterr').textContent = e.offline ? 'No signal: the text has NOT gone. Try again when you have signal.' : e.message; }
+      };
+      const list = document.getElementById('dtlist'); if (list && list.lastElementChild) list.lastElementChild.scrollIntoView({ block: 'nearest' });
+    };
+    draw(t, note || '');
+  }
   function wireDrops(box) {
+    (box || $app).querySelectorAll('[data-droptext]').forEach(b => b.onclick = () => showDropTexts(b.dataset.droptext));
     (box || $app).querySelectorAll('[data-claim],[data-dropcancel]').forEach(b => b.onclick = async () => {
       b.disabled = true;
       const cancelling = !!b.dataset.dropcancel;

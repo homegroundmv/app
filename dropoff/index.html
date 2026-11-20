@@ -56,6 +56,11 @@ h1{font-family:var(--display);font-weight:700;font-size:clamp(26px,6.4vw,38px);l
 @media (max-width:520px){ .mast .wrap{flex-direction:column;align-items:flex-start;gap:12px} .plate img{width:110px} }
 
 /* quick actions */
+/* v8: the two prompts, above everything else. */
+.start2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px}
+.start2 .btn2{min-height:64px;font-size:17px;text-align:center;line-height:1.2}
+.start2note{margin:6px 2px 0;font-size:13px;color:var(--muted)}
+@media (max-width:420px){ .start2{grid-template-columns:1fr} }
 .quick{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:16px}
 .qa{display:flex;flex-direction:column;justify-content:center;gap:2px;min-height:64px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 14px;text-decoration:none;color:var(--ink)}
 .qa b{font-family:var(--num);font-size:21px;line-height:1.1;color:var(--orange)}
@@ -205,6 +210,14 @@ footer a{color:var(--orange)}
 </header>
 
 <main class="wrap">
+  <!-- The two things a hunter opens this for (Joe, 20 Nov 2026, v8). Messaging is a text to the
+       Home Ground line: staff answer it from the Facility app, from that same number, so nobody's
+       own phone number goes out. -->
+  <div class="start2" id="start2">
+    <a class="btn2 solid" id="goRegister" href="#card">Pre-Register My Deer</a>
+    <a class="btn2" id="goMessage" href="sms:+15086876255" target="_top">Message Home Ground</a>
+  </div>
+  <p class="start2note">Message Home Ground opens a text to (508) 687-6255. We answer from that number.</p>
   <div class="quick">
     <a class="qa" href="sms:+15086876255"><b>(508) 687-6255</b><span>Text us before you come</span></a>
     <a class="qa" href="https://www.google.com/maps/dir/?api=1&amp;destination=41.394750%2C-70.680694" target="_blank" rel="noopener"><b>Directions</b><span>MV Ag Society, West Tisbury</span></a>
@@ -791,6 +804,19 @@ if (document.fonts && document.fonts.ready) document.fonts.ready.then(tellParent
   window.addEventListener("appinstalled", close);
   setTimeout(function(){ open = true; draw(); $("appbg").hidden = false; $("appsheet").hidden = false; var hh = $("appsheetH"); hh.tabIndex = -1; hh.focus({ preventScroll: true }); }, 350);
 })();
+
+/* "Pre-Register My Deer" takes him to the form and puts the first question under his thumb. A
+   plain #card link would do the scrolling; this also tells the page it sits in, when it is
+   embedded on homegroundmv.com, where to scroll, the same way a change of step does. */
+$("goRegister").addEventListener("click", function(e){
+  e.preventDefault();
+  var card = $("card");
+  try {
+    if (window.parent !== window) window.parent.postMessage({ hgDropoffScrollTo: Math.max(0, card.getBoundingClientRect().top + window.scrollY - 12) }, "*");
+    else card.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (x) {}
+  var h = document.querySelector(".step:not([hidden]) h2"); if (h) { h.setAttribute("tabindex", "-1"); h.focus({ preventScroll: true }); }
+});
 
 drawOpen(); setInterval(drawOpen, 60000);
 var startAt = restore();
