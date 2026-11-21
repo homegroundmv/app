@@ -2678,6 +2678,11 @@
         '<p class="status">On MassWildlife’s sheet a tribal deer is entered as TRIBAL, with the town of harvest in place of the surname and the band number as the confirmation. The hunter’s own name stays on our record.</p></div>' +
       '<div id="licbox"><label for="lic">MassWildlife customer ID <span class="hint">5 to 8 digits</span></label><input id="lic" type="text" inputmode="numeric" maxlength="8" pattern="[0-9]*"></div>' +
       '<div><label for="ph">Hunter phone</label><input id="ph" type="tel"></div>' +
+      /* v128 (Joe, 21 November): asked on every check-in, right under the number. It used to show
+         only for a private deer or a kept skull, so cold-storage and donated hunters were never
+         asked and every collection reminder was logged "no consent on file". */
+      '<div id="txtbox" style="grid-column:1/-1"><label class="choice" style="margin:0"><input id="txtok" type="checkbox"> <span><b>OK to text him about this deer</b> \u2014 ask him. ' +
+        'Ready for pickup and collection reminders, from the Home Ground number. He can reply STOP any time.</span></label></div>' +
       /* UP HERE, beside the phone, and asked for EVERY deer (Joe, 10 November: "I just noticed
          we're not collecting an email address from hunters during check-in").
 
@@ -2693,8 +2698,6 @@
       /* Asked out loud, ticked only on a yes (Joe, 14 Nov). Shown only when there will be something
          to pick up. A hunter who never texts the drop-off line has no other way to agree, and
          without it the pickup texts never reach him (backend 88). */
-      '<div id="txtbox" hidden style="grid-column:1/-1"><label class="choice" style="margin:0"><input id="txtok" type="checkbox"> <span><b>Text me when it\u2019s ready for pickup</b> \u2014 ask him. ' +
-        'Only pickup texts: his skull once it is skinned, his venison once it is ready. He can reply STOP any time.</span></label></div>' +
       /* The state's system for confirming a deer is not always up, so a hunter can be standing here
          with a legal deer and no number (Joe, 12 November). Refusing the deer for that punishes the
          hunter for the state's outage. Ticked, the deer is checked in with the number blank and a
@@ -2786,11 +2789,8 @@
        invite a "No" that could get a rack binned that was never ours to bin. */
     const skullAsked = () => v('deer') === 'Antlered buck' &&
       ((document.querySelector('input[name=type]:checked') || {}).value || '') !== 'Cold storage';
-    /* Something to pick up: his venison (private) or his rack (skull kept, never cold storage). */
-    const txtAsked = () => {
-      const t = (document.querySelector('input[name=type]:checked') || {}).value || '';
-      return t === 'Private' || (skullAsked() && ((document.querySelector('input[name=skull]:checked') || {}).value === 'Yes'));
-    };
+    /* v128: every hunter is asked, whatever the deer is here for (it was private deer and kept skulls only). */
+    const txtAsked = () => true;
     const syncTxt = () => {
       const box = document.getElementById('txtbox'); if (!box) return;
       const show = txtAsked(); box.hidden = !show;
@@ -3186,7 +3186,7 @@
          check-in with it. Caught here, a slipped digit is fixed while the form is still open. */
       if (!weightOk(v('iw'))) return err('Check the weight: ' + v('iw') + ' lb is not a deer. Type it again, or leave it blank.');
       const txtYes = txtAsked() && !!(document.getElementById('txtok') || {}).checked;
-      if (txtYes && String(v('ph')).replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '').length !== 10) return err('He wants a text when it\u2019s ready: enter his mobile number.');
+      if (txtYes && String(v('ph')).replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '').length !== 10) return err('He said yes to texts: enter his mobile number, or untick the box.');
       /* A tribal deer has no MassWildlife customer ID and no confirmation number: ticking the box
          hides and clears both. The two checks below used to demand them anyway, so a tribal deer
          could not be checked in with the box ticked at all (Joe, 11 November). What it must have
