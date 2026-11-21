@@ -3970,7 +3970,12 @@
       '<div class="status">' + esc(m.dir === 'out' ? (m.auto ? 'Sent automatically' : 'Sent by ' + (m.by || 'us')) : 'From the hunter') + ' · ' + esc(m.at) + '</div></div></div>').join('')
       : '<p class="status">No texts with this hunter in the last ' + (t.days ? esc(t.days) + ' days' : 'three days') + '.</p>');
     const sig = t => (t.texts || []).length + '|' + (((t.texts || []).slice(-1)[0] || {}).at || '') + '|' + (((t.texts || []).slice(-1)[0] || {}).body || '');
-    let shown = '';
+    let shown = '', marked = false;
+    /* Is "Message received" worth offering: the people who answer hunters, a number to mark, and
+       his text still waiting. By number the server says so; from a drop-off or a deer it is his
+       being the last word while the banner is up. */
+    const received = t => !marked && atDoor() && (byPhone ? !!t.unanswered
+      : !!t.phone && ((t.texts || []).slice(-1)[0] || {}).dir === 'in' && (((st.home || {}).hunterTexts || {}).unanswered || 0) > 0);
     const draw = (t, said) => {
       const who = t.hunter || t.phone || 'the hunter';
       shown = sig(t);
@@ -3978,7 +3983,11 @@
         '<div id="dtlist" style="margin-top:10px">' + listHtml(t) + '</div>' +
         '<div class="status" id="dtlive">New texts show here by themselves.</div></div>' +
         (said ? '<div class="note ok" id="dtsaid">' + esc(said) + '</div>' : '') +
-        (byPhone && t.unanswered ? '<button class="btn ghost" id="dtnone" style="width:100%;margin:0 0 8px">No reply needed</button>' : '') +
+        /* v131 (Joe, 21 November): "it's making me reply but the conversation is over". One tap
+           that says his text was read and needs no answer: nothing is sent, and the banner goes.
+           It was a faint "No reply needed" on one of the three ways into this screen; it is a
+           full button now, on all three, whenever his is the last word. */
+        (received(t) ? '<button class="btn alt" id="dtnone" style="width:100%;margin:0 0 8px">Message received<small style="display:block;font-weight:400">Conversation over. Nothing is sent to the hunter</small></button>' : '') +
         (t.canReply
           ? '<div class="card"><label for="dtbody">' + (deerBack ? 'Your message' : 'Your reply') + ' <span class="hint">goes out as a text from ' + esc(t.line || 'the Home Ground line') + ', signed Home Ground. Your own number is never shown</span></label>' +
             '<textarea id="dtbody" maxlength="' + esc(t.max || 300) + '" rows="3" autocapitalize="sentences"></textarea>' +
@@ -3990,7 +3999,12 @@
       const none = document.getElementById('dtnone');
       if (none) none.onclick = async () => {
         none.disabled = true;
-        try { draw(await call({ action: 'hunterhandled', phone: id }), 'Marked as needing no reply.'); refresh(true); }
+        try {
+          const out = await call({ action: 'hunterhandled', phone: byPhone ? id : t.phone });
+          marked = true;
+          // From a drop-off or a deer the answer is the by-number conversation; keep this one as it is.
+          draw(byPhone ? out : t, 'Marked as received. Nothing was sent.'); refresh(true);
+        }
         catch (e) { none.disabled = false; toast(e.offline ? 'Needs signal.' : e.message); }
       };
       const ta = document.getElementById('dtbody'), send = document.getElementById('dtsend');
@@ -4024,7 +4038,8 @@
         if (list.lastElementChild) list.lastElementChild.scrollIntoView({ block: 'nearest' });
         // A text from him changes whether we may answer; draw the whole thing if nothing is typed.
         const ta = document.getElementById('dtbody');
-        if (!!now.canReply !== !!document.getElementById('dtsend') && !(ta && ta.value)) draw(now, '');
+        if (((now.texts || []).slice(-1)[0] || {}).dir === 'in') marked = false;   // he wrote again
+        if ((!!now.canReply !== !!document.getElementById('dtsend') || received(now) !== !!document.getElementById('dtnone')) && !(ta && ta.value)) draw(now, '');
       } catch (e) { /* the next one will try again */ }
     }, 10000);
   }
