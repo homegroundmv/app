@@ -1632,6 +1632,7 @@
         (near && (d['Harvest screenshot'] || pendingPhoto(d.Band, 'screen'))
           ? '<button type="button" class="btn ghost" id="sumscrshow" style="width:100%;margin-top:8px">View the hunter\u2019s phone</button>' : '') +
         '<div class="tagimg" id="sumtagimg"></div></div>')) +
+      (!isViewer() && d['Has hunter phone'] === 'Yes' && d.Status !== 'Voided' ? '<button type="button" class="btn ghost" id="summsg" style="width:100%;margin-top:8px">Message hunter</button>' : '') +
       (near ? '<button class="btn" id="sumopen" style="width:100%;margin-top:8px">Open this deer’s card</button>'
         : '<p class="status">This deer is from earlier in the season, so it has no card on the board. This summary is all there is to open.</p>') +
       '<button class="btn ghost" id="sumback" style="width:100%;margin-top:8px">Back to the search</button>', false, b);
@@ -1643,6 +1644,7 @@
     const tagOut = document.getElementById('sumtagimg');
     const ts = document.getElementById('sumtagshow'); if (ts) ts.onclick = () => showTagImg(d, 'tag', tagOut);
     const ss = document.getElementById('sumscrshow'); if (ss) ss.onclick = () => showTagImg(d, 'screen', tagOut);
+    const sm = document.getElementById('summsg'); if (sm) sm.onclick = () => showDropTexts(b, '', () => showSummary(b));
     const so = document.getElementById('sumopen'); if (so) so.onclick = () => showDeer(b);
     document.getElementById('sumback').onclick = () => showBoard();
   }
@@ -1836,6 +1838,10 @@
        an amendment — the Edits tab keeps what it was, what it became, who changed it and why — so
        people fix the record instead of working around it. */
     const canEdit = !isViewer() && (isMgr() || /intake/i.test((st.staff || {}).role || ''));
+    /* v127: a message to this deer's hunter, from the Home Ground line. Everyone but a view-only
+       sign-in. 'Has hunter phone' comes from backend 111, because a processor is not sent the number. */
+    const msgBtn = !isViewer() && d.Status !== 'Voided' && d['Has hunter phone'] === 'Yes'
+      ? ' <button class="btn ghost" data-a="msg">Message hunter</button>' : '';
     const editBtn = canEdit && d.Status !== 'Voided'
       ? ' <button class="btn ghost" data-a="edit">Correct the record</button>' : '';
     /* One step back. Every action here commits the instant it is tapped, which is right at a cold
@@ -1891,7 +1897,7 @@
       (d.Status === 'Released' ? '<div class="status">Released ' + esc(d.Released) + ' to ' + esc(d['Released to']) + '</div>' : '') +
       tagPhotoRow(d) +
       '<div class="actions">' + payBtn + act + moveBtn + (live && !isViewer() ? '<button class="btn ghost" data-a="print">Print band</button>' : '') +
-      (live && !isViewer() && antlerBandFor(d) ? '<button class="btn ghost" data-a="antlerprint">Print antler band</button>' : '') + editBtn + undoBtn + voidBtn + '</div><div class="form"></div></div>';
+      (live && !isViewer() && antlerBandFor(d) ? '<button class="btn ghost" data-a="antlerprint">Print antler band</button>' : '') + msgBtn + editBtn + undoBtn + voidBtn + '</div><div class="form"></div></div>';
   }
 
   /* Starting work while clocked out is how hours go missing: nobody forgets to clock in on purpose,
@@ -2004,6 +2010,7 @@
     /* Starting a deer only. Skinning is left alone deliberately: a carcass that has been skinned
        and not hung is the one thing in the building that cannot wait, and the duty can. */
     if (kind === 'start' && !isViewer() && opsDuty().blocking) return opsStop(box, after);
+    if (kind === 'msg') return showDropTexts(band(d.Band), '', after || (() => showBoard()));
     if (kind === 'print') return printBand(d);
     if (kind === 'antlerprint') return printAntlerBand(d);
     if (kind === 'tagshow' || kind === 'scrshow') return showTagImg(d, kind === 'tagshow' ? 'tag' : 'screen', box);
@@ -3804,31 +3811,35 @@
      brings in a deer. A reply typed here goes out from the Home Ground number. Managers and intake
      only. It is asked for when opened, and needs signal: a reply that might or might not have gone
      is worse than one that plainly has not. */
-  async function showDropTexts(id, note) {
-    frame('droptexts', 'Text the hunter', '<div id="dtx"><p class="status">Loading the conversation…</p></div>', false, id);
+  /* v127 (backend 111; Joe, 21 November): the same screen from a deer's card, "Message hunter",
+     for every staff sign-in and any hunter with a number on the deer. `deerBack` is where Back
+     goes, and its presence is what makes `id` a band. A processor is sent the name, not the number. */
+  async function showDropTexts(id, note, deerBack) {
+    const back = () => (deerBack ? deerBack() : showHome());
+    frame(deerBack ? 'deertexts' : 'droptexts', deerBack ? 'Message hunter' : 'Text the hunter', '<div id="dtx"><p class="status">Loading the conversation…</p></div>', false, id);
     const box = document.getElementById('dtx');
     let t;
-    try { t = await call({ action: 'dropthread', id: id }); }
+    try { t = await call(deerBack ? { action: 'deerthread', band: id } : { action: 'dropthread', id: id }); }
     catch (e) { box.innerHTML = '<div class="note bad">' + esc(e.offline ? 'The conversation needs signal.' : e.message) + '</div>' +
-      '<button class="btn ghost" id="dtback">Back</button>'; document.getElementById('dtback').onclick = () => showHome(); return; }
+      '<button class="btn ghost" id="dtback">Back</button>'; document.getElementById('dtback').onclick = back; return; }
     const draw = (t, said) => {
       const who = t.hunter || t.phone || 'the hunter';
-      box.innerHTML = '<div class="card"><b>' + esc(who) + '</b>' + (t.hunter && t.phone ? ' · <a href="tel:' + esc(t.phone.replace(/[^\d+]/g, '')) + '">' + esc(t.phone) + '</a>' : '') +
+      box.innerHTML = '<div class="card"><b>' + esc(who) + '</b>' + (deerBack ? ' <span class="status">· band ' + esc(t.band || id) + '</span>' : '') + (t.hunter && t.phone ? ' · <a href="tel:' + esc(t.phone.replace(/[^\d+]/g, '')) + '">' + esc(t.phone) + '</a>' : '') +
         '<div id="dtlist" style="margin-top:10px">' + (t.texts.length ? t.texts.map(m =>
           '<div class="dtmsg" data-dir="' + m.dir + '" style="margin:8px 0;display:flex;justify-content:' + (m.dir === 'out' ? 'flex-end' : 'flex-start') + '">' +
           '<div style="max-width:86%;padding:9px 12px;border-radius:12px;border:1px solid var(--line);background:' + (m.dir === 'out' ? 'var(--paper)' : '#fff') + '">' +
           '<div style="white-space:pre-wrap;word-break:break-word">' + esc(m.body) + '</div>' +
           '<div class="status">' + esc(m.dir === 'out' ? (m.auto ? 'Sent automatically' : 'Sent by ' + (m.by || 'us')) : 'From the hunter') + ' · ' + esc(m.at) + '</div></div></div>').join('')
-          : '<p class="status">No texts with this hunter in the last three days.</p>') + '</div></div>' +
+          : '<p class="status">No texts with this hunter in the last ' + (t.days ? esc(t.days) + ' days' : 'three days') + '.</p>') + '</div></div>' +
         (said ? '<div class="note ok" id="dtsaid">' + esc(said) + '</div>' : '') +
         (t.canReply
-          ? '<div class="card"><label for="dtbody">Your reply <span class="hint">goes out as a text from ' + esc(t.line || 'the Home Ground line') + ', signed Home Ground. Your own number is never shown</span></label>' +
+          ? '<div class="card"><label for="dtbody">' + (deerBack ? 'Your message' : 'Your reply') + ' <span class="hint">goes out as a text from ' + esc(t.line || 'the Home Ground line') + ', signed Home Ground. Your own number is never shown</span></label>' +
             '<textarea id="dtbody" maxlength="' + esc(t.max || 300) + '" rows="3" autocapitalize="sentences"></textarea>' +
             '<div class="status" id="dtcount">0 of ' + esc(t.max || 300) + '</div><div class="err" id="dterr"></div>' +
             '<button class="btn" id="dtsend" style="width:100%">Send text</button></div>'
           : '<div class="note warn" id="dtwhy">' + esc(t.why || 'A text cannot be sent to this hunter.') + '</div>') +
         '<button class="btn ghost" id="dtback" style="width:100%;margin-top:8px">Back</button>';
-      document.getElementById('dtback').onclick = () => showHome();
+      document.getElementById('dtback').onclick = back;
       const ta = document.getElementById('dtbody'), send = document.getElementById('dtsend');
       if (!ta) return;
       ta.oninput = () => { document.getElementById('dtcount').textContent = ta.value.length + ' of ' + (t.max || 300); };
@@ -3837,7 +3848,8 @@
         const body = ta.value.trim();
         if (!body) { document.getElementById('dterr').textContent = 'Type the message first.'; return; }
         send.disabled = true; send.textContent = 'Sending…';
-        try { draw(await call({ action: 'dropreply', id: id, text: body, clientId: 'txt-' + cid }), 'Sent.'); }
+        try { draw(await call(deerBack ? { action: 'deerreply', band: id, text: body, clientId: 'txt-' + cid }
+          : { action: 'dropreply', id: id, text: body, clientId: 'txt-' + cid }), 'Sent.'); }
         catch (e) { send.disabled = false; send.textContent = 'Send text';
           document.getElementById('dterr').textContent = e.offline ? 'No signal: the text has NOT gone. Try again when you have signal.' : e.message; }
       };
