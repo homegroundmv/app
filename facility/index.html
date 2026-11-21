@@ -34,6 +34,12 @@
   .big small { display: block; font-weight: 400; font-size: 14px; opacity: .9; margin-top: 2px; }
   .big.alt { background: var(--brown); }
   .big:disabled { background: #B9B2A6; }
+  /* v130: Back and Home. Big enough for a gloved thumb, and they stay put while the page scrolls. */
+  .navrow { position: sticky; top: 0; z-index: 20; display: flex; gap: 10px; margin: 0 0 10px; padding: 8px 0; background: var(--paper); border-bottom: 1px solid var(--line); }
+  .navb { flex: 1; min-height: 52px; font: inherit; font-size: 18px; font-weight: 700; color: var(--green); background: var(--card); border: 2px solid var(--green); border-radius: 12px; cursor: pointer; }
+  .navb:active { background: var(--green); color: #fff; }
+  .htban { display: block; width: 100%; margin: 0 0 8px; padding: 12px 14px; text-align: left; font: inherit; font-size: 17px; color: #fff; background: #B3261E; border: 0; border-radius: 12px; cursor: pointer; }
+  .htban span { display: block; font-size: 15px; opacity: .95; }
   button.plain { background: none; border: 0; color: var(--green); font-size: 16px; padding: 10px 0; cursor: pointer; text-decoration: underline; }
   label { display: block; font-weight: 600; margin: 16px 0 6px; }
   .hint { color: var(--muted); font-size: 14px; font-weight: 400; margin-top: 2px; }

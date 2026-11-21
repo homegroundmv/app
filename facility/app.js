@@ -701,12 +701,22 @@
       else if (current === 'deer' && shownBand && !busy) showDeer(shownBand);
       /* The fetched screens redraw themselves by being opened again, which is what happens when
          the real answer arrives behind the cached one. Never while something is half typed. */
+      // v130: a check-in opened from a drop-off card stays that drop-off's check-in when redrawn.
+      else if (current === 'intake' && intakeDrop && !document.querySelector('input:focus, select:focus, textarea:focus')) showIntake(intakeDrop);
       else if (GO[current] && !document.querySelector('input:focus, select:focus, textarea:focus')) GO[current]();
       /* Nothing repainted the strip, because nothing repainted — so say it here, or a held screen
          looks exactly like a screen with no news. */
       if (formPaused) status();
+      // v130: and the banner about a hunter's text must reach a screen that is not being redrawn.
+      else if (((st.home || {}).hunterTexts || {}).unanswered || document.getElementById('htban')) status();
     } finally { redrawing = false; }
   }
+  // v130: the banner is redrawn with the status strip, so its tap is caught here, once.
+  document.addEventListener('click', e => {
+    if (!(e.target && e.target.closest && e.target.closest('#htban'))) return;
+    const ht = (st.home || {}).hunterTexts || {};
+    if (ht.unanswered === 1 && ht.phone) showDropTexts(ht.phone, '', null, true); else showHunterInbox();
+  });
   // Exposed so the tests can fire the 45-second poll's redraw without waiting 45 seconds for it.
   window.__hgRedraw = redraw;
   window.addEventListener('online', flush);
@@ -753,7 +763,14 @@
           ? '<span class="pill">Everything sent</span> <span class="status">Updated ' + esc(st.synced || '—') + '</span>'
           : '<span class="pill wait">No signal</span> <span class="status">Nothing is updating. Last fetched ' +
             esc(st.synced || '—') + '</span>');
-    el.innerHTML = queue +
+    /* v130 (Joe, 21 November): "the notification at the top of our screens, 'unanswered message
+       from a hunter', so we know". On every screen, for the people who can answer, until somebody
+       replies or says no reply is needed. Not on the conversation it is about. */
+    const ht = (st.home || {}).hunterTexts;
+    const htBan = ht && ht.unanswered > 0 && current !== 'huntertexts'
+      ? '<button class="htban" id="htban"><b>Unanswered message from a hunter</b><span>' + esc(ht.who || 'A hunter') +
+        (ht.unanswered > 1 ? ' and ' + (ht.unanswered - 1) + ' more' : '') + ' · tap to read and reply</span></button>' : '';
+    el.innerHTML = htBan + queue +
       /* v116. Stays until somebody says the band on the carcass has been replaced: a toast is gone
          in seconds, and this is two deer about to be mixed up. */
       (st.reband || []).filter(r => !r.done && (!r.by || r.by === st.number)).map(r =>
@@ -894,10 +911,29 @@
   let frameKey = '';
   let threadTimer = null;
   const stopThread = () => { if (threadTimer) { clearInterval(threadTimer); threadTimer = null; } };
+  /* v130 (Joe, 21 November): "a back button instead of just a home button". The screens somebody
+     came through, newest last. frame() adds the one being left; Back opens the newest that can be
+     opened again by name: Home, the board, a deer, and everything on GO. A form reached from one
+     of those (a text thread, a turn-away) is not kept: Back from the screen after it goes to the
+     screen before it. Home empties the list, so Back never loops. */
+  let navTrail = [], navBacking = false, navHere = null;
+  const navOpen = e => e.name === 'home' ? (showHome(), true)
+    : e.name === 'deer' && e.ident ? (showDeer(e.ident), true)
+    : typeof GO[e.name] === 'function' ? (GO[e.name](), true) : false;
+  function goBack() {
+    navBacking = true;
+    try {
+      while (navTrail.length) { const e = navTrail.pop(); try { if (navOpen(e)) return; } catch (x) { /* try the one before */ } }
+      showHome();
+    } finally { navBacking = false; }
+  }
   function frame(name, title, body, noBack, ident) {
     stopThread();
     const key = name + (ident == null ? '' : '|' + ident);
     const sameScreen = key === frameKey;
+    if (name === 'home') navTrail = [];
+    else if (!sameScreen && !navBacking && navHere && navHere.key !== key) { navTrail.push(navHere); if (navTrail.length > 30) navTrail.shift(); }
+    navHere = { name: name, ident: ident == null ? null : ident, key: key };
     frameKey = key;
     current = name;
     touchedEl = null;   // a screen being drawn is a save, a cancel or a navigation: nothing entered yet
@@ -907,12 +943,16 @@
          the top of every screen, acting on one touch: a gloved thumb reaching for Home signed
          people out, and signing back in needs signal and a PIN. It is at the foot of Home now. */
       '<div class="sub">Home Ground Facility ' + esc(APP_VERSION) + '</div></div></header>' +
-      (noBack ? '' : '<button class="plain" id="home-btn">← Home</button>') +
+      /* v130: two real buttons, side by side, that stay at the top of the screen while it scrolls.
+         It was one underlined word, "Home", that scrolled away with the page. */
+      (noBack ? '' : '<nav class="navrow"><button class="navb" id="back-btn">← Back</button><button class="navb" id="home-btn">⌂ Home</button></nav>') +
       (title ? '<h1>' + title + '</h1>' : '') +
       (st.staff && st.staff.demo ? '<div class="note warn"><b>Demo sign-in.</b> Practice data: nothing here goes into the real Facility Log.</div>' : '') +
       '<div id="sync" class="status"></div><div id="msg"></div>' + body;
     const hb = document.getElementById('home-btn');
     if (hb) hb.onclick = () => showHome();
+    const bb = document.getElementById('back-btn');
+    if (bb) bb.onclick = () => goBack();
     status();
     /* Jump to the top when the person NAVIGATED here. Never when the screen they are already
        reading is simply being drawn again. Being thrown back to the first card while working down
@@ -1167,7 +1207,9 @@
        here the way it does for messages and supplies — you need this button at the moment something
        goes wrong, with no warning and nothing counted in advance — which is why the label carries
        it. If this group is ever renamed, the word "help" has to survive the rename. */
-    const tellBadge = (h.unread ? ' (' + h.unread + ' new)' : '') +
+    // v130: hunters' texts waiting on an answer (backend 117). Managers and intake are sent the count.
+    const htWait = (h.hunterTexts && h.hunterTexts.unanswered) || 0;
+    const tellBadge = (h.unread ? ' (' + h.unread + ' new)' : '') + (htWait ? ' · ' + htWait + ' from hunters' : '') +
       (h.openSupplies ? ' · ' + h.openSupplies + ' to order' : '');
     const tell =
       '<button class="morebtn" id="tellbtn"><span id="tellarrow">' + (st.tellOpen ? '▾' : '▸') + '</span> Need help, supplies, messages' + tellBadge + '</button>' +
@@ -1179,6 +1221,8 @@
         ? h.openSupplies + (h.openSupplies === 1 ? ' thing waiting' : ' things waiting') + ' · tell the managers what we need'
         : 'Bags, gloves, sanitizer — two taps and the managers know', h.openSupplies ? 'red' : 'alt') +
       big('messages', 'Messages' + (h.unread ? ' (' + h.unread + ' new)' : ''), 'Team chat and direct messages') +
+      (atDoor() ? big('hunterinbox', 'Messages from hunters' + (htWait ? ' (' + htWait + ' waiting)' : ''),
+        'Texts to the Home Ground line, and our replies', htWait ? 'red' : '') : '') +
       /* Everybody, not just managers: the person who finds the problem is usually at the bench,
          and the operational sanitation screen sends them straight here. */
       big('corrective', 'Corrective action', 'Write up a problem and what you did about it', 'alt') +
@@ -2530,7 +2574,8 @@
 
   /* ---------- intake ---------- */
   const TURN_AWAY = ['No MassWildlife confirmation number, or the tag doesn\'t match', 'More than 24 hours since the shot',
-    'Not field dressed within 4 hours (air above 37°F)', 'Spoiled: smell, green or slimy meat, flies or maggots',
+    'Not field dressed within 4 hours (air above 37°F)', 'Temperature probe above 40°F', 'Failed visual inspection',
+    'Spoiled: off smell, green or slimy meat, flies or maggots',
     'Heavy gut contamination that can\'t be trimmed', 'Signs of illness: lesions, abscesses, very thin or sick-looking',
     'Road-killed, or already cut up or quartered', 'Other (say why in the notes)'];
   const CUTS = [['Backstraps', ['Whole', 'Steaks', 'Butterflied', 'Ground']], ['Tenderloins', ['Whole', 'Ground']],
@@ -2656,7 +2701,12 @@
     };
   }
 
-  function showIntake() {
+  /* v130 (Joe, 21 November): "Hunter is here: check in" on a drop-off card opens this form with
+     the hunter's name and number already in it, and the check-in then says which drop-off it was,
+     so that card closes whoever raised or claimed it (backend 116). */
+  let intakeDrop = null;
+  function showIntake(fromDrop) {
+    intakeDrop = fromDrop || null;
     const s = S(), now = new Date();
     const todayBand = bandColour(new Date());
     /* Stop here rather than at the end. The backend refuses a check-in from a processor (v76), and
@@ -2674,6 +2724,8 @@
     }
     frame('intake', 'Check in a deer',
       (todayBand ? '<div class="note ok" style="font-size:17px">' + swatch(todayBand) + ' today. Make sure the <b>' + esc(todayBand) + '</b> roll is in the band printer.</div>' : '') +
+      (intakeDrop ? '<div class="note ok" id="fromdrop">Checking in the deer <b>' + esc(intakeDrop.hunter || intakeDrop.phone || 'a hunter') +
+        '</b> said was coming. Saving this closes that drop-off.</div>' : '') +
       // Hunters who filled in the drop-off form on the Deer Dashboard (v106). Filled in after load.
       '<div id="prebox"></div>' +
       '<div class="card">' +
@@ -3295,6 +3347,7 @@
         // Martin's Last Name field on a tribal row (10 November).
         townOfHarvest: (document.getElementById('tribal') || {}).checked ? v('thtown').trim() : v('htown').trim(),
         precheckRef: precheckRef || undefined,
+        dropId: (intakeDrop && intakeDrop.id) || undefined,
         tagLost, noPhotoReason: noCam ? noCamWhy : '',
         // He told us at the counter that it is already filed. Donated only — nothing else is paid
         // by TFMV, so there is no form to have filed.
@@ -3342,6 +3395,14 @@
       showBoard();
       toast('Band ' + b + ' checked in.', true);
     };
+    if (intakeDrop) {
+      /* Only what the drop-off knows, and only into fields still empty. A name that came in as one
+         string is split at the last space; it is there to be corrected, not trusted. */
+      const put = (id, val) => { const e = document.getElementById(id); if (e && !e.value && val) { e.value = val; e.dispatchEvent(new Event('input', { bubbles: true })); } };
+      const nm = String(intakeDrop.hunter || '').trim(), cut = nm.lastIndexOf(' ');
+      put('fn', cut > 0 ? nm.slice(0, cut) : nm); put('ln', cut > 0 ? nm.slice(cut + 1) : '');
+      put('ph', intakeDrop.phone || '');
+    }
     document.getElementById('away').onclick = () => {
       const box = document.getElementById('awaybox');
       box.innerHTML = '<label>Why is it being turned away?</label>' + TURN_AWAY.map(r => '<label class="choice"><input type="radio" name="why" value="' + esc(r) + '"> ' + esc(r) + '</label>').join('') +
@@ -3758,8 +3819,29 @@
   }   // no browser dialogs: cancelling is one tap and can be re-booked
 
   /* ---------- messages ---------- */
+  /* v130 (backend 117): every hunter who has texted the line in the last three days, newest
+     first, and which of them is waiting on us. Managers and intake. */
+  async function showHunterInbox() {
+    frame('hunterinbox', 'Messages from hunters', '<p class="status">Texts sent to the Home Ground line. A reply goes out from that number, never from your own.</p>' +
+      '<div id="hbox" class="card"><span class="status">Loading…</span></div>');
+    const box = document.getElementById('hbox');
+    try {
+      const out = await call({ action: 'hunterinbox' });
+      if (!document.getElementById('hbox')) return;
+      box.innerHTML = out.threads.length ? out.threads.map((t, i) =>
+        '<button class="plain row-btn" data-hp="' + esc(t.phone) + '" style="text-decoration:none;text-align:left;width:100%' + (i ? ';border-top:1px solid var(--line)' : '') + '">' +
+        '<b>' + esc(t.hunter || t.phone) + '</b>' + (t.hunter ? ' <span class="status">' + esc(t.phone) + '</span>' : '') +
+        (t.unanswered ? ' <span class="pill wait">needs a reply</span>' : '') +
+        '<br><span class="status">' + esc(t.last || '') + ' · ' + esc(t.minsAgo < 2 ? 'just now' : t.minsAgo < 90 ? t.minsAgo + ' min ago' : when(t.at)) + '</span></button>').join('')
+        : '<span class="status">No hunter has texted in the last ' + esc(Math.round((out.hours || 72) / 24)) + ' days.</span>';
+      box.querySelectorAll('[data-hp]').forEach(b => b.onclick = () => showDropTexts(b.dataset.hp, '', null, true));
+    } catch (e) { box.innerHTML = '<span class="status">' + esc(e.offline ? 'Hunters’ messages need signal.' : e.message) + '</span>'; }
+  }
   async function showMessages() {
-    frame('messages', 'Messages', '<p class="status">Messages stay on the facility record. Keep them about the work.</p><div id="threads" class="card"><span class="status">Loading…</span></div>');
+    frame('messages', 'Messages', (atDoor() ? '<button class="btn alt" id="tohunters" style="width:100%;margin-bottom:10px">Messages from hunters' +
+      ((st.home.hunterTexts || {}).unanswered ? ' (' + st.home.hunterTexts.unanswered + ' waiting)' : '') + '</button>' : '') +
+      '<p class="status">Messages stay on the facility record. Keep them about the work.</p><div id="threads" class="card"><span class="status">Loading…</span></div>');
+    const th = document.getElementById('tohunters'); if (th) th.onclick = () => showHunterInbox();
     const box = document.getElementById('threads');
     try {
       const out = await call({ action: 'threads' });
@@ -3849,7 +3931,11 @@
         '<div class="actions">' +
         (!claimed ? '<button class="btn" data-claim="' + esc(x.id) + '">I\'ll take it</button>' : '') +
         // v126: answer the hunter from the Home Ground line, not from somebody's own phone.
+        /* v130 (Joe, 21 November): the two things that actually happen when the truck pulls in.
+           Managers and intake, like the check-in itself. Cancel stays for the hunter who never came. */
+        (atDoor() ? '<button class="btn" data-dropin="' + esc(x.id) + '">Hunter is here: check in</button>' : '') +
         (x.phone && atDoor() ? '<button class="btn alt" data-droptext="' + esc(x.id) + '">Text the hunter</button>' : '') +
+        (atDoor() ? '<button class="btn ghost" data-dropaway="' + esc(x.id) + '">Turn this deer away</button>' : '') +
         (x.mine || d.manager ? '<button class="btn ghost" data-dropcancel="' + esc(x.id) + '">Cancel</button>' : '') +
         '</div>' +
         (!claimed && !d.onSite ? '<div class="status">Not clocked in, so this would be a call-out: $' + d.calloutFee + ' flat.</div>' : '') +
@@ -3864,24 +3950,35 @@
   /* v127 (backend 111; Joe, 21 November): the same screen from a deer's card, "Message hunter",
      for every staff sign-in and any hunter with a number on the deer. `deerBack` is where Back
      goes, and its presence is what makes `id` a band. A processor is sent the name, not the number. */
-  async function showDropTexts(id, note, deerBack) {
-    const back = () => (deerBack ? deerBack() : showHome());
-    frame(deerBack ? 'deertexts' : 'droptexts', deerBack ? 'Message hunter' : 'Text the hunter', '<div id="dtx"><p class="status">Loading the conversation…</p></div>', false, id);
+  /* v130 (backend 117; Joe, 21 November): a third way in, `byPhone`, from "Messages from hunters"
+     and the banner: `id` is then the number. And the conversation now reads itself again every
+     ten seconds while it is open. "His reply text wasn't showing until I hit Home then went back
+     to Text hunter." */
+  async function showDropTexts(id, note, deerBack, byPhone) {
+    const back = () => (byPhone ? showHunterInbox() : deerBack ? deerBack() : showHome());
+    const ask = () => call(byPhone ? { action: 'hunterthread', phone: id } : deerBack ? { action: 'deerthread', band: id } : { action: 'dropthread', id: id });
+    frame(byPhone ? 'huntertexts' : deerBack ? 'deertexts' : 'droptexts', byPhone ? 'Message from a hunter' : deerBack ? 'Message hunter' : 'Text the hunter', '<div id="dtx"><p class="status">Loading the conversation…</p></div>', false, id);
     const box = document.getElementById('dtx');
     let t;
-    try { t = await call(deerBack ? { action: 'deerthread', band: id } : { action: 'dropthread', id: id }); }
+    try { t = await ask(); }
     catch (e) { box.innerHTML = '<div class="note bad">' + esc(e.offline ? 'The conversation needs signal.' : e.message) + '</div>' +
       '<button class="btn ghost" id="dtback">Back</button>'; document.getElementById('dtback').onclick = back; return; }
+    const listHtml = t => (t.texts.length ? t.texts.map(m =>
+      '<div class="dtmsg" data-dir="' + m.dir + '" style="margin:8px 0;display:flex;justify-content:' + (m.dir === 'out' ? 'flex-end' : 'flex-start') + '">' +
+      '<div style="max-width:86%;padding:9px 12px;border-radius:12px;border:1px solid var(--line);background:' + (m.dir === 'out' ? 'var(--paper)' : '#fff') + '">' +
+      '<div style="white-space:pre-wrap;word-break:break-word">' + esc(m.body) + '</div>' +
+      '<div class="status">' + esc(m.dir === 'out' ? (m.auto ? 'Sent automatically' : 'Sent by ' + (m.by || 'us')) : 'From the hunter') + ' · ' + esc(m.at) + '</div></div></div>').join('')
+      : '<p class="status">No texts with this hunter in the last ' + (t.days ? esc(t.days) + ' days' : 'three days') + '.</p>');
+    const sig = t => (t.texts || []).length + '|' + (((t.texts || []).slice(-1)[0] || {}).at || '') + '|' + (((t.texts || []).slice(-1)[0] || {}).body || '');
+    let shown = '';
     const draw = (t, said) => {
       const who = t.hunter || t.phone || 'the hunter';
+      shown = sig(t);
       box.innerHTML = '<div class="card"><b>' + esc(who) + '</b>' + (deerBack ? ' <span class="status">· band ' + esc(t.band || id) + '</span>' : '') + (t.hunter && t.phone ? ' · <a href="tel:' + esc(t.phone.replace(/[^\d+]/g, '')) + '">' + esc(t.phone) + '</a>' : '') +
-        '<div id="dtlist" style="margin-top:10px">' + (t.texts.length ? t.texts.map(m =>
-          '<div class="dtmsg" data-dir="' + m.dir + '" style="margin:8px 0;display:flex;justify-content:' + (m.dir === 'out' ? 'flex-end' : 'flex-start') + '">' +
-          '<div style="max-width:86%;padding:9px 12px;border-radius:12px;border:1px solid var(--line);background:' + (m.dir === 'out' ? 'var(--paper)' : '#fff') + '">' +
-          '<div style="white-space:pre-wrap;word-break:break-word">' + esc(m.body) + '</div>' +
-          '<div class="status">' + esc(m.dir === 'out' ? (m.auto ? 'Sent automatically' : 'Sent by ' + (m.by || 'us')) : 'From the hunter') + ' · ' + esc(m.at) + '</div></div></div>').join('')
-          : '<p class="status">No texts with this hunter in the last ' + (t.days ? esc(t.days) + ' days' : 'three days') + '.</p>') + '</div></div>' +
+        '<div id="dtlist" style="margin-top:10px">' + listHtml(t) + '</div>' +
+        '<div class="status" id="dtlive">New texts show here by themselves.</div></div>' +
         (said ? '<div class="note ok" id="dtsaid">' + esc(said) + '</div>' : '') +
+        (byPhone && t.unanswered ? '<button class="btn ghost" id="dtnone" style="width:100%;margin:0 0 8px">No reply needed</button>' : '') +
         (t.canReply
           ? '<div class="card"><label for="dtbody">' + (deerBack ? 'Your message' : 'Your reply') + ' <span class="hint">goes out as a text from ' + esc(t.line || 'the Home Ground line') + ', signed Home Ground. Your own number is never shown</span></label>' +
             '<textarea id="dtbody" maxlength="' + esc(t.max || 300) + '" rows="3" autocapitalize="sentences"></textarea>' +
@@ -3890,6 +3987,12 @@
           : '<div class="note warn" id="dtwhy">' + esc(t.why || 'A text cannot be sent to this hunter.') + '</div>') +
         '<button class="btn ghost" id="dtback" style="width:100%;margin-top:8px">Back</button>';
       document.getElementById('dtback').onclick = back;
+      const none = document.getElementById('dtnone');
+      if (none) none.onclick = async () => {
+        none.disabled = true;
+        try { draw(await call({ action: 'hunterhandled', phone: id }), 'Marked as needing no reply.'); refresh(true); }
+        catch (e) { none.disabled = false; toast(e.offline ? 'Needs signal.' : e.message); }
+      };
       const ta = document.getElementById('dtbody'), send = document.getElementById('dtsend');
       if (!ta) return;
       ta.oninput = () => { document.getElementById('dtcount').textContent = ta.value.length + ' of ' + (t.max || 300); };
@@ -3898,17 +4001,69 @@
         const body = ta.value.trim();
         if (!body) { document.getElementById('dterr').textContent = 'Type the message first.'; return; }
         send.disabled = true; send.textContent = 'Sending…';
-        try { draw(await call(deerBack ? { action: 'deerreply', band: id, text: body, clientId: 'txt-' + cid }
-          : { action: 'dropreply', id: id, text: body, clientId: 'txt-' + cid }), 'Sent.'); }
+        try { draw(await call(byPhone ? { action: 'hunterreply', phone: id, text: body, clientId: 'txt-' + cid }
+          : deerBack ? { action: 'deerreply', band: id, text: body, clientId: 'txt-' + cid }
+          : { action: 'dropreply', id: id, text: body, clientId: 'txt-' + cid }), 'Sent.'); refresh(true); }
         catch (e) { send.disabled = false; send.textContent = 'Send text';
           document.getElementById('dterr').textContent = e.offline ? 'No signal: the text has NOT gone. Try again when you have signal.' : e.message; }
       };
       const list = document.getElementById('dtlist'); if (list && list.lastElementChild) list.lastElementChild.scrollIntoView({ block: 'nearest' });
     };
     draw(t, note || '');
+    /* Read it again every ten seconds while it is open. Only the list of texts is replaced, so a
+       reply half typed is left alone. frame() stops this when the screen is left. */
+    const mine = frameKey;
+    threadTimer = setInterval(async () => {
+      if (frameKey !== mine) return stopThread();
+      if (document.hidden || !navigator.onLine) return;
+      try {
+        const now = await ask();
+        const list = document.getElementById('dtlist');
+        if (frameKey !== mine || !list || sig(now) === shown) return;
+        shown = sig(now); list.innerHTML = listHtml(now);
+        if (list.lastElementChild) list.lastElementChild.scrollIntoView({ block: 'nearest' });
+        // A text from him changes whether we may answer; draw the whole thing if nothing is typed.
+        const ta = document.getElementById('dtbody');
+        if (!!now.canReply !== !!document.getElementById('dtsend') && !(ta && ta.value)) draw(now, '');
+      } catch (e) { /* the next one will try again */ }
+    }, 10000);
+  }
+  /* v130: the hunter came and the deer is not being taken. A list to choose from, because the
+     reason is what gets counted afterwards, and a line for anything the list does not say. Needs
+     signal, like Cancel: it closes the drop-off for everybody. */
+  function showDropAway(id) {
+    const x = (((st.home.drops || {}).open) || []).find(o => o.id === id);
+    if (!x) return showHome();
+    frame('dropaway', 'Turn this deer away',
+      '<div class="card"><b>' + esc(x.hunter || x.phone || 'A hunter') + '</b>' +
+      (x.deer ? '<div>' + esc(x.deer) + '</div>' : '') +
+      '<label for="tawhy">Why is it being turned away?</label>' +
+      '<select id="tawhy"><option value="">Choose…</option>' + TURN_AWAY.map(r => '<option>' + esc(r) + '</option>').join('') + '</select>' +
+      '<label for="tanote">Anything to add <span class="hint">optional, unless you chose Other</span></label>' +
+      '<input id="tanote" type="text" maxlength="200" autocomplete="off">' +
+      '<p class="status">Tell the hunter why and how to dispose of the deer. Never argue it at the door. ' +
+      'This goes on the Turned Away record and closes the drop-off. Nothing is texted to the hunter.</p>' +
+      '<div class="err" id="taerr"></div>' +
+      '<button class="btn alt" id="taok">Log it as turned away</button> <button class="btn ghost" id="taback">Back</button></div>', false, id);
+    document.getElementById('taback').onclick = () => showHome();
+    document.getElementById('taok').onclick = async e => {
+      const why = document.getElementById('tawhy').value, note = document.getElementById('tanote').value.trim();
+      const err = m => { document.getElementById('taerr').textContent = m; };
+      if (!why) return err('Choose the reason.');
+      if (/^Other/.test(why) && !note) return err('Say why in the box.');
+      e.target.disabled = true;
+      try {
+        st.home.drops = await call({ action: 'turnawaydrop', id: id, reason: /^Other/.test(why) ? 'Other' : why, note: note }); save();
+        showHome('Logged as turned away.');
+        refresh(true);
+      } catch (x2) { e.target.disabled = false; err(x2.offline ? 'Needs signal. Nothing has been recorded yet.' : x2.message); }
+    };
   }
   function wireDrops(box) {
     (box || $app).querySelectorAll('[data-droptext]').forEach(b => b.onclick = () => showDropTexts(b.dataset.droptext));
+    (box || $app).querySelectorAll('[data-dropin]').forEach(b => b.onclick = () =>
+      showIntake((((st.home.drops || {}).open) || []).find(o => o.id === b.dataset.dropin) || null));
+    (box || $app).querySelectorAll('[data-dropaway]').forEach(b => b.onclick = () => showDropAway(b.dataset.dropaway));
     (box || $app).querySelectorAll('[data-claim],[data-dropcancel]').forEach(b => b.onclick = async () => {
       b.disabled = true;
       const cancelling = !!b.dataset.dropcancel;
@@ -5368,7 +5523,7 @@
       }
     };
   }
-  const GO = { privpause: showPrivPause, supplies: () => showSupplies(), status: showStatus, speed: showSpeed, board: showBoard, intake: showIntake, shifts: () => showShifts(), messages: showMessages, help: showHelp,
+  const GO = { privpause: showPrivPause, supplies: () => showSupplies(), status: showStatus, speed: showSpeed, board: showBoard, intake: () => showIntake(), hunterinbox: () => showHunterInbox(), shifts: () => showShifts(), messages: showMessages, help: showHelp,
     numbers: showNumbers, daily: showDaily, team: showTeam, martin: () => showMartin(), scan: () => showScan(),
     preop: showPreop, opssop: showOpSsop, corrective: () => showCorrective(), records: showRecords,
     closeout: showCloseOut,
