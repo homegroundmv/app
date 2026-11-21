@@ -1058,7 +1058,8 @@
           (d['First pack #'] ? ' · packages from ' + esc(d['First pack #']) : '')
         : ' · in ' + esc(when(d.Intake))) + '</div>' +
       (lead.kind === 'mine' && donatedNoPack ? '<div class="note bad" style="margin:8px 0 0">Get package numbers before the grinder, so every label runs in order.</div>' : '') +
-      '<div class="actions">' + act + '</div><div class="form"></div></div>';
+      // v132: the hunter of the deer in front of you, from Home as well as from its card.
+      '<div class="actions">' + act + (isViewer() ? '' : ' <button class="btn ghost" data-la="msg">Message hunter</button>') + '</div><div class="form"></div></div>';
   }
 
   let homeNote = null;   // a confirmation stays on Home for 20 seconds, through background refreshes
@@ -1684,7 +1685,7 @@
         (near && (d['Harvest screenshot'] || pendingPhoto(d.Band, 'screen'))
           ? '<button type="button" class="btn ghost" id="sumscrshow" style="width:100%;margin-top:8px">View the hunter\u2019s phone</button>' : '') +
         '<div class="tagimg" id="sumtagimg"></div></div>')) +
-      (!isViewer() && d['Has hunter phone'] === 'Yes' && d.Status !== 'Voided' ? '<button type="button" class="btn ghost" id="summsg" style="width:100%;margin-top:8px">Message hunter</button>' : '') +
+      (!isViewer() && d.Status !== 'Voided' ? '<button type="button" class="btn ghost" id="summsg" style="width:100%;margin-top:8px">Message hunter</button>' : '') +
       (near ? '<button class="btn" id="sumopen" style="width:100%;margin-top:8px">Open this deer’s card</button>'
         : '<p class="status">This deer is from earlier in the season, so it has no card on the board. This summary is all there is to open.</p>') +
       '<button class="btn ghost" id="sumback" style="width:100%;margin-top:8px">Back to the search</button>', false, b);
@@ -1892,7 +1893,11 @@
     const canEdit = !isViewer() && (isMgr() || /intake/i.test((st.staff || {}).role || ''));
     /* v127: a message to this deer's hunter, from the Home Ground line. Everyone but a view-only
        sign-in. 'Has hunter phone' comes from backend 111, because a processor is not sent the number. */
-    const msgBtn = !isViewer() && d.Status !== 'Voided' && d['Has hunter phone'] === 'Yes'
+    /* v132 (Joe, 21 November: "could we also add 'message hunter' from their deer card?"). It was
+       there only when the deer had a number, so on a deer without one there was simply no button
+       and no reason given. It is on every live deer's card now; with no number, the screen it
+       opens says so and how to add one. */
+    const msgBtn = !isViewer() && d.Status !== 'Voided'
       ? ' <button class="btn ghost" data-a="msg">Message hunter</button>' : '';
     const editBtn = canEdit && d.Status !== 'Voided'
       ? ' <button class="btn ghost" data-a="edit">Correct the record</button>' : '';
