@@ -872,7 +872,10 @@
       if (!d) return;
       d.pending = true;
       if (x.action === 'move') { d.Location = f.to; }
-      if (x.action === 'skin') { d['Skinner'] = f.skinner || st.staff.number; d['Skinner name'] = f.skinnerName || st.staff.name; d['Skinned at'] = x.at; d['Skinned at station'] = 'Yes'; }
+      const lugOf = n => num(n) >= 1 ? ('0' + Math.round(num(n))).slice(-2) : '';
+      // v129: skinning started, with its lug. Not "skinned" until the finish below.
+      if (x.action === 'skinbegin') { d['Skinning started'] = x.at; d['Skinning by'] = (f.skinner || st.staff.number) + ' ' + (f.skinnerName || st.staff.name); if (lugOf(f.lug)) d['Lug'] = lugOf(f.lug); }
+      if (x.action === 'skin') { d['Skinner'] = f.skinner || st.staff.number; d['Skinner name'] = f.skinnerName || st.staff.name; d['Skinned at'] = x.at; d['Skinned at station'] = 'Yes'; if (lugOf(f.lug)) d['Lug'] = lugOf(f.lug); if (num(f.weight) > 0) d['Carcass weight (lb)'] = f.weight; }
       if (x.action === 'start') {
         if (f.skinned && !d['Skinner']) { d['Skinner'] = f.skinner || f.processor || st.staff.number; d['Skinner name'] = f.skinnerName || f.processorName || st.staff.name; d['Skinned at'] = x.at; }
         d.Status = 'Processing'; d['Processing started'] = x.at; d['Processor number'] = f.processor || st.staff.number; d.Butcher = f.processorName || st.staff.name; d['Carcass weight (lb)'] = f.weight;
@@ -989,6 +992,11 @@
     const next = hanging.find(d => urgency(d).i >= 2);        // High, Urgent or Overdue
     return next ? { d: next, kind: 'next' } : null;
   }
+  /* v129 (Joe, 21 November): skinning is started, then finished. "Skin it" takes the lug number;
+     "Finished skinning" takes the two checks. Which button a deer gets is whether it was started. */
+  const skinBtn = (d, attr) => d['Skinning started']
+    ? '<button class="btn alt" data-' + attr + '="skindone">Finished skinning</button> '
+    : '<button class="btn alt" data-' + attr + '="skin">Skin it</button> ';
   function leadCard(lead) {
     const d = lead.d, u = urgency(d), s = S();
     const donatedNoPack = d.Type === 'Donated' && !d['First pack #'];
@@ -996,7 +1004,7 @@
       ? (donatedNoPack ? '<button class="btn alt" data-la="grind">Get package numbers</button> ' : '') +
         '<button class="btn" data-la="finish">Finished</button>'
       // v124: skinning is its own job, so it is offered here too and not only on the deer's card.
-      : (d['Skinner'] || isViewer() ? '' : '<button class="btn alt" data-la="skin">Skin it</button> ') +
+      : (d['Skinner'] || isViewer() ? '' : skinBtn(d, 'la')) +
         '<button class="btn" data-la="start">Start processing</button>';
     return '<div class="lead' + (lead.kind === 'mine' ? ' on' : '') + '" data-band="' + esc(d.Band) + '">' +
       '<div class="lh">' + (lead.kind === 'mine' ? 'On your table' : 'Start this one next') + '</div>' +
@@ -1467,7 +1475,7 @@
       .sort((a, b) => sortKey(a) - sortKey(b));
   }
 
-  const undoName = step => ({ skin: 'skinning', start: 'start processing', grind: 'package numbers',
+  const undoName = step => ({ skin: 'skinning', skinbegin: 'start of skinning', start: 'start processing', grind: 'package numbers',
     finish: 'finished', release: 'release' })[step] || step;
 
   /* Undo asks for a reason before it does anything, and says plainly what it is about to reverse.
@@ -1826,7 +1834,7 @@
       ' is done by a manager or whoever is on intake. Get Joe, the facility manager or the person ' +
       'on the door — or tap <b>Need help</b> if nobody is here.</div>';
     const act = isViewer() ? '' : d.Status === 'Hanging' ? (isCold ? (counter ? '<button class="btn" data-a="release">Hunter collected it</button>' : getSomeone('Handing a deer back'))
-      : (d['Skinner'] ? '' : '<button class="btn alt" data-a="skin">Skin it</button> ') + '<button class="btn" data-a="start">Start processing</button>')
+      : (d['Skinner'] ? '' : skinBtn(d, 'a')) + '<button class="btn" data-a="start">Start processing</button>')
       : d.Status === 'Processing' ? (mineOrMgr ? (d.Type === 'Donated' && !d['First pack #'] ? '<button class="btn alt" data-a="grind">Get package numbers</button> ' : '') + '<button class="btn" data-a="finish">Finished</button>' : '')
       : d.Status === 'Ready' ? (counter ? '<button class="btn alt" data-a="release">Release</button>' : getSomeone('Releasing a deer')) : '';
     // A duplicate or a mistaken entry is not deleted, it is voided: the row stays and says so.
@@ -2029,6 +2037,24 @@
     const v = id => (document.getElementById(id) || {}).value || '';
     const opts = (list, cur) => ['<option value=""></option>'].concat(list.map(x =>
       '<option' + (String(cur) === x ? ' selected' : '') + '>' + esc(x) + '</option>')).join('');
+    /* The two skinning forms share who and which lug (v129). Whoever started it is the default at
+       the finish; a manager can name anybody, everyone else records themselves. */
+    const skinBy = String(d['Skinning by'] || '').split(' ')[0];
+    const skinDef = (st.home.staff || []).some(x => x.number === skinBy) ? skinBy : st.staff.number;
+    const skinWho = label => isMgr()
+      ? '<label for="sk">' + label + '</label><select id="sk">' + (st.home.staff || []).map(x => '<option value="' + esc(x.number) + '"' + (x.number === skinDef ? ' selected' : '') + '>' + esc(x.name + ' (' + x.number + ')') + '</option>').join('') + '</select>'
+      : '<p class="status">' + label + ': <b>' + esc(st.staff.name + ' (' + st.staff.number + ')') + '</b></p>';
+    const skinLug = () => '<label for="klug">Lug number <span class="hint">the number on the lug this deer’s meat goes into. It stays with the deer through processing</span></label>' +
+      '<input id="klug" type="number" inputmode="numeric" min="1" step="1" max="' + esc(s.lugs || 24) +
+      '" value="' + esc(String(d['Lug'] || '').replace(/^0+/, '')) + '" placeholder="1 to ' + esc(s.lugs || 24) + '">';
+    const skinLugAsked = err => {
+      const max = Number(s.lugs) || 24, n = Math.round(num(v('klug')));
+      if (n >= 1 && n <= max) return n;
+      err(v('klug').trim() === ''
+        ? 'Which lug is this deer going into? Read the number off the side of it.'
+        : 'There is no lug ' + v('klug').trim() + '. The lugs are numbered 1 to ' + max + '.');
+      return 0;
+    };
     const forms = {
       /* Only what was said at the door. The band is absent on purpose: it is printed on the
          carcass and every lot number is built from it, so a wrong band is a void and a fresh
@@ -2108,12 +2134,23 @@
             'Check the antler band reads SAVE FOR HUNTER, ' + esc(band(d.Band)) + ', and put the head in the <b>original deer cooler</b>. ' +
             'Saving this texts the hunter that it is ready for pickup there.</div>'
           : antlerBandFor(d) ? '<div class="note ok">The hunter gave up the head. Its antler band reads <b>OK TO DISCARD</b>; it goes out with the waste.</div>' : '') +
-        '<p class="status">Records who skinned this deer. The $' + esc(nz(s.skinRate, 25)) +
-        ' skinning premium goes to whoever is named here, whether or not they process it.</p>' +
-        (isMgr() ? '<label>Skinned by</label><select id="sk">' + (st.home.staff || []).map(x => '<option value="' + esc(x.number) + '"' + (x.number === st.staff.number ? ' selected' : '') + '>' + esc(x.name + ' (' + x.number + ')') + '</option>').join('') + '</select>'
-          : '<p class="status">Skinned by: <b>' + esc(st.staff.name + ' (' + st.staff.number + ')') + '</b></p>') +
+        '<p class="status">Records that this deer is being skinned, and which lug is its lug from here on. ' +
+        'When it is skinned, tap <b>Finished skinning</b> on this card.</p>' +
+        skinWho('Skinning it') + skinLug(),
+      /* v129 (Joe, 21 November): the two checks moved here from "Skin it", because they are things
+         that have been done, and at the start of skinning neither has. The lug shows again, filled
+         in, for the deer that ended up in a different one. */
+      skindone: () => '<p class="status">Skinning started' + (d['Skinning started'] ? ' ' + esc(when(d['Skinning started'])) : '') +
+        (d['Skinning by'] ? ' by ' + esc(String(d['Skinning by']).replace(/^\S+\s+/, '')) : '') +
+        '. The $' + esc(nz(s.skinRate, 25)) + ' skinning premium goes to whoever is named here, whether or not they process it.</p>' +
+        skinWho('Skinned by') +
         '<label class="choice"><input id="k1" type="checkbox"> Skinned and head removed inside MHU #1</label>' +
-        '<label class="choice"><input id="k2" type="checkbox"> Antimicrobial spray applied</label>',
+        '<label class="choice"><input id="k2" type="checkbox"> Antimicrobial spray applied</label>' +
+        /* The carcass is weighed straight after skinning, so the weight is taken here and is
+           required (Joe, 21 November). Start processing shows it again, filled in. */
+        '<label for="kw">Carcass weight (lb) <span class="hint">On the hanging scale: field dressed, skin and head off</span></label>' +
+        '<input id="kw" type="number" inputmode="decimal" min="0" step="0.1">' +
+        skinLug(),
       /* Money on a private deer, taken wherever the deer happens to be. The same two ways as every
          other charge in the app: hand it to Square on this device, or write down how they paid.
          Part payment is allowed because a hunter putting half down at the door is better than a
@@ -2163,7 +2200,9 @@
           : '<label class="choice"><input id="f9" type="checkbox"> Antimicrobial spray applied in MHU #1</label>') +
         (isMgr() ? '<label>Processor</label><select id="fp">' + (st.home.staff || []).map(x => '<option value="' + esc(x.number) + '"' + (x.number === st.staff.number ? ' selected' : '') + '>' + esc(x.name + ' (' + x.number + ')') + '</option>').join('') + '</select>'
           : '<p class="status">Processor: ' + esc(st.staff.name + ' (' + st.staff.number + ')') + '</p>') +
-        '<label>Carcass weight (lb) <span class="hint">On the hanging scale: field dressed, skin and head off</span></label><input id="f1" type="number" inputmode="decimal" min="0" step="0.1">' +
+        '<label>Carcass weight (lb) <span class="hint">On the hanging scale: field dressed, skin and head off</span></label><input id="f1" type="number" inputmode="decimal" min="0" step="0.1" value="' +
+          // v129: weighed at Finished skinning, so it is usually here already.
+          esc(num(d['Carcass weight (lb)']) > 0 ? d['Carcass weight (lb)'] : '') + '">' +
         // Somewhere to say "we didn't weigh it". Without one, a number gets invented, and an
         // invented number is worse than a blank because the yield figure is built on it.
         '<label class="choice"><input id="f1na" type="checkbox"> Not weighed <span class="hint">No scale reading for this deer. Leaves the weight and the yield blank rather than guessing.</span></label>' +
@@ -2381,11 +2420,22 @@
         toast((d['Hunter name'] || d.Band) + ' moved to ' + pick.value + '.', true);
       }
       if (kind === 'skin') {
-        if (!document.getElementById('k1').checked) return err('Skin it and remove the head inside MHU #1, then check the box.');
-        if (!document.getElementById('k2').checked) return err('Apply the antimicrobial spray, then check the box.');
+        const lugK = skinLugAsked(err); if (!lugK) return;
         const who = isMgr() ? v('sk') : st.staff.number;
         const wn = ((st.home.staff || []).find(x => x.number === who) || st.staff).name;
-        queue('skin', { band: d.Band, skinner: who, skinnerName: wn, antimicrobial: true }, 'Skin ' + d.Band);
+        queue('skinbegin', { band: d.Band, skinner: who, skinnerName: wn, lug: lugK }, 'Skinning ' + d.Band);
+        toast('Skinning ' + d.Band + ' in lug ' + ('0' + lugK).slice(-2) + '. Tap Finished skinning when it is done.', true);
+      }
+      if (kind === 'skindone') {
+        if (!document.getElementById('k1').checked) return err('Skin it and remove the head inside MHU #1, then check the box.');
+        if (!document.getElementById('k2').checked) return err('Apply the antimicrobial spray, then check the box.');
+        const kw = num(v('kw'));
+        if (!(kw > 0)) return err('Weigh the carcass on the hanging scale and enter the weight.');
+        if (kw < 15 || kw > 250) return err(v('kw') + ' lb is outside the range a deer carcass falls in (15–250 lb). Check the scale.');
+        const lugK = skinLugAsked(err); if (!lugK) return;
+        const who = isMgr() ? v('sk') : st.staff.number;
+        const wn = ((st.home.staff || []).find(x => x.number === who) || st.staff).name;
+        queue('skin', { band: d.Band, skinner: who, skinnerName: wn, antimicrobial: true, lug: lugK, weight: v('kw') }, 'Skin ' + d.Band);
       }
       if (kind === 'pay') {
         const m = v('pm2'), amt = Number(v('pa2'));
