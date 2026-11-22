@@ -1924,6 +1924,10 @@
     if (!d || d.Type !== 'Private') return null;
     const price = Number(d['Hunter price ($)'] || nz(S().privatePrice, 300)) || 0;
     const paid = Number(d['Paid ($)'] || 0) || 0;
+    /* v134 (Joe, 22 November): "no charge" for private processing, with the reason. Backend 122
+       keeps the reason on the deer; while it is there nothing is owing, whatever the price was. */
+    const free = String(d['No charge'] || '').trim();
+    if (free) return { price: paid, paid: paid, owing: 0, settled: true, free: free };
     const owing = Math.max(0, Math.round((price - paid) * 100) / 100);
     return { price: price, paid: paid, owing: owing, settled: owing <= 0 };
   }
@@ -1990,6 +1994,9 @@
       ? (counter ? '<button class="btn alt" data-a="pay">Take $' + owe.owing + '</button> '
                  : '<div class="note warn">$' + owe.owing + ' is owing. A manager or whoever is on intake takes the payment — don’t take cash or a card yourself.</div>')
       : '';
+    // v134: a manager can put the charge back on a deer that was marked no charge.
+    const chargeBtn = (isMgr() && owe && owe.free && live)
+      ? ' <button class="btn ghost" data-a="recharge">Charge for this deer after all</button>' : '';
     return '<div class="card' + cls + (d.Type === 'Donated' ? ' donated' : '') + '" data-band="' + esc(d.Band) + '">' +
       '<div class="deer"><div><span class="band">' + esc(d.Band) + '</span> ' +
       '<span class="tag ' + (d.Type === 'Donated' ? 'don">DONATED' : 'prv">' + (isCold ? 'COLD STORAGE' : 'PRIVATE')) + '</span>' + (d['DDP deer'] === 'Yes' ? '<span class="tag">DDP</span>' : '') +
@@ -2021,6 +2028,9 @@
           (owe.paid ? ' of $' + owe.price + ' ($' + owe.paid + ' paid)' : '') +
           '. Custom processing is paid before it is cut' +
           (d.Status === 'Hanging' ? ' — it cannot be started until it is.' : '.') + '</div>'
+        : owe && live && owe.free
+          ? '<div class="note ok" data-nocharge><b>No charge for custom processing.</b> ' + esc(owe.free) +
+            (owe.paid ? ' · $' + owe.paid + ' was paid before that' : '') + '</div>'
         : owe && live && owe.settled
           ? '<div class="note ok">Custom processing paid: <b>$' + owe.paid + '</b>' +
             (d['Payment method'] ? ' · ' + esc(d['Payment method']) : '') + '</div>' : '') +
@@ -2030,7 +2040,7 @@
       (d.Status === 'Released' ? '<div class="status">Released ' + esc(d.Released) + ' to ' + esc(d['Released to']) + '</div>' : '') +
       tagPhotoRow(d) +
       '<div class="actions">' + payBtn + act + moveBtn + (live && !isViewer() ? '<button class="btn ghost" data-a="print">Print band</button>' : '') +
-      (live && !isViewer() && antlerBandFor(d) ? '<button class="btn ghost" data-a="antlerprint">Print antler band</button>' : '') + msgBtn + noteBtn + editBtn + undoBtn + voidBtn + '</div><div class="form"></div></div>';
+      (live && !isViewer() && antlerBandFor(d) ? '<button class="btn ghost" data-a="antlerprint">Print antler band</button>' : '') + msgBtn + noteBtn + editBtn + chargeBtn + undoBtn + voidBtn + '</div><div class="form"></div></div>';
   }
 
   /* Starting work while clocked out is how hours go missing: nobody forgets to clock in on purpose,
@@ -2297,8 +2307,20 @@
           (s.payMethods || ['Cash', 'Card (Square)', 'Check']).map(m => '<option>' + esc(m) + '</option>').join('') + '</select>' +
           '<label for="pa2">Amount taken ($) <span class="hint">leave as is unless they are paying part of it</span></label>' +
           '<input id="pa2" type="number" inputmode="decimal" min="0" step="0.01" value="' + esc(o.owing) + '">' +
-          '<p class="status">Cash goes in an envelope for the safe at close-out. Never in a pocket or the truck.</p>';
+          '<p class="status">Cash goes in an envelope for the safe at close-out. Never in a pocket or the truck.</p>' +
+          /* v134 (Joe, 22 November): "no charge" for private processing, with a box for why. A
+             manager's call, like starting a deer unpaid. */
+          (isMgr()
+            ? '<label class="choice"><input id="pnc" type="checkbox"> <span><b>No charge for this deer</b>' +
+              (o.paid ? ': take off the $' + o.owing + ' still owing' : '') + '</span></label>' +
+              '<div id="pncbox" hidden><label for="pncw">Why is there no charge? <span class="hint">goes on the deer’s record and to the other managers</span></label>' +
+              '<textarea id="pncw" rows="2" maxlength="200" placeholder="Landowner’s deer, agreed with Joe"></textarea></div>'
+            : '<p class="status">If this deer is not being charged, a manager marks it no charge here.</p>');
       },
+      recharge: () => '<div class="note warn" style="font-size:17px"><b>Put the charge back on ' + esc(band(d.Band)) + '?</b> ' +
+        'It was marked no charge: ' + esc((owe || {}).free || '') + '. The posted price goes back on' +
+        (d['Pork fat added'] === 'Yes' ? ', with the pork fat add-on' : '') +
+        ', less anything already paid, and it is owing again.</div>',
       start: () => (owe && !owe.settled
         ? '<div class="note bad" style="font-size:17px"><b>$' + owe.owing + ' is still owing on this deer.</b> ' +
           'Custom processing is paid before it is cut. Take the payment first — the button is on the card above.' +
@@ -2418,7 +2440,8 @@
           : '<label>Pounds out</label><input id="f2" type="number" inputmode="decimal" min="0" value="' + esc(d['Pounds packaged'] || '') + '">') +
         /* Paid up front from 6 November, so by the time a private deer reaches this form the money
            is usually already in. Asking for it again is how a payment gets recorded twice. */
-        (owe && owe.settled ? '<div class="note ok">Paid in full: <b>$' + owe.paid + '</b>' +
+        (owe && owe.free ? '<div class="note ok"><b>No charge:</b> ' + esc(owe.free) + '. Nothing to collect.</div>'
+          : owe && owe.settled ? '<div class="note ok">Paid in full: <b>$' + owe.paid + '</b>' +
           (d['Payment method'] ? ' · ' + esc(d['Payment method']) : '') + '. Nothing to collect.</div>' : '') +
         (d.Type === 'Private' && owe && !owe.settled ? '<div class="note warn">Hunter pickup: collect <b>$' + esc(owe.owing) + '</b>' + (owe.paid ? ' still owing of $' + esc(owe.price) : '') + (d['Pork fat added'] === 'Yes' ? ' (price includes the pork fat add-on)' : '') + '.</div>' +
           '<div class="grid2"><div><label for="pm">Paid by</label><select id="pm"><option value="">Choose…</option>' + (s.payMethods || ['Cash', 'Card (Square)', 'Check']).map(m => '<option>' + esc(m) + '</option>').join('') + '</select></div>' +
@@ -2427,7 +2450,7 @@
           '<p class="status">Cash goes in an envelope for the safe at close-out. Never in a pocket or the truck.</p>' : ''),
     };
     box.innerHTML = forms[kind]() + '<div class="err" id="ferr"></div><button class="btn" id="fok" style="margin-top:12px">' +
-      (kind === 'void' ? 'Void it' : kind === 'edit' ? 'Save the correction' : kind === 'pay' ? 'Record the payment' : 'Save') +
+      (kind === 'void' ? 'Void it' : kind === 'edit' ? 'Save the correction' : kind === 'pay' ? 'Record the payment' : kind === 'recharge' ? 'Put the charge back' : 'Save') +
       '</button> <button class="btn ghost" id="fx">Cancel</button>';
     /* Cancel is bound FIRST, before anything that can throw. It used to be bound after the
        field wiring below, so a single missing element took the whole binding run down with it and
@@ -2441,6 +2464,16 @@
     /* Square leaves the app, so whatever is needed to finish has to be handed over before it goes.
        Only the band: the amount is read back off the deer when the queued action lands, so a
        payment and a price that moved while Square was open cannot disagree. */
+    /* v134: ticking "No charge" swaps the payment questions for the reason, and the button says
+       what it is about to do. */
+    on('pnc', 'onchange', e => {
+      const free = e.target.checked;
+      document.getElementById('pncbox').hidden = !free;
+      ['pm2', 'pa2', 'psq'].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = free; });
+      document.getElementById('fok').textContent = free ? 'Mark it no charge' : 'Record the payment';
+      document.getElementById('ferr').textContent = '';
+      if (free) document.getElementById('pncw').focus();
+    });
     on('psq', 'onclick', () => {
       const ok = squareStart({ amount: (owe || {}).owing, band: band(d.Band), hunter: d['Hunter name'] || '',
         action: 'paydeer', label: 'Processing payment', fields: { band: band(d.Band) } });
@@ -2564,7 +2597,16 @@
         const wn = ((st.home.staff || []).find(x => x.number === who) || st.staff).name;
         queue('skin', { band: d.Band, skinner: who, skinnerName: wn, antimicrobial: true, lug: lugK, weight: v('kw') }, 'Skin ' + d.Band);
       }
-      if (kind === 'pay') {
+      if (kind === 'recharge') {
+        queue('nocharge', { band: d.Band, charge: true }, 'Charge put back ' + d.Band);
+        toast('The charge is back on ' + d.Band + '.', true);
+      }
+      if (kind === 'pay' && (document.getElementById('pnc') || {}).checked) {
+        const why = v('pncw').trim();
+        if (!why) return err('Say why there is no charge.');
+        queue('nocharge', { band: d.Band, reason: why }, 'No charge ' + d.Band);
+        toast(d.Band + ' is marked no charge.', true);
+      } else if (kind === 'pay') {
         const m = v('pm2'), amt = Number(v('pa2'));
         if (!m) return err('Choose how they paid.');
         if (!(amt > 0)) return err('Enter the amount taken.');
