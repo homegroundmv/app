@@ -529,6 +529,73 @@
       catch (x) { document.getElementById('adderr').textContent = x.message; }
     });
   }
+  /* ---- v133: a photo and a comment on a deer (backend 121) ----
+     What somebody saw, on the deer's own record: the comment, who, when, and a photo if there is
+     one. Sent straight away and needing signal, so that "saved" means it is on the record and not
+     waiting on a phone; what was typed stays on screen if it does not go. */
+  const noteList = (notes, band) => notes.length ? notes.map(n =>
+    '<div class="dnote" data-nid="' + esc(n.id) + '" style="border-top:1px solid var(--line);padding:8px 0">' +
+    '<div class="status">' + esc(when(n.at)) + ' · ' + esc(n.by || 'staff') + '</div>' +
+    (n.text ? '<div style="white-space:pre-wrap;word-break:break-word">' + esc(n.text) + '</div>' : '') +
+    (n.photo ? '<button class="btn ghost" data-nshow="' + esc(n.id) + '" style="margin-top:6px">Show the photo</button><div class="dnimg"></div>' : '') +
+    '</div>').join('') : '<p class="status">Nothing has been added to band ' + esc(band) + ' yet.</p>';
+  const wireNotes = box => box.querySelectorAll('[data-nshow]').forEach(b => b.onclick = async () => {
+    const out = b.parentNode.querySelector('.dnimg');
+    b.disabled = true; out.innerHTML = '<div class="status">Loading the photo…</div>';
+    try {
+      const r = await call({ action: 'deernoteimg', id: b.dataset.nshow });
+      out.innerHTML = r.none ? '<div class="status">No photo on this note.</div>'
+        : '<img class="tagpic" alt="Photo on this deer’s record" src="data:' + esc(r.mime) + ';base64,' + r.data + '">';
+      if (!r.none) b.remove();
+    } catch (e) { b.disabled = false; out.innerHTML = '<div class="note warn">' + esc(e.offline ? 'The photo needs signal.' : e.message) + '</div>'; }
+  });
+  async function showDeerNotes(d, box, said, got) {
+    tagCss();
+    const head = '<b>Photos and comments on band ' + esc(band(d.Band)) + '</b>' + (said ? '<div class="note ok" id="dnsaid">' + esc(said) + '</div>' : '');
+    const foot = '<button class="btn ghost" id="dnclose" style="margin-top:8px">Close</button>';
+    const paint = notes => { box.innerHTML = head + '<div id="dnlist" data-keep="1">' + noteList(notes, band(d.Band)) + '</div>' + foot; wireNotes(box);
+      document.getElementById('dnclose').onclick = () => { box.innerHTML = ''; }; };
+    if (got) return paint(got);
+    box.innerHTML = head + '<p class="status">Loading…</p>';
+    try { paint((await call({ action: 'deernotes', band: d.Band })).notes || []); }
+    catch (e) { box.innerHTML = head + '<div class="note warn">' + esc(e.offline ? 'These need signal.' : e.message) + '</div>' + foot;
+      document.getElementById('dnclose').onclick = () => { box.innerHTML = ''; }; }
+  }
+  function addDeerNote(d, box, after) {
+    tagCss();
+    let photo = '';
+    const cid = 'note-' + uid();   // one id per note, so a retry of the same save is one note
+    box.innerHTML = '<b>Add a photo and comment to band ' + esc(band(d.Band)) + '</b>' +
+      '<p class="status">Goes on this deer’s record with your name and the time. It cannot be edited or removed afterwards.</p>' +
+      '<label for="dntext">Comment <span class="hint">what you saw</span></label>' +
+      '<textarea id="dntext" rows="3" maxlength="500" autocapitalize="sentences" placeholder="Left eye pecked out: likely down longer than the hunter said"></textarea>' +
+      '<label>Photo <span class="hint">optional</span></label>' + camBtn('dncam') +
+      '<div id="dnprev"></div><div class="err" id="dnerr"></div>' +
+      '<button class="btn" id="dnsave" style="margin-top:10px">Save to this deer</button> <button class="btn ghost" id="dnx">Cancel</button>';
+    const err = m => { document.getElementById('dnerr').textContent = m; };
+    document.getElementById('dnx').onclick = () => { box.innerHTML = ''; };
+    onCam('dncam', async file => {
+      try { photo = await shrinkPhoto(file); err('');
+        document.getElementById('dnprev').innerHTML = '<img class="tagpic" data-keep="1" alt="The photo to be saved" src="' + photo + '">' +
+          '<button class="plain" id="dnnophoto">Remove this photo</button>';
+        document.getElementById('dnnophoto').onclick = () => { photo = ''; document.getElementById('dnprev').innerHTML = ''; };
+      } catch (x) { err(x.message); }
+    });
+    document.getElementById('dnsave').onclick = async e => {
+      const text = document.getElementById('dntext').value.trim();
+      if (!text && !photo) return err('Write a comment, add a photo, or both.');
+      e.target.disabled = true; e.target.textContent = 'Saving…'; err('');
+      try {
+        const out = await call({ action: 'deernote', band: d.Band, text: text, data: photo, clientId: cid });
+        d['Photo notes'] = (out.notes || []).length;
+        refresh(true);
+        await showDeerNotes(d, box, 'Saved to band ' + band(d.Band) + '.', out.notes || []);
+      } catch (x) {
+        e.target.disabled = false; e.target.textContent = 'Save to this deer';
+        err(x.offline ? 'No signal: nothing has been saved yet. Your comment and photo are still here. Try again when you have signal.' : x.message);
+      }
+    };
+  }
   async function refresh(quiet) {
     try {
       const out = await call({ action: 'home' });
@@ -596,6 +663,8 @@
      Void is worse than losing an empty form (Joe, 8 November). Prefilled values do count as in
      use: a release form carries real figures the moment it opens. */
   function formInUse() {
+    // v133: a photo chosen but not yet saved, or a deer's photos being looked at, is in use as well.
+    if (document.querySelector('.form [data-keep]')) return true;
     const els = document.querySelectorAll('.form input, .form select, .form textarea');
     for (let i = 0; i < els.length; i++) {
       const el = els[i];
@@ -1899,6 +1968,13 @@
        opens says so and how to add one. */
     const msgBtn = !isViewer() && d.Status !== 'Voided'
       ? ' <button class="btn ghost" data-a="msg">Message hunter</button>' : '';
+    /* v133 (Joe, 22 November): "a deer that had its eye pecked out... I'd like to document that."
+       A photo and a comment on the deer's own record, by anybody on staff, as many as it needs.
+       'Photo notes' is the count, from backend 121; the second button is there once it has any. */
+    const nNotes = Math.round(num(d['Photo notes'])) || 0;
+    const noteBtn = isViewer() || d.Status === 'Voided' ? ''
+      : ' <button class="btn ghost" data-a="note">Add photo &amp; comment</button>' +
+        (nNotes ? ' <button class="btn ghost" data-a="notes">Photos &amp; comments (' + nNotes + ')</button>' : '');
     const editBtn = canEdit && d.Status !== 'Voided'
       ? ' <button class="btn ghost" data-a="edit">Correct the record</button>' : '';
     /* One step back. Every action here commits the instant it is tapped, which is right at a cold
@@ -1954,7 +2030,7 @@
       (d.Status === 'Released' ? '<div class="status">Released ' + esc(d.Released) + ' to ' + esc(d['Released to']) + '</div>' : '') +
       tagPhotoRow(d) +
       '<div class="actions">' + payBtn + act + moveBtn + (live && !isViewer() ? '<button class="btn ghost" data-a="print">Print band</button>' : '') +
-      (live && !isViewer() && antlerBandFor(d) ? '<button class="btn ghost" data-a="antlerprint">Print antler band</button>' : '') + msgBtn + editBtn + undoBtn + voidBtn + '</div><div class="form"></div></div>';
+      (live && !isViewer() && antlerBandFor(d) ? '<button class="btn ghost" data-a="antlerprint">Print antler band</button>' : '') + msgBtn + noteBtn + editBtn + undoBtn + voidBtn + '</div><div class="form"></div></div>';
   }
 
   /* Starting work while clocked out is how hours go missing: nobody forgets to clock in on purpose,
@@ -2068,6 +2144,8 @@
        and not hung is the one thing in the building that cannot wait, and the duty can. */
     if (kind === 'start' && !isViewer() && opsDuty().blocking) return opsStop(box, after);
     if (kind === 'msg') return showDropTexts(band(d.Band), '', after || (() => showBoard()));
+    if (kind === 'note') return addDeerNote(d, box, after);
+    if (kind === 'notes') return showDeerNotes(d, box);
     if (kind === 'print') return printBand(d);
     if (kind === 'antlerprint') return printAntlerBand(d);
     if (kind === 'tagshow' || kind === 'scrshow') return showTagImg(d, kind === 'tagshow' ? 'tag' : 'screen', box);
