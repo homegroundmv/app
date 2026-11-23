@@ -784,7 +784,11 @@
   document.addEventListener('click', e => {
     if (!(e.target && e.target.closest && e.target.closest('#htban'))) return;
     const ht = (st.home || {}).hunterTexts || {};
-    if (ht.unanswered === 1 && ht.phone) showDropTexts(ht.phone, '', null, true); else showHunterInbox();
+    if (ht.unanswered === 1 && ht.phone) showDropTexts(ht.phone, '', null, true);
+    // v135 (backend 123): a processor's own conversation is opened by its drop-off or its deer, never a number.
+    else if (ht.unanswered === 1 && ht.drop) showDropTexts(ht.drop);
+    else if (ht.unanswered === 1 && ht.band) showDropTexts(ht.band, '', () => showHome());
+    else showHunterInbox();
   });
   // Exposed so the tests can fire the 45-second poll's redraw without waiting 45 seconds for it.
   window.__hgRedraw = redraw;
@@ -836,7 +840,8 @@
        from a hunter', so we know". On every screen, for the people who can answer, until somebody
        replies or says no reply is needed. Not on the conversation it is about. */
     const ht = (st.home || {}).hunterTexts;
-    const htBan = ht && ht.unanswered > 0 && current !== 'huntertexts'
+    const htBan = ht && ht.unanswered > 0 && current !== 'huntertexts' &&
+      !(ht.unanswered === 1 && !ht.phone && (current === 'droptexts' || current === 'deertexts'))
       ? '<button class="htban" id="htban"><b>Unanswered message from a hunter</b><span>' + esc(ht.who || 'A hunter') +
         (ht.unanswered > 1 ? ' and ' + (ht.unanswered - 1) + ' more' : '') + ' · tap to read and reply</span></button>' : '';
     el.innerHTML = htBan + queue +
@@ -1291,7 +1296,7 @@
         ? h.openSupplies + (h.openSupplies === 1 ? ' thing waiting' : ' things waiting') + ' · tell the managers what we need'
         : 'Bags, gloves, sanitizer — two taps and the managers know', h.openSupplies ? 'red' : 'alt') +
       big('messages', 'Messages' + (h.unread ? ' (' + h.unread + ' new)' : ''), 'Team chat and direct messages') +
-      (atDoor() ? big('hunterinbox', 'Messages from hunters' + (htWait ? ' (' + htWait + ' waiting)' : ''),
+      (atDoor() || (h.hunterTexts && h.hunterTexts.mine) ? big('hunterinbox', 'Messages from hunters' + (htWait ? ' (' + htWait + ' waiting)' : ''),
         'Texts to the Home Ground line, and our replies', htWait ? 'red' : '') : '') +
       /* Everybody, not just managers: the person who finds the problem is usually at the bench,
          and the operational sanitation screen sends them straight here. */
@@ -3947,23 +3952,30 @@
   /* v130 (backend 117): every hunter who has texted the line in the last three days, newest
      first, and which of them is waiting on us. Managers and intake. */
   async function showHunterInbox() {
-    frame('hunterinbox', 'Messages from hunters', '<p class="status">Texts sent to the Home Ground line. A reply goes out from that number, never from your own.</p>' +
+    frame('hunterinbox', 'Messages from hunters', '<p class="status">Texts sent to the Home Ground line. A reply goes out from that number, never from your own. ' +
+      'A conversation stays with whoever started it, and the hunter’s texts go to that one person.</p>' +
       '<div id="hbox" class="card"><span class="status">Loading…</span></div>');
     const box = document.getElementById('hbox');
     try {
       const out = await call({ action: 'hunterinbox' });
       if (!document.getElementById('hbox')) return;
       box.innerHTML = out.threads.length ? out.threads.map((t, i) =>
-        '<button class="plain row-btn" data-hp="' + esc(t.phone) + '" style="text-decoration:none;text-align:left;width:100%' + (i ? ';border-top:1px solid var(--line)' : '') + '">' +
-        '<b>' + esc(t.hunter || t.phone) + '</b>' + (t.hunter ? ' <span class="status">' + esc(t.phone) + '</span>' : '') +
-        (t.unanswered ? ' <span class="pill wait">needs a reply</span>' : '') +
+        /* v135 (backend 123): by number for the people who see numbers; an owner who does not is
+           sent his conversation's drop-off or deer instead. And whose it is. */
+        '<button class="plain row-btn" ' + (t.phone ? 'data-hp="' + esc(t.phone) + '"' : t.drop ? 'data-hd="' + esc(t.drop) + '"' : 'data-hb="' + esc(t.band || '') + '"') +
+        ' style="text-decoration:none;text-align:left;width:100%' + (i ? ';border-top:1px solid var(--line)' : '') + '">' +
+        '<b>' + esc(t.hunter || t.phone || 'A hunter') + '</b>' + (t.hunter && t.phone ? ' <span class="status">' + esc(t.phone) + '</span>' : '') +
+        (t.unanswered ? ' <span class="pill wait">' + (t.escalated ? 'still waiting' : 'needs a reply') + '</span>' : '') +
+        (t.owner ? ' <span class="status" data-owner>· ' + (t.mine ? 'yours' : 'with ' + esc(t.owner)) + '</span>' : '') +
         '<br><span class="status">' + esc(t.last || '') + ' · ' + esc(t.minsAgo < 2 ? 'just now' : t.minsAgo < 90 ? t.minsAgo + ' min ago' : when(t.at)) + '</span></button>').join('')
         : '<span class="status">No hunter has texted in the last ' + esc(Math.round((out.hours || 72) / 24)) + ' days.</span>';
       box.querySelectorAll('[data-hp]').forEach(b => b.onclick = () => showDropTexts(b.dataset.hp, '', null, true));
+      box.querySelectorAll('[data-hd]').forEach(b => b.onclick = () => showDropTexts(b.dataset.hd));
+      box.querySelectorAll('[data-hb]').forEach(b => b.onclick = () => showDropTexts(b.dataset.hb, '', () => showHunterInbox()));
     } catch (e) { box.innerHTML = '<span class="status">' + esc(e.offline ? 'Hunters’ messages need signal.' : e.message) + '</span>'; }
   }
   async function showMessages() {
-    frame('messages', 'Messages', (atDoor() ? '<button class="btn alt" id="tohunters" style="width:100%;margin-bottom:10px">Messages from hunters' +
+    frame('messages', 'Messages', (atDoor() || (st.home.hunterTexts || {}).mine ? '<button class="btn alt" id="tohunters" style="width:100%;margin-bottom:10px">Messages from hunters' +
       ((st.home.hunterTexts || {}).unanswered ? ' (' + st.home.hunterTexts.unanswered + ' waiting)' : '') + '</button>' : '') +
       '<p class="status">Messages stay on the facility record. Keep them about the work.</p><div id="threads" class="card"><span class="status">Loading…</span></div>');
     const th = document.getElementById('tohunters'); if (th) th.onclick = () => showHunterInbox();
@@ -4059,7 +4071,7 @@
         /* v130 (Joe, 21 November): the two things that actually happen when the truck pulls in.
            Managers and intake, like the check-in itself. Cancel stays for the hunter who never came. */
         (atDoor() ? '<button class="btn" data-dropin="' + esc(x.id) + '">Hunter is here: check in</button>' : '') +
-        (x.phone && atDoor() ? '<button class="btn alt" data-droptext="' + esc(x.id) + '">Text the hunter</button>' : '') +
+        (x.phone && (atDoor() || x.mine) ? '<button class="btn alt" data-droptext="' + esc(x.id) + '">Text the hunter</button>' : '') +
         (atDoor() ? '<button class="btn ghost" data-dropaway="' + esc(x.id) + '">Turn this deer away</button>' : '') +
         (x.mine || d.manager ? '<button class="btn ghost" data-dropcancel="' + esc(x.id) + '">Cancel</button>' : '') +
         '</div>' +
@@ -4099,12 +4111,19 @@
     /* Is "Message received" worth offering: the people who answer hunters, a number to mark, and
        his text still waiting. By number the server says so; from a drop-off or a deer it is his
        being the last word while the banner is up. */
-    const received = t => !marked && atDoor() && (byPhone ? !!t.unanswered
-      : !!t.phone && ((t.texts || []).slice(-1)[0] || {}).dir === 'in' && (((st.home || {}).hunterTexts || {}).unanswered || 0) > 0);
+    /* v135 (backend 123): the server now says so on all three ways in, because whose text it is
+       to answer depends on whose conversation it is. */
+    const received = t => !marked && (typeof t.unanswered === 'boolean' ? t.unanswered : atDoor() &&
+      !!t.phone && ((t.texts || []).slice(-1)[0] || {}).dir === 'in' && (((st.home || {}).hunterTexts || {}).unanswered || 0) > 0);
+    const ref = () => (byPhone ? { phone: id } : deerBack ? { band: id } : { id: id });
     const draw = (t, said) => {
       const who = t.hunter || t.phone || 'the hunter';
       shown = sig(t);
       box.innerHTML = '<div class="card"><b>' + esc(who) + '</b>' + (deerBack ? ' <span class="status">· band ' + esc(t.band || id) + '</span>' : '') + (t.hunter && t.phone ? ' · <a href="tel:' + esc(t.phone.replace(/[^\d+]/g, '')) + '">' + esc(t.phone) + '</a>' : '') +
+        /* v135 (Joe, 22 November): a conversation belongs to whoever started it. Said here, so
+           nobody wonders why his texts are not reaching everyone. */
+        (t.owner ? '<div class="status" id="dtowner">' + (t.mine ? 'This conversation is yours. Their texts come to you alone.'
+          : esc(t.owner) + ' has this conversation. Their texts go to ' + esc(t.owner) + ' alone.') + '</div>' : '') +
         '<div id="dtlist" style="margin-top:10px">' + listHtml(t) + '</div>' +
         '<div class="status" id="dtlive">New texts show here by themselves.</div></div>' +
         (said ? '<div class="note ok" id="dtsaid">' + esc(said) + '</div>' : '') +
@@ -4113,6 +4132,8 @@
            It was a faint "No reply needed" on one of the three ways into this screen; it is a
            full button now, on all three, whenever his is the last word. */
         (received(t) ? '<button class="btn alt" id="dtnone" style="width:100%;margin:0 0 8px">Message received<small style="display:block;font-weight:400">Conversation over. Nothing is sent to the hunter</small></button>' : '') +
+        (t.canTake ? '<button class="btn alt" id="dttake" style="width:100%;margin:0 0 8px">Take over<small style="display:block;font-weight:400">Their texts come to you from now on. ' +
+          esc(t.owner || 'The owner') + ' is told</small></button>' : '') +
         (t.canReply
           ? '<div class="card"><label for="dtbody">' + (deerBack ? 'Your message' : 'Your reply') + ' <span class="hint">goes out as a text from ' + esc(t.line || 'the Home Ground line') + ', signed Home Ground. Your own number is never shown</span></label>' +
             '<textarea id="dtbody" maxlength="' + esc(t.max || 300) + '" rows="3" autocapitalize="sentences"></textarea>' +
@@ -4125,12 +4146,19 @@
       if (none) none.onclick = async () => {
         none.disabled = true;
         try {
-          const out = await call({ action: 'hunterhandled', phone: byPhone ? id : t.phone });
+          // v135: named the way this screen was opened, and answered with the same conversation.
+          const out = await call(Object.assign({ action: 'hunterhandled' }, ref()));
           marked = true;
-          // From a drop-off or a deer the answer is the by-number conversation; keep this one as it is.
-          draw(byPhone ? out : t, 'Marked as received. Nothing was sent.'); refresh(true);
+          draw(out && out.texts ? out : t, 'Marked as received. Nothing was sent.'); refresh(true);
         }
         catch (e) { none.disabled = false; toast(e.offline ? 'Needs signal.' : e.message); }
+      };
+      const take = document.getElementById('dttake');
+      if (take) take.onclick = async () => {
+        take.disabled = true;
+        const was = t.owner || 'The owner';
+        try { draw(await call(Object.assign({ action: 'huntertake' }, ref())), 'This conversation is yours now. ' + was + ' has been told.'); refresh(true); }
+        catch (e) { take.disabled = false; toast(e.offline ? 'Needs signal.' : e.message); }
       };
       const ta = document.getElementById('dtbody'), send = document.getElementById('dtsend');
       if (!ta) return;
@@ -4164,7 +4192,8 @@
         // A text from him changes whether we may answer; draw the whole thing if nothing is typed.
         const ta = document.getElementById('dtbody');
         if (((now.texts || []).slice(-1)[0] || {}).dir === 'in') marked = false;   // he wrote again
-        if ((!!now.canReply !== !!document.getElementById('dtsend') || received(now) !== !!document.getElementById('dtnone')) && !(ta && ta.value)) draw(now, '');
+        if ((!!now.canReply !== !!document.getElementById('dtsend') || received(now) !== !!document.getElementById('dtnone') ||
+          !!now.canTake !== !!document.getElementById('dttake')) && !(ta && ta.value)) draw(now, '');
       } catch (e) { /* the next one will try again */ }
     }, 10000);
   }
