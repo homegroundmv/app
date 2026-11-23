@@ -161,9 +161,9 @@
     const c = (st.screens || {})[cacheKey(b)];
     return (c && Date.now() - c.at < CACHE_TTL) ? c : null;
   };
-  const cachePut = (b, out) => {
+  const cachePut = (b, out, asked, by) => {
     st.screens = st.screens || {};
-    st.screens[cacheKey(b)] = { at: Date.now(), d: out };
+    st.screens[cacheKey(b)] = { at: Date.now(), asked: asked || Date.now(), by: by || '', d: out };
     // Keep it small: a phone does not need every screen it has ever opened.
     const keys = Object.keys(st.screens);
     if (keys.length > 24) keys.sort((x, y) => st.screens[x].at - st.screens[y].at).slice(0, keys.length - 24)
@@ -182,17 +182,54 @@
      that refreshes a little often, not a phone sitting in a fetch loop. */
   const refreshedAt = {};
 
+  /* ---------- after a write: the saved screens are out of date, not gone (v136) ----------
+     Joe, 23 November: "clicking buttons on the app still seem to take longer than expected for a
+     lot of the buttons." Every write used to empty st.screens, so the screen opened after almost
+     any button had nothing saved and sat on "Loading…" for a full trip to Apps Script — which is
+     most of what the saved screens bought on 7 November, given back one tap later.
+
+     Now a write only records WHEN it happened. A saved answer the server was asked for before
+     that moment is still shown at once, and the fresh one is fetched behind it and drawn when it
+     differs: the same thing every saved screen already does, just without waiting 20 seconds.
+
+     Two screens are still made to wait for the truth, because they are where somebody is looking
+     for what they just did, and showing it undone for two seconds reads as "it did not save":
+       - the screen the write was made from: its saved answers are deleted, as all of them were;
+       - the first other screen opened afterwards, which is the one a form goes back to (check a
+         deer out, land on the front desk). It is fetched fresh, once.
+     Everything else — the screens that have nothing to do with the button — opens instantly.
+
+     An answer is dated by when it was ASKED for, not when it arrived. One that was already on its
+     way when the write happened may or may not include it, so it counts as out of date. */
+  let honestArmed = false, honestFor = '', wroteFrom = '';
+  function wrote() {
+    st.staleAt = Date.now();
+    const sc = st.screens || {};
+    Object.keys(sc).forEach(k => { if (sc[k].by === current) delete sc[k]; });
+    Object.keys(refreshedAt).forEach(k => { delete refreshedAt[k]; });
+    honestArmed = true; honestFor = ''; wroteFrom = current;
+    try { save(); } catch (e) {}
+  }
+  // frame() says which screen is being drawn; the first one that is not where the write was made is "the one it goes back to".
+  function honestNav(name) {
+    if (honestArmed && name !== wroteFrom) { honestArmed = false; honestFor = name; }
+    else if (!honestArmed && honestFor && name !== honestFor) honestFor = '';
+  }
+  const outOfDate = c => (c.asked || c.at) <= (st.staleAt || 0);
+
   async function call(body) {
+    const by = (body && body.__by) || current;
     /* Served from the last answer, with a refresh started behind it. The screen that asked gets
        its data in the same tick, so it paints at once; when the real answer differs, the screen
        is drawn again — unless a finger is on it, which the quiet-redraw rules already handle. */
     if (body && CACHEABLE.indexOf(body.action) >= 0 && !body.__fresh) {
       const hit = cacheGet(body);
-      if (hit) {
+      // v136: out of date AND the screen somebody has just come back to after a write: fetch it, do not show the old one.
+      if (hit && !(outOfDate(hit) && current === honestFor)) {
         const k = cacheKey(body), asked = current;
         if (!refreshedAt[k] || Date.now() - refreshedAt[k] > 20000) {
           refreshedAt[k] = Date.now();
-          call(Object.assign({ __fresh: true }, body))
+          call(Object.assign({ __fresh: true, __by: by }, body))
             .then(fresh => { if (!sameAnswer(fresh, hit.d) && current === asked) redraw(true); })
             .catch(() => { /* the screen is already up; a failed refresh is not worth a message */ });
         }
@@ -239,7 +276,7 @@
     try { out = await res.json(); }
     catch (e) { const err = new Error('The server did not answer properly (status ' + res.status + '). Try again in a moment.'); err.busy = true; st.busy = { at: Date.now() }; throw err; }
     if (!out.ok && out.busy) {
-      if (!body.__again) { await new Promise(r => setTimeout(r, 1500)); return call(Object.assign({}, body, { __again: true, __fresh: true })); }
+      if (!body.__again) { await new Promise(r => setTimeout(r, 1500)); return call(Object.assign({}, body, { __again: true, __fresh: true, __by: by })); }
       const e = new Error(out.error || 'The server is busy. Try again in a moment.'); e.busy = true; st.busy = { at: Date.now() }; throw e;
     }
     if (!out.ok) { const e = new Error(out.error || 'Something went wrong.'); e.fatal = true; throw e; }
@@ -254,28 +291,22 @@
         lockMs: Number(out.lockMs) || 0, at: Date.now() };
       try { save(); } catch (e) {}
     }
-    if (body && CACHEABLE.indexOf(body.action) >= 0) cachePut(body, out);
-    /* Anything that writes throws the lot away. A forfeit, a release, a payment — any of them can
-       change a screen somewhere else, and working out which would be a list nobody maintains. A
-       write is rare next to a read, so the cost is one honest fetch afterwards; the alternative is
-       a counter still showing a deer that has just been handed over. */
-    else if (body && body.action && body.action !== 'login' && body.action !== 'home' && body.action !== 'tagimg') {
-      st.screens = {};
-      Object.keys(refreshedAt).forEach(k => { delete refreshedAt[k]; });
-      try { save(); } catch (e) {}
-    }
+    if (body && CACHEABLE.indexOf(body.action) >= 0) cachePut(body, out, t0, by);
+    /* Anything that writes puts every saved screen out of date. A forfeit, a release, a payment —
+       any of them can change a screen somewhere else, and working out which would be a list nobody
+       maintains. Until v136 this threw the lot away; see wrote() for what it does now and why. */
+    else if (body && body.action && body.action !== 'login' && body.action !== 'home' && body.action !== 'tagimg') wrote();
     return out;
   }
 
   /* ---------- outbox: deer actions and log entries wait here until sent ---------- */
   function queue(action, fields, label, extra) {
     st.outbox.push(Object.assign({ clientId: uid(), action, fields, at: stamp(), label, created: Date.now(), by: st.number }, extra || {}));
-    /* Thrown away the moment the action is queued, not when it finishes sending. Screens are
+    /* Put out of date the moment the action is queued, not when it finishes sending. Screens are
        redrawn immediately after a tap — openCheckout calls showDesk() on the next line — and the
-       send is still in flight at that point, so a cache left standing would repaint the deer that
-       was just handed over as still waiting. */
-    st.screens = {};
-    Object.keys(refreshedAt).forEach(k => { delete refreshedAt[k]; });
+       send is still in flight at that point, so a saved front desk shown as it stood would repaint
+       the deer that was just handed over as still waiting. wrote() makes that next screen fetch. */
+    wrote();
     save(); flush();
   }
   // Blank is allowed (not every deer is weighed at the door); otherwise 0 to 500 lb, as the backend rules.
@@ -1010,6 +1041,7 @@
     navHere = { name: name, ident: ident == null ? null : ident, key: key };
     frameKey = key;
     current = name;
+    honestNav(name);
     touchedEl = null;   // a screen being drawn is a save, a cancel or a navigation: nothing entered yet
     $app.innerHTML =
       '<header class="top"><img src="icon-192.png" alt=""><div><div class="who">' + esc(st.staff && st.staff.name) + ' · ' + esc(st.staff && st.staff.number) + '</div>' +
