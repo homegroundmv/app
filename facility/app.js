@@ -104,6 +104,9 @@
   st.outbox = st.outbox || [];
   st.device = st.device || uid();
   st.home = st.home || {};
+  /* v137: the clock card changes the moment it is tapped, before the server has answered (see sendClock). If the app
+     was closed in that moment, what it was showing is a guess nobody confirmed: put back what was known. */
+  if (st.clockUndo) { Object.assign(st.home, st.clockUndo); delete st.clockUndo; }
   // Check-ins the server recorded under a different band (v116, see rebanded()). Kept a week.
   st.reband = (st.reband || []).filter(r => Date.now() - (r.landed || 0) < 7 * 864e5);
   st.hunters = st.hunters || { at: 0, list: [] };
@@ -1113,6 +1116,7 @@
     const bm = /^\d{1,2}:\d{2}$/.test(String(b || '')) ? Number(String(b).split(':')[0]) * 60 + Number(String(b).split(':')[1]) : 0;
     return fromHM(bm > now + 15 ? bm : Math.min(23 * 60 + 45, now + 240));
   }
+  let clockPending = '';   // 'in' or 'out' while a tap on the clock card is on its way to the server (v137)
   // Clock in with no questions. Used by the clock card and by the nudge on Skin it / Start processing.
   async function clockInNow() {
     const out = await call({ action: 'clock', dir: 'in', expected: finishGuess() });
@@ -1193,12 +1197,14 @@
     }
 
     const lead = h.clockedIn ? leadDeer() : null;
+    // v137: said beside the heading while a clock tap is on its way, and the button waits for the answer.
+    const pend = clockPending ? ' <span class="pill wait" id="clockpend">sending…</span>' : '', pendOff = clockPending ? ' disabled' : '';
     const clockStrip = h.clockedIn
-      ? '<div class="card strip"><div class="deer"><div><b>Clocked in' + (isMgr() ? ' · ' + ((h.clockKind || 'Other') === 'Other' ? 'management' : 'skinning/processing') : '') + '</b>' +
+      ? '<div class="card strip"><div class="deer"><div><b>Clocked in' + (isMgr() ? ' · ' + ((h.clockKind || 'Other') === 'Other' ? 'management' : 'skinning/processing') : '') + '</b>' + pend +
         '<div class="status">Since ' + esc(when(h.clockedIn)) + (h.expectedOut ? ' · finishing by ' + t12(h.expectedOut) : '') +
         (next ? ' · next booking ' + esc(dayName(next.date).split(',')[0]) + ' ' + t12(next.starts) : '') + '</div>' +
         (here.length ? '<div class="status">Also here: ' + esc(here.map(x => x.name).join(', ')) + '</div>' : '') +
-        '</div><button class="btn alt" id="clock">Clock out</button></div>' +
+        '</div><button class="btn alt" id="clock"' + pendOff + '>Clock out</button></div>' +
         (alone ? '<div class="note warn"><b>You are the only one clocked in.</b> Keep your phone on you.</div>' : '') +
         (h.expectedOut ? '<div class="status">You get a nudge ' + esc(nz(s.loneGrace, 30)) + ' minutes after ' + t12(h.expectedOut) +
           ' if you have not clocked out, and the managers hear at ' + esc(nz(s.mgrGrace, 60)) + ' minutes.</div>' : '') +
@@ -1209,15 +1215,15 @@
            which one the hours belong to. */
         (isMgr() ? '<div class="kindsw"><span class="status">Right now:</span>' +
           [['Other', 'Management'], ['Processing', 'Skinning/Processing']].map(k =>
-            '<button type="button" data-kind="' + k[0] + '"' +
+            '<button type="button" data-kind="' + k[0] + '"' + pendOff +
             (((h.clockKind || 'Other') === k[0] || (k[0] === 'Processing' && h.clockKind === 'Skinning')) ? ' class="on"' : '') + '>' + esc(k[1]) + '</button>').join('') +
           '</div>' : '') +
         '<button class="plain" id="still">Still here: change my finish time</button>' +
         '<button class="plain" id="fixclock">Correct a clock-out time</button><div id="clock-err" class="err"></div></div>'
-      : '<div class="card"><div class="deer"><div><b>Not clocked in</b>' +
+      : '<div class="card"><div class="deer"><div><b>' + (clockPending === 'out' ? 'Clocked out' : 'Not clocked in') + '</b>' + pend +
         '<div class="status">Clock in when you start work, including cleaning and training time.</div>' +
         (next ? '<div class="status">Next booking: ' + esc(dayName(next.date)) + ', ' + t12(next.starts) + '–' + t12(next.ends) + (next.kind === 'Skinning' ? ' (skinning)' : '') + '</div>' : '') +
-        '</div><button class="btn" id="clock">Clock in</button></div>' +
+        '</div><button class="btn" id="clock"' + pendOff + '>Clock in</button></div>' +
         '<button class="plain" id="fixclock">Correct a clock-out time</button><div id="clock-err" class="err"></div></div>';
 
     const mine = '<button class="seasonline" data-go="numbers"><span>Your season: <b>' + esc(m.deer || 0) + '</b> deer · <b>' +
@@ -1419,17 +1425,42 @@
     }
 
     const clockErr = msg => { const e = document.getElementById('clock-err'); if (e) e.innerHTML = msg; };
+    /* v137 (Joe, 23 November: "pushing a button gives us an immediate result"). The card changes
+       on the tap and the request goes behind it, marked "sending…" until the server answers.
+
+       It is NOT queued to send later the way a deer is. The server stamps the clock with the time
+       the request ARRIVES, and it is pay and the lone-worker watchdog: a clock-in that sat on a
+       phone for an hour would be recorded an hour late and look like the truth. So if it does not
+       get through, the card goes back to what it was and says so in words that cannot be read as
+       success, on whatever screen the person has moved to. */
     const sendClock = async (b, body) => {
-      if (b) b.disabled = true;
+      if (clockPending) return;
+      const out_ = body.dir === 'out';
+      st.clockUndo = { clockedIn: st.home.clockedIn || '', expectedOut: st.home.expectedOut || '', clockKind: st.home.clockKind || '' };
+      clockPending = body.dir;
+      st.home.clockedIn = out_ ? '' : stamp(); st.home.expectedOut = out_ ? '' : (body.expected || '');
+      save(); showHome();
       try {
         const out = await call(body);
+        clockPending = ''; delete st.clockUndo;
         st.home.clockedIn = out.clockedIn; st.home.week = out.week;
         st.home.expectedOut = out.expectedOut || ''; st.home.clockKind = out.kind || '';
         if (out.onSite) st.home.onSite = out.onSite;
-        save(); showHome();
+        save();
+        if (current === 'home') {
+          // Straight away, even if a redraw has to wait for a finger: "sending…" must not outlive the send.
+          const pp = document.getElementById('clockpend'); if (pp) pp.remove();
+          $app.querySelectorAll('#clock, [data-kind]').forEach(x => { x.disabled = false; });
+          redraw(true);
+        }
       } catch (x) {
-        if (b) b.disabled = false;
-        clockErr(esc(x.offline ? 'Clocking in or out needs signal. Tell Joe the time if you can\'t get signal.' : x.message));
+        clockPending = '';
+        if (st.clockUndo) { Object.assign(st.home, st.clockUndo); delete st.clockUndo; }
+        save();
+        const why = x.offline ? 'Clocking in or out needs signal. Tell Joe the time if you can\'t get signal.' : x.message;
+        toast((out_ ? 'You are STILL clocked in: clocking out did not go through. ' : 'You are NOT clocked in: it did not go through. ') + why);
+        if (current === 'home') { showHome(); const e = document.getElementById('clock-err'); if (e) e.innerHTML = esc(why); }
+        if (!x.offline) refresh(true);
       }
     };
     // A finish time is asked for on every clock-in: it is the only thing that lets anyone know to check on you.
@@ -4025,26 +4056,54 @@
       '<textarea id="msg-text" maxlength="1000" placeholder="Write a message"></textarea><div id="err" class="err"></div><button class="submit" id="send">Send</button>' +
       '<p class="center"><button class="plain" id="back">Back to messages</button></p>');
     document.getElementById('back').onclick = () => showMessages();
+    /* v137: a message appears in the thread the moment Send is tapped, marked "sending…", and the
+       box is empty and ready for the next one. `pending` is what has been tapped and not yet
+       answered; it is drawn under whatever the server last sent, so the ten-second poll landing
+       in between does not make it vanish. If it does not get through, it comes out of the thread
+       and goes back in the box with the reason, exactly where it would have been before. */
+    let pending = [], lastHtml = '', chain = Promise.resolve(), failed = null;
+    const pendHtml = () => pending.map(m => '<div class="bubble mine" data-pending="1" style="opacity:.6">' + esc(m.text) + '<div class="meta">You · sending…</div></div>').join('');
+    const paint = () => {
+      const box = document.getElementById('msgs'); if (!box) return;
+      box.innerHTML = (lastHtml || pending.length) ? lastHtml + pendHtml() : '<span class="status">No messages yet.</span>';
+      box.scrollTop = box.scrollHeight;
+    };
     const draw = async () => {
       try {
         const out = await call({ action: 'thread', channel: ch });
         const box = document.getElementById('msgs');
         if (!box) return stopThread();
         document.getElementById('th-title').textContent = out.label;
-        box.innerHTML = out.messages.length ? out.messages.map(m => m.system ? '<p class="status center">' + esc(m.text) + '</p>'
-          : '<div class="bubble ' + (m.mine ? 'mine' : 'theirs') + '">' + esc(m.text) + '<div class="meta">' + (m.mine ? 'You' : esc(m.from)) + ' · ' + esc(when(m.at)) + '</div></div>').join('')
-          : '<span class="status">No messages yet.</span>';
-        box.scrollTop = box.scrollHeight;
-      } catch (e) { const box = document.getElementById('msgs'); if (box) box.innerHTML = '<span class="status">' + esc(e.offline ? 'Messages need signal.' : e.message) + '</span>'; }
+        lastHtml = out.messages.map(m => m.system ? '<p class="status center">' + esc(m.text) + '</p>'
+          : '<div class="bubble ' + (m.mine ? 'mine' : 'theirs') + '">' + esc(m.text) + '<div class="meta">' + (m.mine ? 'You' : esc(m.from)) + ' · ' + esc(when(m.at)) + '</div></div>').join('');
+        paint();
+      } catch (e) { if (pending.length) return; const box = document.getElementById('msgs'); if (box) box.innerHTML = '<span class="status">' + esc(e.offline ? 'Messages need signal.' : e.message) + '</span>'; }
     };
     const send = document.getElementById('send');
-    send.onclick = async () => {
-      const text = document.getElementById('msg-text').value.trim();
+    send.onclick = () => {
+      const ta = document.getElementById('msg-text'), text = ta.value.trim();
       if (!text) return;
-      send.disabled = true; send.textContent = 'Sending…';
-      try { await call({ action: 'send', channel: ch, text, clientId: uid() }); document.getElementById('msg-text').value = ''; document.getElementById('err').textContent = ''; await draw(); }
-      catch (e) { document.getElementById('err').textContent = e.offline ? 'No signal. Your message wasn\'t sent.' : e.message; }
-      send.disabled = false; send.textContent = 'Send';
+      /* The same words sent again after a failure keep the same ID. A send that timed out may have
+         landed, and the server drops a second copy of an ID it has already written. */
+      const m = { text: text, id: failed && failed.text === text ? failed.id : uid() };
+      failed = null;
+      pending.push(m); ta.value = ''; document.getElementById('err').textContent = ''; paint();
+      // One at a time and in the order tapped, so two quick messages cannot land the wrong way round.
+      chain = chain.then(async () => {
+        try {
+          await call({ action: 'send', channel: ch, text: m.text, clientId: m.id });
+          pending = pending.filter(x => x !== m);
+          await draw();
+        } catch (e) {
+          pending = pending.filter(x => x !== m); failed = m;
+          const t2 = document.getElementById('msg-text'), er = document.getElementById('err');
+          if (!t2 || !document.getElementById('msgs')) { toast('Your message was NOT sent: "' + m.text.slice(0, 60) + (m.text.length > 60 ? '…' : '') + '". ' + (e.offline ? 'No signal.' : e.message)); return; }
+          paint();
+          t2.value = t2.value.trim() ? m.text + '\n' + t2.value : m.text;
+          if (t2.value !== m.text) failed = null;
+          er.textContent = e.offline ? 'No signal. Your message wasn\'t sent. It is back in the box.' : e.message;
+        }
+      });
     };
     await draw();
     threadTimer = setInterval(() => { if (!document.hidden && navigator.onLine) draw(); }, 10000);
