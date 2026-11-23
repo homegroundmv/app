@@ -737,6 +737,8 @@
     undo: ['Tapped the wrong deer', 'Tapped the wrong button', 'Done too early', 'Wrong weight or count'],
     edit: ['Typo at check-in', 'Hunter gave new details', 'Wrong hunter picked', 'Confirmation number added later'],
     void: ['Checked in twice', 'Test entry', 'Wrong deer entirely', 'Hunter took it back'],
+    discard: ['Spoiled: off smell, green or slimy meat, flies or maggots', 'Heavy gut contamination that can\'t be trimmed',
+      'Signs of illness: lesions, abscesses, very thin or sick-looking', 'Hung past the maximum hold'],
   };
   const chips = (kind, inputId) => '<div class="chips" data-chips="' + inputId + '" style="display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 8px">' +
     WHY_PRESETS[kind].map(r => '<button type="button" class="btn ghost" data-chip style="padding:12px 14px;min-height:48px;font-size:15px;font-weight:600">' + esc(r) + '</button>').join('') + '</div>';
@@ -1001,6 +1003,7 @@
       // v129: skinning started, with its lug. Not "skinned" until the finish below.
       if (x.action === 'skinbegin') { d['Skinning started'] = x.at; d['Skinning by'] = (f.skinner || st.staff.number) + ' ' + (f.skinnerName || st.staff.name); if (lugOf(f.lug)) d['Lug'] = lugOf(f.lug); }
       if (x.action === 'skin') { d['Skinner'] = f.skinner || st.staff.number; d['Skinner name'] = f.skinnerName || st.staff.name; d['Skinned at'] = x.at; d['Skinned at station'] = 'Yes'; if (lugOf(f.lug)) d['Lug'] = lugOf(f.lug); if (num(f.weight) > 0) d['Carcass weight (lb)'] = f.weight; }
+      if (x.action === 'carcassweight' && num(f.weight) > 0) d['Carcass weight (lb)'] = f.weight;   // v139
       if (x.action === 'start') {
         if (f.skinned && !d['Skinner']) { d['Skinner'] = f.skinner || f.processor || st.staff.number; d['Skinner name'] = f.skinnerName || f.processorName || st.staff.name; d['Skinned at'] = x.at; }
         d.Status = 'Processing'; d['Processing started'] = x.at; d['Processor number'] = f.processor || st.staff.number; d.Butcher = f.processorName || st.staff.name; d['Carcass weight (lb)'] = f.weight;
@@ -1724,6 +1727,7 @@
   /* Where a deer is in the process, in words, for the search box. */
   function stageOf(d) {
     if (d.Status === 'Voided') return 'Voided' + (d['Void reason'] ? ': ' + d['Void reason'] : '');
+    if (d.Status === 'Discarded') return 'Discarded ' + (d['Discarded'] || '') + (d['Discard reason'] ? ': ' + d['Discard reason'] : '');
     if (d.Status === 'Released') return 'Released ' + (d.Released || '') + (d['Released to'] ? ' to ' + d['Released to'] : '');
     if (d.Status === 'Ready') return 'Packaged, ready for pickup or delivery' + (d['First pack #'] ? ' · packs ' + d['First pack #'] + '–' + (d['Last pack #'] || '') : '');
     if (d.Status === 'Processing') return 'Being processed' + (d.Butcher ? ' by ' + d.Butcher : '') + ' · started ' + (d['Processing started'] || '');
@@ -2003,7 +2007,7 @@
   function deerCard(d) {
     const s = S();
     const h = hoursHung(d), bc = colourOf(d), isCold = d.Type === 'Cold storage';
-    const owe = owedOn(d), live = d.Status !== 'Released' && d.Status !== 'Voided';
+    const owe = owedOn(d), live = d.Status !== 'Released' && d.Status !== 'Voided' && d.Status !== 'Discarded';
     const u = d.Status === 'Hanging' && !isCold ? urgency(d) : null;
     // Cold storage is not waiting to be processed, so the processing clock would mislabel it. Its
     // own limit is the Society's: five days, longer while there is room — a hunter to ring.
@@ -2028,6 +2032,11 @@
       ? ' <button class="btn ghost" data-a="move">Move to…</button>' : '';
     const voidBtn = !isViewer() && isMgr() && d.Status !== 'Voided'
       ? ' <button class="btn ghost" data-a="void">Void this check-in</button>' : '';
+    /* v138 (Joe, 23 November): a deer that was checked in and cannot be used. Not a void: it was a
+       deer, so its record stays whole and says it was thrown away, by whom and why. Managers and
+       whoever is on intake (backend 125 is the gate). */
+    const discardBtn = counter && live
+      ? ' <button class="btn ghost" data-a="discard">Discard this deer</button>' : '';
     /* A typo in what the hunter said at the door is a typo, not a different deer. Correcting it is
        an amendment — the Edits tab keeps what it was, what it became, who changed it and why — so
        people fix the record instead of working around it. */
@@ -2065,6 +2074,14 @@
     // v134: a manager can put the charge back on a deer that was marked no charge.
     const chargeBtn = (isMgr() && owe && owe.free && live)
       ? ' <button class="btn ghost" data-a="recharge">Charge for this deer after all</button>' : '';
+    /* v139 (Joe, 23 November): "an after the fact option to add weight into the deer card after
+       it's been skinned." The weight is asked for when skinning is finished and at Start
+       processing, but a deer skinned before that, or started as "not weighed", had no way to get
+       one. On any deer that has been skinned, by anybody on staff; with a weight already there it
+       reads "Change". Backend 126 keeps the figure it replaced. */
+    const hasCw = num(d['Carcass weight (lb)']) > 0;
+    const cwBtn = !isViewer() && d.Status !== 'Voided' && (d['Skinner'] || d.Status !== 'Hanging')
+      ? ' <button class="btn ghost" data-a="cw">' + (hasCw ? 'Change carcass weight' : 'Add carcass weight') + '</button>' : '';
     return '<div class="card' + cls + (d.Type === 'Donated' ? ' donated' : '') + '" data-band="' + esc(d.Band) + '">' +
       '<div class="deer"><div><span class="band">' + esc(d.Band) + '</span> ' +
       '<span class="tag ' + (d.Type === 'Donated' ? 'don">DONATED' : 'prv">' + (isCold ? 'COLD STORAGE' : 'PRIVATE')) + '</span>' + (d['DDP deer'] === 'Yes' ? '<span class="tag">DDP</span>' : '') +
@@ -2079,7 +2096,9 @@
       (d['Intake weight (lb)'] ? ' · ' + esc(d['Intake weight (lb)']) + ' lb in' + (d['Weighed as'] === 'Not dressed' ? ' (not dressed)' : '') : '') +
       (d['Carcass weight (lb)'] ? ' · ' + esc(d['Carcass weight (lb)']) + ' lb carcass' : '') +
       (d['Pounds packaged'] ? ' · ' + esc(d['Pounds packaged']) + ' lb packaged' : '') + '</div></div>' +
-      '<div class="hrs">' + (d.Status === 'Released' ? '' : Math.floor(h) + ' h') + '</div></div>' +
+      '<div class="hrs">' + (d.Status === 'Released' || d.Status === 'Discarded' ? '' : Math.floor(h) + ' h') + '</div></div>' +
+      (d.Status === 'Discarded' ? '<div class="note bad" data-discarded><b>Discarded</b>' + (d['Discard reason'] ? ': ' + esc(d['Discard reason']) : '') +
+        (d['Discarded by'] ? ' · ' + esc(d['Discarded by']) : '') + (d['Discarded'] ? ' · ' + esc(d['Discarded']) : '') + '</div>' : '') +
       (d.Status === 'Voided' ? '<div class="note bad"><b>Voided</b>' + (d['Void reason'] ? ': ' + esc(d['Void reason']) : '') +
         (d['Voided by'] ? ' · ' + esc(d['Voided by']) : '') + '</div>' : '') +
       (d.Cuts && d.Status !== 'Released' ? '<div class="note ok"><b>Cuts:</b> ' + esc(d.Cuts) + '</div>' : '') +
@@ -2108,7 +2127,7 @@
       (d.Status === 'Released' ? '<div class="status">Released ' + esc(d.Released) + ' to ' + esc(d['Released to']) + '</div>' : '') +
       tagPhotoRow(d) +
       '<div class="actions">' + payBtn + act + moveBtn + (live && !isViewer() ? '<button class="btn ghost" data-a="print">Print band</button>' : '') +
-      (live && !isViewer() && antlerBandFor(d) ? '<button class="btn ghost" data-a="antlerprint">Print antler band</button>' : '') + msgBtn + noteBtn + editBtn + chargeBtn + undoBtn + voidBtn + '</div><div class="form"></div></div>';
+      (live && !isViewer() && antlerBandFor(d) ? '<button class="btn ghost" data-a="antlerprint">Print antler band</button>' : '') + msgBtn + noteBtn + cwBtn + editBtn + chargeBtn + undoBtn + discardBtn + voidBtn + '</div><div class="form"></div></div>';
   }
 
   /* Starting work while clocked out is how hours go missing: nobody forgets to clock in on purpose,
@@ -2191,6 +2210,28 @@
   };
 
   let clockNudged = false;
+  /* v138: what a discard did, on its own screen. A toast is gone in seconds, and "Joe was not texted"
+     or "the email was not drafted" is something somebody has to act on. */
+  function showDiscarded(d, why, out, after) {
+    const b = band(d.Band), donated = d.Type === 'Donated';
+    const texted = out.already ? '' : out.texted
+      ? '<div class="note ok" id="dctext">Joe has been texted' + (out.textTo ? ' at ' + esc(out.textTo) : '') + '.</div>'
+      : '<div class="note bad" id="dctext" style="font-size:17px"><b>Joe has NOT been texted.</b> ' + esc(out.textWhy ? 'Why: ' + out.textWhy + '. ' : '') + 'Ring or text him yourself now.</div>';
+    const drafted = out.already || !donated ? '' : out.drafted
+      ? '<div class="note ok" id="dcmail">The email to MassWildlife and Tick Free MV is saved as a draft in the Home Ground Gmail for Joe to read and send' +
+        (out.draftTo ? '' : ', with nobody on the To line yet') + '. Nothing has been sent, and nothing has changed on the Donation report.</div>'
+      : '<div class="note bad" id="dcmail" style="font-size:17px"><b>The email to MassWildlife and Tick Free MV was NOT drafted.</b> ' + esc(out.draftWhy ? 'Why: ' + out.draftWhy + '. ' : '') +
+        'Tell Joe it has to be written by hand.</div>' +
+        (out.email ? '<div class="card"><b>' + esc(out.email.subject || '') + '</b><div id="dcwords" style="white-space:pre-wrap;margin-top:8px">' + esc(out.email.body || '') + '</div></div>' : '');
+    frame('discarded', 'Deer discarded',
+      '<div class="card"><span class="band">' + esc(b) + '</span> ' + esc(d['Hunter number'] || d['Hunter name'] || '') +
+      '<div class="note bad" style="margin-top:8px"><b>Discarded.</b> ' + esc(why) + '</div>' +
+      (out.already ? '<div class="note warn">It was already recorded as discarded. Nothing was texted or drafted a second time.</div>' : '') +
+      texted + drafted +
+      (d['First pack #'] ? '<div class="note warn">Its package numbers: <b>' + esc(d['First pack #']) + (d['Last pack #'] ? ' to ' + esc(d['Last pack #']) : ' onward') + '</b>.</div>' : '') + '</div>' +
+      '<button class="btn" id="dcback" style="width:100%">Back to the board</button>', false, b);
+    document.getElementById('dcback').onclick = () => (after ? after() : showBoard());
+  }
   function act(kind, d, box, after) {
     if ((kind === 'skin' || kind === 'start') && !isViewer() && !st.home.clockedIn && !clockNudged && box) {
       box.innerHTML = '<div class="note warn" style="font-size:17px"><b>You\'re not clocked in.</b> Clock in now and carry on?</div>' +
@@ -2325,6 +2366,15 @@
           ['Field dressed', 'Not dressed'].map(x => '<option' + ((d['Weighed as'] || 'Field dressed') === x ? ' selected' : '') + '>' + x + '</option>').join('') + '</select></div></div>' +
         '<label for="e_notes">Notes</label><input id="e_notes" type="text" value="' + esc(d['Notes'] || '') + '">' +
         '<label for="er">Why <span class="hint">goes on the record beside the change</span></label>' + chips('edit', 'er') + '<input id="er" type="text" placeholder="Or type what happened">',
+      discard: () => '<div class="note warn" style="font-size:17px"><b>This deer is being thrown away.</b> Use this for a deer that was checked in and cannot be used. ' +
+        'For a check-in that was a mistake or a duplicate, use Void instead.</div>' +
+        '<p class="status">Its record stays, marked discarded with your name and the reason. It comes off this board and out of the cooler count. ' +
+        'Joe is texted straight away.' + (d.Type === 'Donated' ? ' Because it is a donated deer, an email to MassWildlife and Tick Free MV is drafted for Joe to read and send. ' +
+        'Nothing is sent to them by the app, and nothing changes on the Donation report.' : '') + '</p>' +
+        (d['First pack #'] ? '<p class="note bad">This deer has package numbers' + (d['Last pack #'] ? ': <b>' + esc(d['First pack #']) + ' to ' + esc(d['Last pack #']) + '</b>' : ' from <b>' + esc(d['First pack #']) + '</b>') +
+          '. They go in the email, so MassWildlife knows which packages it was.</p>' : '') +
+        '<label for="dr">Why is it being discarded? <span class="hint">goes on the record, in the text to Joe' + (d.Type === 'Donated' ? ' and in the email' : '') + '</span></label>' +
+        chips('discard', 'dr') + '<input id="dr" type="text" maxlength="300" placeholder="Or type what is wrong with it">',
       void: () => '<p class="status">The row stays on the record and is marked voided, with your name and the reason on it. It stops counting in the cooler, on this board, in the totals and on the Donation report. Nothing is deleted.</p>' +
         (d['First pack #'] && d['Last pack #'] ? '<p class="note bad">This deer was packaged: <b>' + esc(d['First pack #']) + ' to ' + esc(d['Last pack #']) + '</b>. Voiding it frees those package numbers, and nothing renumbers the deer that came after. Fix the numbering by hand before the next drop-off.</p>' : '') +
         '<label for="vr">Why</label>' + chips('void', 'vr') + '<input id="vr" type="text" placeholder="Or type it: duplicate of 1017202601">',
@@ -2385,6 +2435,14 @@
               '<textarea id="pncw" rows="2" maxlength="200" placeholder="Landowner’s deer, agreed with Joe"></textarea></div>'
             : '<p class="status">If this deer is not being charged, a manager marks it no charge here.</p>');
       },
+      // v139: the carcass weight, added or put right after skinning.
+      cw: () => '<p class="status">' + (num(d['Carcass weight (lb)']) > 0
+          ? 'The record has <b>' + esc(d['Carcass weight (lb)']) + ' lb</b>. Saving a different weight keeps that figure in the deer’s notes.'
+          : 'No carcass weight was recorded for ' + esc(band(d.Band)) + (d['Carcass weight (lb)'] === 'N/A' ? ': it was started as not weighed' : '') + '.') +
+        (d['Pounds packaged'] ? ' The venison yield is worked out again from it.' : '') + '</p>' +
+        '<label for="cwv">Carcass weight (lb) <span class="hint">On the hanging scale: field dressed, skin and head off</span></label>' +
+        '<input id="cwv" type="number" inputmode="decimal" min="0" step="0.1" value="' +
+        esc(num(d['Carcass weight (lb)']) > 0 ? d['Carcass weight (lb)'] : '') + '">',
       recharge: () => '<div class="note warn" style="font-size:17px"><b>Put the charge back on ' + esc(band(d.Band)) + '?</b> ' +
         'It was marked no charge: ' + esc((owe || {}).free || '') + '. The posted price goes back on' +
         (d['Pork fat added'] === 'Yes' ? ', with the pork fat add-on' : '') +
@@ -2518,7 +2576,7 @@
           '<p class="status">Cash goes in an envelope for the safe at close-out. Never in a pocket or the truck.</p>' : ''),
     };
     box.innerHTML = forms[kind]() + '<div class="err" id="ferr"></div><button class="btn" id="fok" style="margin-top:12px">' +
-      (kind === 'void' ? 'Void it' : kind === 'edit' ? 'Save the correction' : kind === 'pay' ? 'Record the payment' : kind === 'recharge' ? 'Put the charge back' : 'Save') +
+      (kind === 'void' ? 'Void it' : kind === 'discard' ? 'Discard this deer' : kind === 'edit' ? 'Save the correction' : kind === 'pay' ? 'Record the payment' : kind === 'recharge' ? 'Put the charge back' : kind === 'cw' ? 'Save the weight' : 'Save') +
       '</button> <button class="btn ghost" id="fx">Cancel</button>';
     /* Cancel is bound FIRST, before anything that can throw. It used to be bound after the
        field wiring below, so a single missing element took the whole binding run down with it and
@@ -2629,6 +2687,21 @@
           .catch(e => { btn.disabled = false; err(e.offline ? 'Needs signal to correct a record.' : e.message); });
         return;
       }
+      if (kind === 'discard') {
+        const why = v('dr').trim();
+        if (!why) return err('Say why it is being discarded. The reason is the record.');
+        // Not queued, like a void: it texts Joe and drafts an email, and those must happen once, now, with somebody watching.
+        const btn = document.getElementById('fok');
+        btn.disabled = true; btn.textContent = 'Discarding…';
+        call({ action: 'discarddeer', band: d.Band, reason: why, clientId: uid() })
+          .then(out => {
+            st.home.deer = (st.home.deer || []).filter(x => band(x.Band) !== band(d.Band)); save();
+            showDiscarded(d, why, out || {}, after);
+            refresh(true);
+          })
+          .catch(e => { btn.disabled = false; btn.textContent = 'Discard this deer'; err(e.offline ? 'Needs signal to discard a deer. Nothing has been recorded yet.' : e.message); });
+        return;
+      }
       if (kind === 'void') {
         const why = v('vr').trim();
         if (!why) return err('Say why. The row stays, so the reason is the record.');
@@ -2664,6 +2737,14 @@
         const who = isMgr() ? v('sk') : st.staff.number;
         const wn = ((st.home.staff || []).find(x => x.number === who) || st.staff).name;
         queue('skin', { band: d.Band, skinner: who, skinnerName: wn, antimicrobial: true, lug: lugK, weight: v('kw') }, 'Skin ' + d.Band);
+      }
+      if (kind === 'cw') {
+        const cw = num(v('cwv'));
+        if (!(cw > 0)) return err('Enter the carcass weight.');
+        if (cw < 15 || cw > 250) return err(v('cwv') + ' lb is outside the range a deer carcass falls in (15–250 lb). Check the scale.');
+        if (cw === num(d['Carcass weight (lb)'])) return err('That is the weight already on the record.');
+        queue('carcassweight', { band: d.Band, weight: v('cwv') }, 'Carcass weight ' + d.Band);
+        toast(d.Band + ': carcass weight ' + cw + ' lb.', true);
       }
       if (kind === 'recharge') {
         queue('nocharge', { band: d.Band, charge: true }, 'Charge put back ' + d.Band);
