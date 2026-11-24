@@ -3136,11 +3136,13 @@
       /* The last step of a check-in (Joe, 14 November): a photo of the hunter's tag. Lost tag: the
          app draws the replacement record, and the phone photo is what gets taken. */
       '<div class="tagstep"><h3>Last step: the tag</h3>' +
+        '<div id="pretag"></div>' +   // v141: the tag photo a hunter sent when he pre-registered
         '<div id="tagnormal"><p class="status">Photograph the hunter\u2019s tag on the deer, close enough to read.</p>' +
           camBtn('tagcam') + '<img id="tagprev" class="tagpic" alt="Tag photo" hidden></div>' +
         '<label class="choice" id="taglostrow"><input id="taglost" type="checkbox"> <span><b>Hunter lost their tag</b><br>' +
           '<span class="hint">The app makes a replacement tag record from this check-in and keeps it in place of the photo.</span></span></label>' +
         '<div id="lostbox" hidden>' +
+          '<div id="prescr"></div>' +   // v141: his harvest report screenshot, beside the confirmation number
           '<p class="status">Photograph the hunter\u2019s phone showing his confirmed deer on the MassWildlife site.</p>' +
           camBtn('scrcam') + '<img id="scrprev" class="tagpic" alt="Hunter\u2019s phone" hidden>' +
           '<div class="status" style="margin-top:10px">The replacement tag record, as it will be kept:</div><img id="ltprev" class="tagpic" alt="Replacement tag record">' +
@@ -3194,6 +3196,54 @@
       el.value = val; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); };
     const setCheck = (sel, on) => { const el = document.querySelector(sel); if (!el || el.checked === !!on) return;
       el.checked = !!on; el.dispatchEvent(new Event('change', { bubbles: true })); };
+    /* v141 (backend 128; Joe, 23 November). A hunter can now send a photo of his tag, or say he has
+       none and send his harvest report, when he pre-registers. Neither is taken on trust: his tag
+       photo becomes the deer's only when somebody ticks that the tag on the deer matches it, and
+       his screenshot stands in for the phone photo only when the confirmation number is ticked
+       as matching. Otherwise the step is exactly what it was. */
+    let preTag = null;
+    const preImg = async (ref, kind) => {
+      try { const o = await call({ action: 'precheckimg', ref: ref, kind: kind }); return o && o.data ? 'data:' + (o.mime || 'image/jpeg') + ';base64,' + o.data : ''; }
+      catch (e) { return ''; }
+    };
+    const showPreTag = async p => {
+      const mine = preTag = { ref: p.ref, way: p.tag || 'door', tagData: '', scrData: '' };
+      const box = document.getElementById('pretag'), sbox = document.getElementById('prescr');
+      if (!box || !sbox) return;
+      box.innerHTML = ''; sbox.innerHTML = '';
+      const still = () => preTag === mine && !!document.getElementById('pretag');
+      if (p.tag === 'none') setCheck('#taglost', true);   // no tag: the lost-tag record, drawn from this form as it always is
+      if (p.tag === 'photo') {
+        box.innerHTML = '<p class="status">' + (p.hasTagPhoto ? 'Loading the photo the hunter sent\u2026' : '') + '</p>';
+        mine.tagData = p.hasTagPhoto ? await preImg(p.ref, 'tag') : '';
+        if (!still()) return;
+        box.innerHTML = mine.tagData
+          ? '<div class="note ok">The hunter sent this photo of his tag when he pre-registered. Hold it against the tag on the deer.</div>' +
+            '<img id="pretagimg" class="tagpic" alt="The tag photo the hunter sent" src="' + mine.tagData + '">' +
+            '<label class="choice"><input id="pretagok" type="checkbox"> <span><b>Tag on the deer matches the photo</b><br>' +
+            '<span class="hint">Ticked, his photo is kept as the tag photo. If it does not match, leave this and take a new photo below.</span></span></label>'
+          : '<div class="note warn" id="pretagnone">The hunter ' + (p.hasTagPhoto ? 'sent a tag photo, but it could not be loaded' : 'meant to send a tag photo, but none arrived') + '. Take the tag photo as usual.</div>';
+      }
+      if (p.hasScreenshot) {
+        mine.scrData = await preImg(p.ref, 'screen');
+        if (!still()) return;
+      }
+      if (p.tag === 'none') {
+        const cfNow = () => (document.getElementById('cf') || {}).value || 'none entered';
+        sbox.innerHTML = mine.scrData
+          ? '<div class="note ok">The hunter said he has no tag and sent this screenshot of his harvest report.</div>' +
+            '<img id="prescrimg" class="tagpic" alt="The harvest report screenshot the hunter sent" src="' + mine.scrData + '">' +
+            '<div class="status" style="margin-top:8px">Confirmation number on this check-in: <b id="prescrcf">' + esc(cfNow()) + '</b></div>' +
+            '<label class="choice"><input id="prescrok" type="checkbox"> <span><b>Confirmation matches the screenshot</b><br>' +
+            '<span class="hint">Ticked, his screenshot is kept and there is no need to photograph his phone. If it does not match, photograph his phone below.</span></span></label>'
+          : '<div class="note warn" id="prescrnone">The hunter said he has no tag' + (p.hasScreenshot ? ', but his screenshot could not be loaded' : ' and sent no screenshot') + '. Photograph his phone showing the confirmed deer.</div>';
+        const cf = document.getElementById('cf');
+        if (cf && mine.scrData) cf.addEventListener('input', () => { const e = document.getElementById('prescrcf'); if (e) e.textContent = cfNow(); });
+      } else if (mine.scrData) {
+        box.insertAdjacentHTML('beforeend', '<div class="status" style="margin-top:10px">He also sent a screenshot of his harvest report. It is kept with the deer.</div>' +
+          '<img id="prescrimg" class="tagpic" alt="The harvest report screenshot the hunter sent" src="' + mine.scrData + '">');
+      }
+    };
     const fillFromPrecheck = p => {
       setCheck('input[name="iap"][value="No"]', true);
       setCheck('input[name="type"][value="' + p.type + '"]', true);
@@ -3217,6 +3267,7 @@
       if (p.notes) { const nt = document.getElementById('nt'); if (nt && nt.value.indexOf(p.notes) < 0) nt.value = (nt.value ? nt.value + ' ' : '') + 'Hunter wrote: ' + p.notes; }
       precheckRef = p.ref;
       showId();
+      showPreTag(p);
     };
     const drawPrechecks = list => {
       const box = document.getElementById('prebox'); if (!box) return;
@@ -3224,7 +3275,9 @@
       box.innerHTML = '<div class="card"><label>Pre-registered online <span class="hint">hunters who filled in the drop-off form. Tap one to fill the form, then check the tag and the deer.</span></label>' +
         list.map(p => '<div class="prerow" style="display:flex;gap:8px;align-items:center;margin-top:8px">' +
           '<button class="btn alt" style="flex:1;text-align:left" data-pre="' + esc(p.ref) + '"><b>' + esc(p.firstName + ' ' + p.lastName) + '</b> · ' +
-            esc(p.deer) + ' · ' + esc(String(p.type).toLowerCase()) + (p.cuts ? ' · cut sheet filled' : '') + ' · code ' + esc(p.ref) + (p.comingAt ? ' · ' + esc(p.comingAt) : '') + '</button>' +
+            esc(p.deer) + ' · ' + esc(String(p.type).toLowerCase()) + (p.cuts ? ' · cut sheet filled' : '') +
+            (p.tag === 'photo' ? (p.hasTagPhoto ? ' · tag photo sent' : ' · tag photo did not arrive') : p.tag === 'none' ? ' · no tag' + (p.hasScreenshot ? ', screenshot sent' : '') : '') +
+            ' · code ' + esc(p.ref) + (p.comingAt ? ' · ' + esc(p.comingAt) : '') + '</button>' +
           '<button class="btn ghost" data-predel="' + esc(p.ref) + '">Clear</button></div>').join('') +
         '<div id="prenote"></div></div>';
       box.querySelectorAll('[data-pre]').forEach(b => b.onclick = () => {
@@ -3235,7 +3288,8 @@
       });
       box.querySelectorAll('[data-predel]').forEach(b => b.onclick = async () => {
         if (b.dataset.armed !== '1') { b.dataset.armed = '1'; b.textContent = 'Tap again to clear'; return; }
-        try { const out = await call({ action: 'precheckdismiss', ref: b.dataset.predel }); if (precheckRef === b.dataset.predel) precheckRef = ''; drawPrechecks(out.prechecks); }
+        try { const out = await call({ action: 'precheckdismiss', ref: b.dataset.predel }); if (precheckRef === b.dataset.predel) { precheckRef = ''; preTag = null; ['pretag', 'prescr'].forEach(id => { const e = document.getElementById(id); if (e) e.innerHTML = ''; }); }
+          drawPrechecks(out.prechecks); }
         catch (e) { toast(e.offline ? 'Clearing it needs signal.' : e.message); }
       });
     };
@@ -3605,8 +3659,16 @@
       const noCam = document.getElementById('nocam').checked, noCamWhy = v('nocamwhy');
       if (!tribal && !v('htown')) return err('Which town was the deer taken in? Choose it beside the date of the shot.');
       if (noCam && !noCamWhy) return err('Say why there is no photo, so whoever reads the record knows.');
-      if (!noCam && !tagLost && !tagShot) return err('Last step: take a photo of the hunter\u2019s tag. If the camera isn\u2019t working, tick that box and say why.');
-      if (!noCam && tagLost && !scrShot) return err('Take a photo of the hunter\u2019s phone showing his confirmed deer. If the camera isn\u2019t working, tick that box and say why.');
+      // v141: what the hunter sent counts only when it is this pre-registration's and its box is ticked.
+      const preMine = preTag && precheckRef && preTag.ref === precheckRef ? preTag : null;
+      const preTagOk = !!(preMine && preMine.tagData && (document.getElementById('pretagok') || {}).checked) && !tagLost && !tagShot;
+      const preScrOk = !!(preMine && preMine.scrData && (document.getElementById('prescrok') || {}).checked);
+      if (!noCam && !tagLost && !tagShot && !preTagOk) return err(preMine && preMine.tagData
+        ? 'Last step: tick that the tag on the deer matches the hunter\u2019s photo, or take a new photo of the tag.'
+        : 'Last step: take a photo of the hunter\u2019s tag. If the camera isn\u2019t working, tick that box and say why.');
+      if (!noCam && tagLost && !scrShot && !preScrOk) return err(preMine && preMine.scrData
+        ? 'Tick that the confirmation number matches the hunter\u2019s screenshot, or photograph his phone.'
+        : 'Take a photo of the hunter\u2019s phone showing his confirmed deer. If the camera isn\u2019t working, tick that box and say why.');
       const noCall = document.getElementById('nocallout');
       const f = { band: b, iap: iap === 'Yes', type, deer: v('deer'), points: v('deer') === 'Antlered buck' ? pts : '', firstName: v('fn'), lastName: v('ln'), customerId: lic, hunterPhone: v('ph'), confirmation: tribal ? '' : v('cf'), takenWith: v('tw'), ammunition: v('am'),
         skull: skullAsked() ? skullPick === 'Yes' : undefined,
@@ -3621,6 +3683,7 @@
         // Martin's Last Name field on a tribal row (10 November).
         townOfHarvest: (document.getElementById('tribal') || {}).checked ? v('thtown').trim() : v('htown').trim(),
         precheckRef: precheckRef || undefined,
+        precheckTagOk: preTagOk || undefined,   // v141: staff ticked that the tag on the deer matches the hunter's photo
         dropId: (intakeDrop && intakeDrop.id) || undefined,
         tagLost, noPhotoReason: noCam ? noCamWhy : '',
         // He told us at the counter that it is already filed. Donated only — nothing else is paid

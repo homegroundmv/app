@@ -118,6 +118,10 @@ textarea{min-height:76px}
 .stepper{display:inline-flex;align-items:center;border:1.5px solid var(--line);border-radius:10px;overflow:hidden;background:var(--bg)}
 .stepper button{width:52px;height:52px;border:0;background:none;font:inherit;font-size:26px;font-weight:600;color:var(--orange);cursor:pointer}
 .stepper output{min-width:56px;text-align:center;font-family:var(--num);font-size:28px;font-weight:700}
+.pickfile{display:block;position:relative;margin-top:8px;text-align:center}
+.pickfile input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
+.shot{display:block;max-width:100%;max-height:240px;margin:10px auto 0;border-radius:8px;border:1px solid var(--line)}
+.shotok{margin:8px 0 0;font-size:14px;color:var(--muted)}
 .warnbox{margin-top:10px;border-left:4px solid var(--warn);background:var(--band);padding:10px 12px;border-radius:0 8px 8px 0;font-size:14.5px}
 .okbox{border-left-color:var(--ok)}
 .err{color:var(--bad);font-weight:700;margin-top:14px;min-height:0}
@@ -337,6 +341,32 @@ footer a{color:var(--orange)}
         <label class="chk"><input id="remember" type="checkbox" checked> Remember my details on this phone for next time</label>
       </section>
 
+      <!-- 3b. the tag (v9, backend 128). Three ways. A photo saves time at the counter; nothing
+           here is a record until staff have checked it against the deer. -->
+      <section class="step" data-step="tag" data-title="Your tag" hidden>
+        <h2>Your tag</h2>
+        <p class="lede">We check your tag against the deer at the counter. Sending a photo now makes that quicker.</p>
+        <div class="choices c1">
+          <label class="ch"><input type="radio" name="tag" value="photo"><span>Upload a photo of my tag</span></label>
+          <label class="ch"><input type="radio" name="tag" value="none"><span>I don’t have my tag</span></label>
+          <label class="ch"><input type="radio" name="tag" value="door"><span>I’ll show it at the door</span></label>
+        </div>
+        <div class="q" id="tagPhotoQ" hidden><span class="ql">Photo of your tag <span class="hint">on the deer, close enough to read</span></span>
+          <label class="btn2 pickfile"><span id="tagFileTxt">Take or choose a photo</span><input id="tagFile" type="file" accept="image/*"></label>
+          <img class="shot" id="tagPrev" alt="Your tag photo" hidden>
+        </div>
+        <div class="q" id="hdQ" hidden><span class="ql">Your harvest details</span>
+          <p class="lede" style="margin:4px 0 8px">This is what we’ll check at the counter. Go back to change anything.</p>
+          <dl class="rev" id="hd"></dl>
+        </div>
+        <div class="q" id="scrQ" hidden><span class="ql">Screenshot of your MassWildlife harvest report <span class="hint" id="scrHint">optional</span></span>
+          <div class="warnbox" id="scrWhy" hidden>Please add this. Without your tag, the harvest report on the MassWildlife site is how we confirm your deer. A screenshot of it now saves you finding it at the counter.</div>
+          <label class="btn2 pickfile"><span id="scrFileTxt">Take or choose a screenshot</span><input id="scrFile" type="file" accept="image/*"></label>
+          <img class="shot" id="scrPrev" alt="Your harvest report screenshot" hidden>
+        </div>
+        <p class="shotok" id="tagNote" hidden></p>
+      </section>
+
       <!-- 4. cuts, private only -->
       <section class="step" data-step="cuts" data-title="Your cuts" hidden>
         <h2>Your cut sheet</h2>
@@ -387,6 +417,7 @@ footer a{color:var(--orange)}
       <div class="k">Your registration code</div>
       <div class="code" id="code">----</div>
       <p id="doneMsg">Show this code at the counter.</p>
+      <p id="doneTag" role="status" hidden></p>
       <ol>
         <li>Pull up to the facility and show your code.</li>
         <li>We check your tag and the deer, and band it.</li>
@@ -537,7 +568,7 @@ function drawPrice(){
 }
 
 /* ---------- steps ---------- */
-var STEPS = ["plan", "deer", "you", "cuts", "send"];
+var STEPS = ["plan", "deer", "you", "tag", "cuts", "send"];
 var at = 0;
 function steps(){ return STEPS.filter(function(s){ return s !== "cuts" || pick("type") === "Private"; }); }
 function show(i, focus){
@@ -550,6 +581,7 @@ function show(i, focus){
   $("err").textContent = "";
   if (list[at] === "send") drawReview();
   if (list[at] === "cuts") { syncCuts(); drawPrice(); }
+  if (list[at] === "tag") syncTag();
   saveDraft();
   if (focus !== false) toTop();
   tellParent();
@@ -591,6 +623,7 @@ $("f").addEventListener("change", function(e){
   // The error line is left alone here: clearing it would move the Next button up under a finger mid-tap.
   var n = e.target.name;
   syncPlan(); syncDeer();
+  if (n === "tag") { scrNudged = false; syncTag(); $("err").textContent = ""; }
   if (/^cut|^pork$/.test(n)) { syncCuts(); drawPrice(); }
   if (n === "eta") $("etaWarn").hidden = e.target.value !== "Tomorrow" || pick("when") !== "1";
   saveDraft(); tellParent();
@@ -598,6 +631,96 @@ $("f").addEventListener("change", function(e){
   if (n === "type") setTimeout(function(){ show(1); }, 180);
 });
 $("back").onclick = function(){ show(at - 1); };
+
+/* ---------- the tag step (v9, backend 128) ----------
+   A photo is made small on the phone before it is sent: about 1600 px on the long side, as a JPEG.
+   It is held in memory only, never in the saved draft, and goes up after the registration has
+   been accepted, so a photo that will not upload cannot lose the registration. */
+var shots = { tag: "", screen: "" }, scrNudged = false;
+function shrink(file){
+  return new Promise(function(ok, no){
+    if (!file || !/^image\//.test(file.type || "")) return no(new Error("That file isn’t a picture. Choose a photo."));
+    var url = URL.createObjectURL(file), im = new Image();
+    var fail = function(){ try { URL.revokeObjectURL(url); } catch (e) {} no(new Error("That photo couldn’t be read. Try another, or show it at the door.")); };
+    im.onload = function(){
+      try {
+        var k = Math.min(1, 1600 / Math.max(im.naturalWidth, im.naturalHeight));
+        var c = document.createElement("canvas");
+        c.width = Math.max(1, Math.round(im.naturalWidth * k)); c.height = Math.max(1, Math.round(im.naturalHeight * k));
+        c.getContext("2d").drawImage(im, 0, 0, c.width, c.height);
+        var out = c.toDataURL("image/jpeg", 0.85);
+        if (out.length > 6500000) out = c.toDataURL("image/jpeg", 0.6);   // about 5 MB is the most the backend takes
+        try { URL.revokeObjectURL(url); } catch (e) {}
+        if (out.length > 6500000 || out.indexOf("data:image/jpeg") !== 0) return no(new Error("That photo is too large. Try another, or show it at the door."));
+        ok(out);
+      } catch (e) { fail(); }
+    };
+    im.onerror = fail;
+    im.src = url;
+  });
+}
+function wireShot(inputId, prevId, txtId, kind, again){
+  $(inputId).addEventListener("change", function(){
+    var f = this.files && this.files[0]; if (!f) return;
+    $("err").textContent = "";
+    shrink(f).then(function(data){
+      shots[kind] = data; $(prevId).src = data; $(prevId).hidden = false; $(txtId).textContent = again; syncTag(); tellParent();
+    }, function(x){ $("err").textContent = x.message; tellParent(); });
+    this.value = "";   // so choosing the same picture again still fires
+  });
+}
+wireShot("tagFile", "tagPrev", "tagFileTxt", "tag", "Choose a different photo");
+wireShot("scrFile", "scrPrev", "scrFileTxt", "screen", "Choose a different screenshot");
+function harvestDetails(){
+  return [["Confirmation number", $("cfna").checked ? "" : g("cf").toUpperCase()], ["MassWildlife customer ID", g("lic")],
+    ["Date of kill", pick("when") === "1" ? "Yesterday" : pick("when") === "0" ? "Today" : ""], ["Town", pick("town")],
+    ["Deer", pick("deer") ? deerName() : ""], ["Taken with", pick("tw")]];
+}
+function syncTag(){
+  var way = pick("tag");
+  $("tagPhotoQ").hidden = way !== "photo";
+  $("hdQ").hidden = way !== "none";
+  $("scrQ").hidden = !(way === "photo" || way === "none");
+  $("scrHint").textContent = way === "none" ? "please add it" : "optional";
+  $("scrWhy").hidden = !(way === "none" && !shots.screen);
+  if (way === "none") $("hd").innerHTML = harvestDetails().map(function(r){
+    return '<div><div><dt>' + esc(r[0]) + '</dt><dd>' + (r[1] ? esc(r[1]) : '<em>not given</em>') + '</dd></div></div>'; }).join("");
+  var note = way === "door" ? "Have your tag on the deer when you pull up." : "";
+  $("tagNote").textContent = note; $("tagNote").hidden = !note;
+}
+function tagLine(){
+  var way = pick("tag");
+  return way === "photo" ? "Photo of my tag" + (shots.screen ? " and a harvest report screenshot" : "")
+    : way === "none" ? "No tag: my harvest details" + (shots.screen ? " and a harvest report screenshot" : ", no screenshot")
+    : "I’ll show it at the door";
+}
+function PHOTO(ref, key, kind, data){
+  return fetch(BACKEND, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify({ action: "precheckphoto", ref: ref, key: key, kind: kind, data: data }) })
+    .then(function(r){ return r.json(); }).then(function(j){ if (!j || !j.ok) throw new Error((j && j.error) || "not saved"); return j; });
+}
+/* After the registration is in. One at a time; whatever happens, he is told plainly, and told
+   that the registration itself is safe. */
+function sendShots(j, way){
+  var el = $("doneTag"), todo = [];
+  if (way === "photo" && shots.tag) todo.push("tag");
+  if (way !== "door" && shots.screen) todo.push("screen");
+  var atDoor = way === "none" ? "Have your harvest report up on your phone at the counter." : "Just show your tag at the door.";
+  el.hidden = way === "door";
+  if (way === "door") return Promise.resolve();
+  if (!todo.length) { el.textContent = atDoor; return Promise.resolve(); }
+  if (DEMO) { el.textContent = "Demo: no photo was sent."; return Promise.resolve(); }
+  if (!j.upload) { el.textContent = "Your registration went through, but your photo could not be sent. " + atDoor; return Promise.resolve(); }
+  el.textContent = todo.length > 1 ? "Sending your photos…" : "Sending your photo…";
+  var failed = 0, chain = Promise.resolve();
+  todo.forEach(function(kind){ chain = chain.then(function(){ return PHOTO(j.ref, j.upload, kind, shots[kind]).catch(function(){ failed++; }); }); });
+  return chain.then(function(){
+    el.textContent = failed
+      ? "Your registration went through, but " + (failed === todo.length ? (todo.length > 1 ? "your photos" : "your photo") : "one of your photos") + " didn’t upload. That’s fine. " + atDoor
+      : way === "photo" ? "Your tag photo is with us. Keep the tag on the deer: we check it against the photo."
+      : "Your harvest report screenshot is with us. We’ll check it against your confirmation number at the counter.";
+    tellParent();
+  });
+}
 
 function check(step){
   var t = pick("type"), deer = pick("deer");
@@ -622,6 +745,14 @@ function check(step){
     if (!$("cfna").checked && !g("cf")) return "Enter your confirmation number, or tick that the state system wouldn’t give you one.";
     if (t === "Donated" && (!g("ad1") || !g("adt") || !g("adz"))) return "Enter your mailing address so Tick Free MV can mail your check.";
   }
+  if (step === "tag") {
+    var way = pick("tag");
+    if (!way) return "Choose how you’ll show us your tag.";
+    if (way === "photo" && !shots.tag) return "Add a photo of your tag, or choose to show it at the door.";
+    if (way === "none" && ($("cfna").checked || !g("cf"))) return "Go back to About you and enter your confirmation number. Without your tag, it’s how we check your harvest details.";
+    // Asked for once, firmly. Pressing Next again goes on without it.
+    if (way === "none" && !shots.screen && !scrNudged) { scrNudged = true; return "Please add a screenshot of your MassWildlife harvest report. If you can’t, press Next again and show it on your phone at the counter."; }
+  }
   if (step === "send" && !pick("eta")) return "Say when you’ll get here.";
   return "";
 }
@@ -643,6 +774,7 @@ function drawReview(){
   rows.push(["you", "You", g("fn") + " " + g("ln") + " · " + g("ph") + (g("em") ? " · " + g("em") : "") +
     (g("lic") ? " · ID " + g("lic") : "") + " · " + ($("cfna").checked ? "no confirmation number" : "confirmation " + g("cf").toUpperCase()) +
     (t === "Donated" ? " · " + g("ad1") + ", " + g("adt") + " " + g("adz") : "")]);
+  rows.push(["tag", "Tag", tagLine()]);
   if (t === "Private") rows.push(["cuts", "Cuts", cutsLine() + " · " + (SVC.porkInStock && pick("pork") === "Yes" ? "pork fat added" : "all venison")]);
   $("rev").innerHTML = rows.map(function(r){
     return '<div><div><dt>' + esc(r[1]) + '</dt><dd>' + esc(r[2]) + '</dd></div><button type="button" data-edit="' + r[0] + '">Edit</button></div>';
@@ -658,7 +790,7 @@ function fields(){
     shotDate: shotIso(), townOfHarvest: pick("town"), customerId: g("lic"), confirmation: $("cfna").checked ? "" : g("cf"), noConfirmation: $("cfna").checked,
     takenWith: pick("tw"), ammunition: $("ammoQ").hidden ? "" : pick("am"),
     address: t === "Donated" ? g("ad1") + ", " + g("adt") + ", " + (g("ads") || "MA").toUpperCase() + " " + g("adz") : "",
-    dressed4h: pick("fd") === "Yes", comingAt: pick("eta"), notes: g("nt"), website: g("web"),
+    dressed4h: pick("fd") === "Yes", comingAt: pick("eta"), notes: g("nt"), website: g("web"), tag: pick("tag") || "door",
     cuts: t === "Private" ? cutsOut() : undefined, porkFat: t === "Private" ? SVC.porkInStock && pick("pork") === "Yes" : undefined };
 }
 function SEND(body){
@@ -683,6 +815,7 @@ $("f").addEventListener("submit", function(e){
     $("textCode").href = "sms:+15086876255?&body=" + encodeURIComponent("Drop-off code " + j.ref);
     $("f").hidden = true; $("progWrap").hidden = true; $("done").hidden = false;
     clearDraft(); toTop(); tellParent();
+    sendShots(j, pick("tag") || "door").then(tellParent, tellParent);
   }).catch(function(x){ $("err").textContent = x.message; tellParent(); })
     .then(function(){ b.disabled = false; b.textContent = "Send my drop-off"; });
 });
@@ -690,7 +823,10 @@ $("again").onclick = function(){
   var keep = ["fn", "ln", "ph", "em", "lic", "ad1", "adt", "ads", "adz"].map(function(id){ return [id, $(id).value]; });
   $("f").reset(); keep.forEach(function(k){ $(k[0]).value = k[1]; });
   pts = 0; drawPts(); $("cf").disabled = false;
-  syncPlan(); syncDeer(); drawPrices();
+  shots = { tag: "", screen: "" }; scrNudged = false;
+  ["tagPrev", "scrPrev"].forEach(function(id){ $(id).hidden = true; $(id).removeAttribute("src"); });
+  $("tagFileTxt").textContent = "Take or choose a photo"; $("scrFileTxt").textContent = "Take or choose a screenshot"; $("doneTag").hidden = true;
+  syncPlan(); syncDeer(); syncTag(); drawPrices();
   $("f").hidden = false; $("progWrap").hidden = false; $("done").hidden = true; show(0);
 };
 
