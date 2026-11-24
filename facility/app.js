@@ -4245,6 +4245,10 @@
         (atDoor() ? '<button class="btn" data-dropin="' + esc(x.id) + '">Hunter is here: check in</button>' : '') +
         (x.phone && (atDoor() || x.mine) ? '<button class="btn alt" data-droptext="' + esc(x.id) + '">Text the hunter</button>' : '') +
         (atDoor() ? '<button class="btn ghost" data-dropaway="' + esc(x.id) + '">Turn this deer away</button>' : '') +
+        /* v140 (Joe, 23 November): whoever claimed it cannot go after all. It is handed back and
+           the team is asked again, which Cancel never did: Cancel closes the drop-off, and is for
+           the hunter who is not coming. The claimer, or a manager for them (backend 127). */
+        (claimed && (x.mine || d.manager) ? '<button class="btn ghost" data-dropback="' + esc(x.id) + '">I can\'t make it</button>' : '') +
         (x.mine || d.manager ? '<button class="btn ghost" data-dropcancel="' + esc(x.id) + '">Cancel</button>' : '') +
         '</div>' +
         (!claimed && !d.onSite ? '<div class="status">Not clocked in, so this would be a call-out: $' + d.calloutFee + ' flat.</div>' : '') +
@@ -4405,17 +4409,35 @@
     (box || $app).querySelectorAll('[data-dropin]').forEach(b => b.onclick = () =>
       showIntake((((st.home.drops || {}).open) || []).find(o => o.id === b.dataset.dropin) || null));
     (box || $app).querySelectorAll('[data-dropaway]').forEach(b => b.onclick = () => showDropAway(b.dataset.dropaway));
+    wireDropBack(box);
     (box || $app).querySelectorAll('[data-claim],[data-dropcancel]').forEach(b => b.onclick = async () => {
       b.disabled = true;
       const cancelling = !!b.dataset.dropcancel;
       let why = '';
-      if (cancelling) { why = prompt('Why is it being canceled?', 'Hunter didn\'t come') || ''; if (!why) { b.disabled = false; return; } }
+      if (cancelling) { why = prompt('Cancel is only for when the hunter is not coming. It closes the drop-off for everyone.\n\n' +
+        'If the hunter is still coming and you can\'t go, press Cancel here and tap "I can\'t make it" instead.\n\nWhy is it being canceled?', 'Hunter didn\'t come') || ''; if (!why) { b.disabled = false; return; } }
       try {
         const out = await call(cancelling ? { action: 'canceldrop', id: b.dataset.dropcancel, why: why } : { action: 'claimdrop', id: b.dataset.claim });
         st.home.drops = out; save();
         showHome(cancelling ? 'Canceled.' : 'It\'s yours. Check the deer in when it arrives and this closes itself.');
         refresh(true);
       } catch (e) { b.disabled = false; toast(e.offline ? 'Needs signal.' : e.message); }
+    });
+  }
+
+  // v140: wired apart from claim and cancel, and called from wireDrops() below.
+  function wireDropBack(box) {
+    (box || $app).querySelectorAll('[data-dropback]').forEach(b => b.onclick = async () => {
+      const x = (((st.home.drops || {}).open) || []).find(o => o.id === b.dataset.dropback) || {};
+      const mine = !!x.mine, who = x.hunter || x.phone || 'the hunter';
+      if (!confirm((mine ? 'Hand this drop-off back?' : 'Hand this drop-off back for ' + first(x.claimedName || '') + '?') + ' The team is asked again to meet ' + who +
+        (x.source === 'Text' ? ', and the hunter is texted that somebody else will be in touch.' : '.'))) return;
+      b.disabled = true;
+      try {
+        st.home.drops = await call({ action: 'unclaimdrop', id: b.dataset.dropback }); save();
+        showHome('Handed back. The team has been asked again.');
+        refresh(true);
+      } catch (e) { b.disabled = false; toast(e.offline ? 'Needs signal. It is still ' + (mine ? 'yours' : 'claimed') + '.' : e.message); }
     });
   }
 
