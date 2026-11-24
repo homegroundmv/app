@@ -3802,12 +3802,21 @@
     }
     printPages(pages);
   }
+  /* v142 (Joe, 24 November): the hunter's name on both bands, as a first initial and the last name
+     in capitals: "G. BELLEBUONO". From the two name columns, or from the whole name where a deer
+     has only that. One name prints alone; none prints nothing. */
+  function bandName(d) {
+    const sp = splitName((d && d['Hunter name']) || '');
+    const f = String((d && d['Hunter first name']) || sp.first || '').trim(), l = String((d && d['Hunter last name']) || sp.last || '').trim();
+    return (f && l ? f.charAt(0) + '. ' + l : f || l).toUpperCase();
+  }
   function intakeBandHtml(d) {
-    const w = parse(d.Intake), bc = colourOf(d);
+    const w = parse(d.Intake), bc = colourOf(d), who = bandName(d);
     const qr = window.qrcode(0, 'M'); qr.addData(deerLink(d.Band)); qr.make();
     return '<div class="bw">' +
       '<div class="bt' + (d.Type === 'Donated' ? ' don">DONATED' : '">PRIVATE') + '</div>' +
       '<div><div class="bi">' + esc(band(d.Band)) + '</div>' +
+      (who ? '<div class="bx bn">' + esc(who) + '</div>' : '') +
       '<div class="bx">IN ' + (w ? w.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase() + ' ' + (w.getMonth() + 1) + '/' + w.getDate() : '') +
       (bc ? ' · ' + esc(bc.toUpperCase()) : '') + '</div>' +
       '<div class="bx">' + esc((d.Deer || '').toUpperCase()) + (d['MassWildlife confirmation'] ? ' · ' + (/^mw/i.test(d['MassWildlife confirmation']) ? '' : 'MW ') + esc(d['MassWildlife confirmation']) : '') + '</div></div>' +
@@ -3843,13 +3852,13 @@
   }
   function antlerBandHtml(d) {
     const keep = d['Skull kept'] === 'Yes', w = parse(d.Intake), bc = colourOf(d);
-    const last = (d['Hunter last name'] || splitName(d['Hunter name'] || '').last || d['Hunter name'] || '').toUpperCase();
+    const who = bandName(d);   // v142: initial and last name, as on the intake band
     const qr = window.qrcode(0, 'M'); qr.addData(deerLink(d.Band) + '&r=1'); qr.make();
     return '<div class="bw">' +
       '<div class="ba' + (keep ? ' keep">SAVE FOR HUNTER' : '">OK TO DISCARD') + '</div>' +
       '<div><div class="bi">' + esc(band(d.Band)) + '</div>' +
       '<div class="bx">ANTLERS' + (d['Antler points'] ? ' · ' + esc(d['Antler points']) + ' PTS' : '') +
-        (keep ? (last ? ' · ' + esc(last) : '') : ' · HUNTER GAVE UP THE HEAD') + '</div>' +
+        (keep ? (who ? ' · ' + esc(who) : '') : ' · HUNTER GAVE UP THE HEAD') + '</div>' +
       '<div class="bx">IN ' + (w ? w.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase() + ' ' + (w.getMonth() + 1) + '/' + w.getDate() : '') +
         (bc ? ' · ' + esc(bc.toUpperCase()) : '') + '</div></div>' +
       '<div class="bq">' + qr.createSvgTag({ cellSize: 2, margin: 0, scalable: true }) + '</div></div>';
