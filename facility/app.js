@@ -154,6 +154,8 @@
 
      The list is explicit. An action not on it is never served from a cache, so anything added
      later is slow-but-correct rather than fast-but-wrong. */
+  // v144: the print queue's own traffic changes nothing a saved screen shows, so it does not put them out of date.
+  const PRINT_ACTIONS = ['queueprint', 'nextprint', 'printdone', 'printfail', 'stationbeat', 'stationset', 'printpending', 'printqueue', 'printclear', 'printreprint'];
   const CACHEABLE = ['desk', 'fees', 'oncall', 'drops', 'priority', 'martin', 'records', 'ssop',
     'stats', 'team', 'shifts', 'shiftlog', 'supplies', 'threads', 'status', 'sensors',
     'donations', 'tocollect', 'temprecord', 'deeredits', 'hunters'];
@@ -298,7 +300,7 @@
     /* Anything that writes puts every saved screen out of date. A forfeit, a release, a payment —
        any of them can change a screen somewhere else, and working out which would be a list nobody
        maintains. Until v136 this threw the lot away; see wrote() for what it does now and why. */
-    else if (body && body.action && body.action !== 'login' && body.action !== 'home' && body.action !== 'tagimg') wrote();
+    else if (body && body.action && body.action !== 'login' && body.action !== 'home' && body.action !== 'tagimg' && PRINT_ACTIONS.indexOf(body.action) < 0) wrote();
     return out;
   }
 
@@ -966,7 +968,7 @@
       !(ht.unanswered === 1 && !ht.phone && (current === 'droptexts' || current === 'deertexts'))
       ? '<button class="htban" id="htban"><b>Unanswered message from a hunter</b><span>' + esc(ht.who || 'A hunter') +
         (ht.unanswered > 1 ? ' and ' + (ht.unanswered - 1) + ' more' : '') + ' · tap to read and reply</span></button>' : '';
-    el.innerHTML = htBan + queue +
+    el.innerHTML = htBan + stationPill() + queue +
       /* v116. Stays until somebody says the band on the carcass has been replaced: a toast is gone
          in seconds, and this is two deer about to be mixed up. */
       (st.reband || []).filter(r => !r.done && (!r.by || r.by === st.number)).map(r =>
@@ -1384,7 +1386,11 @@
       big('numbers', 'My numbers', 'Deer, pounds, hours and pay this week', 'view') +
       (isMgr() ? big('team', 'Team numbers', 'Every processor, this week and the season', 'view') : '') +
       (isMgr() ? big('sensors', 'Sensors', 'Cold storage and both MHUs · live temperatures and the record', 'view') : '') +
-      (isMgr() ? big('speed', 'Speed test', 'Where the waiting actually goes — run it if a screen feels slow', 'view') : '');
+      (isMgr() ? big('speed', 'Speed test', 'Where the waiting actually goes — run it if a screen feels slow', 'view') : '') +
+      // v144: the band print queue. The station tile is a manager's, and stays on a device that is one.
+      (isMgr() || stationOn() ? big('printstation', 'Print station', stationOn() ? 'On for this device · ' + (st.station.queued || 0) + ' waiting'
+        : 'Print the bands sent from phones and iPads on this laptop', 'view') : '') +
+      (isMgr() ? big('printqueue', 'Print queue', 'Bands sent to the printer, and what became of each', 'view') : '');
 
     const isIntake = /intake/i.test((st.staff && st.staff.role) || '');
     const office = (isMgr() || isIntake)
@@ -3880,7 +3886,248 @@
       '<div class="bp" style="top:' + (i * 11.5) + 'in">' + h + '</div>').join('');
     setTimeout(() => window.print(), 80);
   }
-  async function printBand(d, withAntler) {
+  /* ---------- v144: the band print queue (backend 129) ----------
+     Joe, 24 November: a phone or an iPad cannot print a band; the laptop at the door can. So a
+     band asked for anywhere is sent to a queue and the laptop, in print-station mode, prints it.
+
+     Which way a band goes: on a device that IS a print station, or while the queue is switched
+     off (Settings "Band print queue", which the backend turns on when a station is first set up),
+     it prints here exactly as it always did. Otherwise it is sent. */
+  const PRINT_KEYS = ['Band', 'Intake', 'Type', 'Deer', 'MassWildlife confirmation', 'Antler points', 'Hunter name', 'Hunter first name', 'Hunter last name', 'Skull kept', 'Band colour'];
+  const stationOn = () => !!(st.station && st.station.on);
+  const queueOn = () => S().printQueue === true;
+  function printBand(d, withAntler) {
+    if (stationOn() || !queueOn()) return printBandHere(d, withAntler);
+    return sendPrint(d, withAntler && antlerBandFor(d) ? 'both' : 'intake');
+  }
+  function printAntlerBand(d) {
+    if (stationOn() || !queueOn()) return printAntlerHere(d);
+    if (!antlerBandFor(d)) { toast('No antler band: the skull question was not answered for this deer.'); return; }
+    return sendPrint(d, 'antler');
+  }
+  /* Sent with what goes on the band, so it prints even while the check-in itself is still on its
+     way. One id per band asked for: sent again after a lost answer, it is still one job. */
+  async function sendPrint(d, pages, id) {
+    const row = {};
+    PRINT_KEYS.forEach(k => { if (d[k] != null && d[k] !== '') row[k] = d[k]; });
+    const job = { id: id || uid(), d: d, pages: pages, band: band(d.Band) };
+    try {
+      const out = await call({ action: 'queueprint', band: job.band, pages: pages, row: row, clientId: job.id });
+      if (out.station && out.station.online === false) {
+        return printBar(job, 'offline', 'The print station looks offline — is the laptop on?' +
+          (out.station.seen ? ' It last checked in ' + when(out.station.seen) + '.' : '') + ' Band ' + job.band + ' is waiting in its queue.');
+      }
+      toast('Sent to the band printer.' + (pages === 'both' ? ' The ' + (d['Skull kept'] === 'Yes' ? 'SAVE FOR HUNTER' : 'OK TO DISCARD') + ' antler band prints second: put it round the antlers.' : ''), true);
+    } catch (e) {
+      printBar(job, e.offline ? 'nosignal' : 'refused', e.offline ? 'No signal: band ' + job.band + ' has NOT gone to the band printer.'
+        : 'Band ' + job.band + ' was not sent to the band printer: ' + e.message);
+    }
+  }
+  /* A bar that stays until it is answered, on whatever screen is showing: a band that may not
+     print is not something to say in a toast that is gone in three seconds. */
+  function printBar(job, kind, text) {
+    let el = document.getElementById('printbar');
+    if (!el) { el = document.createElement('div'); el.id = 'printbar'; el.setAttribute('role', 'alert'); document.body.appendChild(el); }
+    el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:60;background:#FFF4D6;border-top:3px solid #B8600F;padding:12px 14px calc(12px + env(safe-area-inset-bottom));box-shadow:0 -4px 14px rgba(0,0,0,.18)';
+    el.dataset.kind = kind;
+    el.innerHTML = '<div id="pbtext" style="font-weight:700;font-size:16px;margin-bottom:8px">' + esc(text) + '</div>' +
+      '<button class="btn" id="pbhere">Print on this device instead</button> ' +
+      (kind === 'offline' ? '<button class="btn ghost" id="pbleave">Leave it in the queue</button>'
+        : '<button class="btn ghost" id="pbagain">Try again</button> <button class="btn ghost" id="pbleave">Close</button>');
+    const close = () => { if (el.parentNode) el.parentNode.removeChild(el); };
+    document.getElementById('pbleave').onclick = close;
+    const again = document.getElementById('pbagain');
+    if (again) again.onclick = () => { close(); sendPrint(job.d, job.pages, job.id); };
+    document.getElementById('pbhere').onclick = () => {
+      close();
+      // Taken off the queue first, so the laptop does not print a second band when it comes back.
+      call({ action: 'printclear', id: job.id, why: 'printed on the device that asked' }).catch(() => {});
+      if (job.pages === 'antler') printAntlerHere(job.d); else printBandHere(job.d, job.pages === 'both');
+    };
+  }
+
+  /* ---- print-station mode: this device prints what the others send ----
+     Kept on the device (st.station), not on the sign-in, so the laptop stays a station whoever
+     signs in to it; claiming jobs needs a manager's or an intake sign-in (the backend's rule). */
+  let stationBusy = false, stationWake = null;
+  function stationPill() {
+    if (!stationOn()) return '';
+    const s2 = st.station;
+    return '<span class="pill" id="stpill">Print station: on' + (s2.lastAt ? ' · last band ' + esc(when(s2.lastAt)) : '') +
+      ' · ' + (s2.queued || 0) + ' waiting</span> ' + (s2.note || s2.failed ? '<span class="status" id="stnote">' + esc(s2.note || s2.failed) + '</span> ' : '');
+  }
+  function stationPaint() { try { save(); } catch (e) {} status(); if (current === 'printstation') drawStation(); }
+  async function stationBeat() {
+    const out = await call({ action: 'stationbeat', device: st.device });
+    st.station.key = out.key; st.station.queued = out.queued || 0; st.station.note = '';
+    return out;
+  }
+  /* One job on the roll: the same pages and the same print styles as a band printed here. With
+     Chrome started with --kiosk-printing this prints with no dialog; without it, the dialog
+     opens and the job waits for it. */
+  function stationPrint(pages) {
+    return new Promise((ok, no) => {
+      document.getElementById('label').innerHTML = pages.map((h, i) => '<div class="bp" style="top:' + (i * 11.5) + 'in">' + h + '</div>').join('');
+      let fin = false;
+      const done = () => { if (fin) return; fin = true; window.removeEventListener('afterprint', done); ok(); };
+      window.addEventListener('afterprint', done);
+      setTimeout(() => {
+        try { window.print(); } catch (e) { fin = true; window.removeEventListener('afterprint', done); return no(e); }
+        setTimeout(done, 1200);
+      }, 80);
+    });
+  }
+  /* Take jobs until there are none. One at a time, and only one of these running. */
+  async function stationDrain() {
+    if (stationBusy || !stationOn() || !st.pin || !navigator.onLine) return;
+    stationBusy = true;
+    try {
+      for (let i = 0; i < 60; i++) {
+        const out = await call({ action: 'nextprint', device: st.device });
+        st.station.queued = out.queued || 0; st.station.note = '';
+        const j = out.job;
+        if (!j) break;
+        let printed = false;
+        try {
+          await loadQR(); bandCss();
+          const d = j.row || {};
+          const pages = j.pages === 'antler' ? [antlerBandHtml(d)]
+            : [intakeBandHtml(d)].concat(j.pages === 'both' && antlerBandFor(d) ? [antlerBandHtml(d)] : []);
+          await stationPrint(pages);
+          printed = true;
+        } catch (e) {
+          st.station.failed = 'Band ' + j.band + ' did not print: ' + (e && e.message ? e.message : 'the printer did not take it');
+          try { await call({ action: 'printfail', id: j.id, note: String((e && e.message) || e).slice(0, 140), device: st.device }); } catch (x) { /* it stays as Printing, for a manager to see */ }
+        }
+        if (printed) {
+          st.station.lastAt = stamp(); st.station.lastBand = j.band; st.station.failed = '';
+          try { const done = await call({ action: 'printdone', id: j.id, device: st.device }); st.station.queued = done.queued || 0; }
+          catch (x) { st.station.note = 'Band ' + j.band + ' printed, but the queue could not be told.'; }
+        }
+        stationPaint();
+      }
+    } catch (e) {
+      st.station.note = e.offline ? 'No signal: the queue cannot be reached.' : e.message;
+    } finally { stationBusy = false; stationPaint(); }
+  }
+  /* The once-a-minute check. It asks only whether anything is waiting, which the backend answers
+     from its cache without opening the book; a job is claimed only when there is one. Not while
+     the tab is hidden. */
+  async function stationPoll() {
+    if (!stationOn() || !st.pin || document.hidden || !navigator.onLine || stationBusy) return;
+    try {
+      let pending;
+      try { pending = !!(await call({ action: 'printpending', device: st.device, key: st.station.key || '' })).pending; }
+      catch (e) {
+        if (e.offline || e.busy) throw e;
+        const b = await stationBeat();   // its key has run out: check in again, signed in
+        pending = !!b.pending || b.queued > 0;
+      }
+      st.station.polledAt = Date.now();
+      if (pending) await stationDrain(); else stationPaint();
+    } catch (e) { st.station.note = e.offline ? 'No signal: the queue cannot be reached.' : e.message; stationPaint(); }
+  }
+  async function stationAwake() {
+    try {
+      if (!stationOn() || document.hidden || !navigator.wakeLock || stationWake) return;
+      stationWake = await navigator.wakeLock.request('screen');
+      if (stationWake && stationWake.addEventListener) stationWake.addEventListener('release', () => { stationWake = null; });
+    } catch (e) { stationWake = null; }
+  }
+  function stationSleep() { try { if (stationWake) stationWake.release(); } catch (e) {} stationWake = null; }
+  async function stationSwitch(on) {
+    let token = '';
+    try { token = localStorage.getItem('hg-push-facility-token') || ''; } catch (e) { token = ''; }
+    const out = await call({ action: 'stationset', on: on, token: token, device: st.device });
+    st.station = on ? { on: true, key: out.key, queued: out.queued || 0, pushed: !!out.pushed, since: stamp() } : { on: false };
+    if (st.home && st.home.settings && out.queueOn !== undefined) st.home.settings.printQueue = out.queueOn;
+    save();
+    if (on) { stationAwake(); stationDrain(); } else stationSleep();
+  }
+  /* Whenever the app opens on a station, comes back to the front, or is told a band is waiting. */
+  async function stationWakeUp() {
+    if (!stationOn() || !st.pin) return;
+    stationAwake();
+    try { await stationBeat(); } catch (e) { /* the minute's check will try again */ }
+    stationDrain();
+  }
+  setInterval(stationPoll, 60000);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) stationSleep(); else stationWakeUp(); });
+  if (navigator.serviceWorker && navigator.serviceWorker.addEventListener)
+    navigator.serviceWorker.addEventListener('message', e => { if (e && e.data && e.data.hgPush && e.data.tag === 'print') stationDrain(); });
+  setTimeout(stationWakeUp, 1500);
+  window.__hgStation = { poll: stationPoll, drain: stationDrain };   // so a test can fire them without waiting a minute
+
+  function showPrintStation() {
+    frame('printstation', 'Print station', '<div id="psbox"></div>');
+    drawStation();
+  }
+  function drawStation() {
+    const box = document.getElementById('psbox'); if (!box) return;
+    const on = stationOn(), s2 = st.station || {};
+    const pushOk = window.HGPush && HGPush.state() === 'granted';
+    box.innerHTML =
+      '<div class="card"><div id="psstate" style="font-size:20px;font-weight:800">Print station: ' + (on ? 'on' : 'off') + '</div>' +
+      (on
+        ? '<div class="status" id="pslast">' + (s2.lastAt ? 'Last band printed ' + esc(when(s2.lastAt)) + (s2.lastBand ? ' (' + esc(s2.lastBand) + ')' : '') : 'No band printed here yet') + '</div>' +
+          '<div class="status" id="psqueue">' + (s2.queued || 0) + (s2.queued === 1 ? ' band' : ' bands') + ' waiting in the queue</div>' +
+          (s2.note || s2.failed ? '<div class="note bad" id="pserr">' + esc(s2.note || s2.failed) + '</div>' : '') +
+          '<div class="status" id="pspush">' + (pushOk ? 'A new band reaches this device at once, by notification.'
+            : 'Notifications are not on for this device, so a new band is picked up within a minute. Turn notifications on from Home to make it at once.') + '</div>' +
+          '<div class="status" id="pswake">' + (navigator.wakeLock ? 'The screen is kept awake while this is showing.' : 'This browser cannot keep the screen awake: set the laptop not to sleep.') + '</div>' +
+          '<p class="status">Leave this laptop signed in as a manager or as intake, with this tab showing. Bands asked for on any phone or iPad print here.</p>' +
+          '<button class="btn" id="psnow">Check the queue now</button> '
+        : '<p class="status">Turn this on, on the laptop the band printer is plugged into. Bands asked for on any phone or iPad are then printed here' +
+          (queueOn() ? '.' : ', and from then on every other device sends its bands here instead of printing them itself.') + '</p>') +
+      (isMgr() ? '<button class="btn' + (on ? ' ghost' : '') + '" id="pstoggle">' + (on ? 'Turn print-station mode off for this device' : 'Turn print-station mode on for this device') + '</button>'
+        : '<div class="note warn" id="psmgr">A manager turns print-station mode on or off.</div>') +
+      '<div class="err" id="pserr2"></div></div>' +
+      /* The setup the printing itself needs, said where the station is switched on. */
+      '<div class="card" id="pssetup"><b>For silent printing</b>' +
+      '<p class="status" style="margin-top:6px">Open Chrome from a dedicated shortcut: a separate Chrome profile used only for the station, with <b>--kiosk-printing</b> added to the end of the shortcut’s Target. ' +
+      'Set the PDC as the Windows default printer. Then a band prints with no print window. Without it, each band opens the print window and waits for a click.</p></div>' +
+      (isMgr() ? '<button class="btn ghost" id="pstoq" style="width:100%">Print queue</button>' : '');
+    const tg = document.getElementById('pstoggle');
+    if (tg) tg.onclick = async () => {
+      tg.disabled = true;
+      try { await stationSwitch(!on); stationPaint(); if (current === 'printstation') drawStation(); }
+      catch (e) { tg.disabled = false; document.getElementById('pserr2').textContent = e.offline ? 'Needs signal.' : e.message; }
+    };
+    const now = document.getElementById('psnow'); if (now) now.onclick = async () => { now.disabled = true; try { await stationBeat(); } catch (e) {} await stationDrain(); };
+    const q = document.getElementById('pstoq'); if (q) q.onclick = () => showPrintQueue();
+  }
+  /* The manager’s list: every band sent to the printer lately, what became of it, and two ways to put it right. */
+  async function showPrintQueue() {
+    frame('printqueue', 'Print queue', '<div id="pqbox"><p class="status">Loading…</p></div>');
+    const box = document.getElementById('pqbox');
+    const draw = out => {
+      if (!document.getElementById('pqbox')) return;
+      const stn = out.station || {};
+      box.innerHTML = '<div class="card"><div id="pqstation"><b>Print station: ' + (stn.online ? 'online' : 'not seen in the last two minutes') + '</b>' +
+        (stn.seen ? ' <span class="status">last checked in ' + esc(when(stn.seen)) + (stn.name ? ', ' + esc(first(stn.name)) : '') + '</span>' : '') + '</div>' +
+        '<div class="status">' + (out.queued || 0) + ' waiting to print</div></div>' +
+        (out.jobs && out.jobs.length ? out.jobs.map(j =>
+          '<div class="card" data-job="' + esc(j.id) + '"><div><span class="band">' + esc(j.band) + '</span> <span class="pill' + (/Printed/.test(j.status) ? '' : ' wait') + '" data-status>' + esc(j.status) + '</span></div>' +
+          '<div class="status">' + esc(j.pages) + ' · asked for by ' + esc(j.by) + ' ' + esc(when(j.at)) +
+          (j.printedAt ? ' · ' + (j.status === 'Failed' ? 'failed ' : 'printed ') + esc(when(j.printedAt)) + (j.printedBy ? ' by ' + esc(j.printedBy) : '') : '') + '</div>' +
+          (j.note ? '<div class="status">' + esc(j.note) + '</div>' : '') +
+          '<div class="actions">' + (/^(Queued|Printing|Failed)$/.test(j.status) ? '<button class="btn ghost" data-pclear="' + esc(j.id) + '">Clear</button>' : '') +
+          '<button class="btn ghost" data-preprint="' + esc(j.id) + '">Reprint</button></div></div>').join('')
+          : '<div class="card"><span class="status">No band has been sent to the printer yet.</span></div>') +
+        '<div class="err" id="pqerr"></div>';
+      const act2 = (sel, key, action) => box.querySelectorAll(sel).forEach(b => b.onclick = async () => {
+        b.disabled = true;
+        try { draw(await call({ action: action, id: b.dataset[key] })); }
+        catch (e) { b.disabled = false; document.getElementById('pqerr').textContent = e.offline ? 'Needs signal.' : e.message; }
+      });
+      act2('[data-pclear]', 'pclear', 'printclear');
+      act2('[data-preprint]', 'preprint', 'printreprint');
+    };
+    try { draw(await call({ action: 'printqueue' })); }
+    catch (e) { box.innerHTML = '<div class="note bad">' + esc(e.offline ? 'The print queue needs signal.' : e.message) + '</div>'; }
+  }
+
+  async function printBandHere(d, withAntler) {
     try { await loadQR(); } catch (e) { toast(e.message); return; }
     bandCss();
     const pages = [intakeBandHtml(d)];
@@ -3931,7 +4178,7 @@
       '<div style="font-size:15px;margin-top:6px">' + esc(where) + '</div></div>';
   }
 
-  async function printAntlerBand(d) {
+  async function printAntlerHere(d) {
     if (!antlerBandFor(d)) { toast('No antler band: the skull question was not answered for this deer.'); return; }
     try { await loadQR(); } catch (e) { toast(e.message); return; }
     bandCss();
@@ -6046,7 +6293,7 @@
       }
     };
   }
-  const GO = { privpause: showPrivPause, supplies: () => showSupplies(), status: showStatus, speed: showSpeed, board: showBoard, intake: () => showIntake(), hunterinbox: () => showHunterInbox(), shifts: () => showShifts(), messages: showMessages, help: showHelp,
+  const GO = { printstation: () => showPrintStation(), printqueue: () => showPrintQueue(), privpause: showPrivPause, supplies: () => showSupplies(), status: showStatus, speed: showSpeed, board: showBoard, intake: () => showIntake(), hunterinbox: () => showHunterInbox(), shifts: () => showShifts(), messages: showMessages, help: showHelp,
     numbers: showNumbers, daily: showDaily, team: showTeam, martin: () => showMartin(), scan: () => showScan(),
     preop: showPreop, opssop: showOpSsop, corrective: () => showCorrective(), records: showRecords,
     closeout: showCloseOut,
