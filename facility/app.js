@@ -3859,22 +3859,45 @@
   // Intake band: ScanBand S 1-1/8" x 11-1/2" on the PDC printer (203 dpi), printed from Chrome on the intake laptop.
   function bandCss() {
     const s = S(), off = Number(s.bandOffset == null ? 2.5 : s.bandOffset), rot = s.bandRotate !== false;
+    /* v145: the antler band has its own offset (Settings "Antler band offset (in)", backend 130),
+       so its short print sits near one end and the rest of the band is blank for wrapping. 0 is
+       an answer; a backend that does not send it yet gives 0.5. */
+    const an = s.antlerOffset == null || s.antlerOffset === '' ? NaN : Number(s.antlerOffset), aoff = isFinite(an) && an >= 0 ? an : 0.5;
     let c = document.getElementById('band-css'); if (!c) { c = document.createElement('style'); c.id = 'band-css'; document.head.appendChild(c); }
     c.textContent = '@media print{@page{size:1.125in 11.5in;margin:0}html,body{margin:0;padding:0;background:#fff;height:auto;min-height:0}' +
       /* The screen behind the band is taken out of the print altogether (v113). Hidden but still
          laid out, on a page 1-1/8 in. wide, it ran to extra blank pages after the band. */
       'body>*:not(#label){display:none!important}' +
       '#label{position:absolute;left:0;top:0;width:1.125in;font-family:Arial,Helvetica,sans-serif;color:#000}' +
+      /* v145: print every color exactly as asked, and every word pure black. The black blocks
+         themselves are drawn as SVG (bandBlock), so they do not depend on this. */
+      '#label,#label *{-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
+      '#label div{color:#000;opacity:1}#label .bk{display:block;flex:0 0 auto}' +
       /* One .bp per band, each exactly one page down from the last (v113): two bands are two
          pages of one print job. */
       '#label .bp{position:absolute;left:0;width:1.125in;height:11.5in;overflow:hidden}' +
       '#label .bw{position:absolute;width:7.4in;height:1.05in;display:flex;align-items:center;gap:.12in;' +
       (rot ? 'left:1.09in;top:' + off + 'in;transform-origin:0 0;transform:rotate(90deg)}' : 'left:.04in;top:' + off + 'in}') +
       '#label .bt{font-size:11pt;font-weight:800;letter-spacing:1px;padding:.04in .08in;border:2px solid #000;white-space:nowrap}' +
-      '#label .bt.don{background:#000;color:#fff}' +
-      '#label .ba{font-size:20pt;font-weight:900;letter-spacing:1px;line-height:1;padding:.06in .1in;border:3px solid #000;white-space:nowrap}' +
-      '#label .ba.keep{background:#000;color:#fff}#label .bi{font-size:24pt;font-weight:800;line-height:1;white-space:nowrap}' +
-      '#label .bx{font-size:10pt;font-weight:700;line-height:1.25;white-space:nowrap}#label .bq{width:.95in;height:.95in;flex:0 0 auto}#label .bq svg{width:100%;height:100%}}';
+      /* v145, the antler band: block, number and name stacked beside a 0.75 in. QR, 2.93 in. long
+         in all, at its own offset. */
+      '#label .bw.bwa{width:auto;gap:.08in;top:' + aoff + 'in}' +
+      '#label .bc{display:flex;flex-direction:column;align-items:flex-start;gap:.03in;width:2.1in;overflow:hidden}' +
+      '#label .bi{font-size:24pt;font-weight:800;line-height:1;white-space:nowrap}' +
+      '#label .bx{font-size:10pt;font-weight:700;line-height:1.25;white-space:nowrap}#label .bq{width:.95in;height:.95in;flex:0 0 auto}' +
+      '#label .bwa .bi{font-size:22pt}#label .bq.bqa{width:.75in;height:.75in}#label .bq svg{width:100%;height:100%}}';
+  }
+  /* v145 (Joe, 24 November): DONATED and SAVE FOR HUNTER printed gray, because a black background
+     is something Chrome leaves out unless "Background graphics" is ticked. So a block is drawn:
+     an SVG rectangle with the words in it, which is content and always prints. Sizes are in
+     hundredths of an inch; textLength holds the words to the block whatever font the device has.
+     solid = white on black; otherwise black on white inside a black line. */
+  function bandBlock(text, w, h, solid, size, len) {
+    return '<svg class="bk" xmlns="http://www.w3.org/2000/svg" width="' + (w / 100) + 'in" height="' + (h / 100) + 'in" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' + esc(text) + '">' +
+      (solid ? '<rect x="0" y="0" width="' + w + '" height="' + h + '" fill="#000"/>'
+        : '<rect x="1.5" y="1.5" width="' + (w - 3) + '" height="' + (h - 3) + '" fill="#fff" stroke="#000" stroke-width="3"/>') +
+      '<text x="' + (w / 2) + '" y="' + (h / 2) + '" text-anchor="middle" dominant-baseline="central" font-family="Arial,Helvetica,sans-serif" font-weight="900" font-size="' + size +
+      '" fill="' + (solid ? '#fff' : '#000') + '" textLength="' + len + '" lengthAdjust="spacingAndGlyphs">' + esc(text) + '</text></svg>';
   }
   /* v113: one print job, one window.print(). v109 to v112 opened a second print window for the
      antler band once the first had closed, which only works where window.print() holds the page
@@ -4149,7 +4172,7 @@
     const w = parse(d.Intake), bc = colourOf(d), who = bandName(d);
     const qr = window.qrcode(0, 'M'); qr.addData(deerLink(d.Band)); qr.make();
     return '<div class="bw">' +
-      '<div class="bt' + (d.Type === 'Donated' ? ' don">DONATED' : '">PRIVATE') + '</div>' +
+      (d.Type === 'Donated' ? bandBlock('DONATED', 109, 34, true, 15.3, 89) : '<div class="bt">PRIVATE</div>') +   /* v145: the black block is drawn, at the size it had */
       '<div><div class="bi">' + esc(band(d.Band)) + '</div>' +
       (who ? '<div class="bx bn">' + esc(who) + '</div>' : '') +
       '<div class="bx">IN ' + (w ? w.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase() + ' ' + (w.getMonth() + 1) + '/' + w.getDate() : '') +
@@ -4186,17 +4209,17 @@
     printPages([antlerBandHtml(d)]);
   }
   function antlerBandHtml(d) {
-    const keep = d['Skull kept'] === 'Yes', w = parse(d.Intake), bc = colourOf(d);
-    const who = bandName(d);   // v142: initial and last name, as on the intake band
+    /* v145 (Joe, 24 November): compact. Only the block, the band number and, on a SAVE band, the
+       hunter's initial and last name (v142), beside a 0.75 in. QR: 2.93 in. of the band, printed
+       near one end (bandCss, .bwa), so the rest is blank to wrap round the antlers. The points,
+       the intake date, the band color and "HUNTER GAVE UP THE HEAD" are gone. */
+    const keep = d['Skull kept'] === 'Yes', who = keep ? bandName(d) : '';
     const qr = window.qrcode(0, 'M'); qr.addData(deerLink(d.Band) + '&r=1'); qr.make();
-    return '<div class="bw">' +
-      '<div class="ba' + (keep ? ' keep">SAVE FOR HUNTER' : '">OK TO DISCARD') + '</div>' +
-      '<div><div class="bi">' + esc(band(d.Band)) + '</div>' +
-      '<div class="bx">ANTLERS' + (d['Antler points'] ? ' · ' + esc(d['Antler points']) + ' PTS' : '') +
-        (keep ? (who ? ' · ' + esc(who) : '') : ' · HUNTER GAVE UP THE HEAD') + '</div>' +
-      '<div class="bx">IN ' + (w ? w.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase() + ' ' + (w.getMonth() + 1) + '/' + w.getDate() : '') +
-        (bc ? ' · ' + esc(bc.toUpperCase()) : '') + '</div></div>' +
-      '<div class="bq">' + qr.createSvgTag({ cellSize: 2, margin: 0, scalable: true }) + '</div></div>';
+    return '<div class="bw bwa"><div class="bc">' +
+      bandBlock(keep ? 'SAVE FOR HUNTER' : 'OK TO DISCARD', 210, 42, keep, 21, keep ? 194 : 168) +
+      '<div class="bi">' + esc(band(d.Band)) + '</div>' +
+      (who ? '<div class="bx bn">' + esc(who) + '</div>' : '') + '</div>' +
+      '<div class="bq bqa">' + qr.createSvgTag({ cellSize: 2, margin: 0, scalable: true }) + '</div></div>';
   }
 
   /* ---------- scan a band: QR from the band opens that deer with its processing urgency ---------- */
