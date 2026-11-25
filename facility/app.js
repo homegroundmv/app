@@ -120,6 +120,21 @@
      shows 25; this shows the 0, and falls back only when the server sent nothing. */
   const nz = (v, d) => (v == null || v === '' || !isFinite(Number(v)) ? d : v);
   const isMgr = () => !!(st.staff && st.staff.manager);
+  /* v147 (backend 132; Joe, 25 November): the people on the Settings row "Full record correction"
+     may correct every field on a deer but its band. The backend decides; this only decides what
+     the form offers. */
+  const canFullEdit = () => !!(st.staff && (S().fullEdit || []).indexOf(String(st.staff.number || '').toUpperCase()) >= 0);
+  /* A corrected food-safety value says so wherever it is shown. The row's "Corrected" cell is
+     "Field=Who M/D/YYYY; ..."; what the value was before is on the Edits tab. */
+  const corrMap = d => { const o = {}; String((d && d['Corrected']) || '').split(';').forEach(p => { const i = p.indexOf('='); if (i > 0) o[p.slice(0, i).trim()] = p.slice(i + 1).trim(); }); return o; };
+  const corrBy = (d, col) => { const m = corrMap(d)[col]; if (!m) return ''; const k = m.lastIndexOf(' '); return k > 0 ? 'corrected by ' + m.slice(0, k) + ' on ' + m.slice(k + 1) : 'corrected by ' + m; };
+  const corrTag = (d, col) => { const t = corrBy(d, col); return t ? ' <span class="hint" data-corr="' + esc(col) + '">(' + esc(t) + ')</span>' : ''; };
+  const correctedHtml = d => {
+    const m = corrMap(d), cols = Object.keys(m);
+    if (!cols.length) return '';
+    return '<div class="status" data-corrected><b>Corrected records.</b> ' + cols.map(c => esc(c) + ': <b>' + esc(String(d[c] == null || d[c] === '' ? '(blank)' : d[c])) + '</b> (' + esc(corrBy(d, c)) + ')').join(' · ') +
+      '. What each was before is in this deer’s corrections.</div>';
+  };
   // Who a hunter is likely to text or ring: the published number reaches a manager or intake staff.
   const atDoor = () => isMgr() || /intake/i.test((st.staff && st.staff.role) || '');
   const isViewer = () => !!(st.staff && st.staff.viewer);
@@ -1257,8 +1272,8 @@
       (lead.kind === 'mine'
         ? (d['Processing started'] ? ' · started ' + esc(when(d['Processing started'])) : '') +
           (d['Intake weight (lb)'] ? ' · ' + esc(d['Intake weight (lb)']) + ' lb in' + (d['Weighed as'] === 'Not dressed' ? ' (not dressed)' : '') : '') +
-        (d['Carcass weight (lb)'] ? ' · ' + esc(d['Carcass weight (lb)']) + ' lb carcass' : '') +
-          (d['First pack #'] ? ' · packages from ' + esc(d['First pack #']) : '')
+        (d['Carcass weight (lb)'] ? ' · ' + esc(d['Carcass weight (lb)']) + ' lb carcass' + corrTag(d, 'Carcass weight (lb)') : '') +
+          (d['First pack #'] ? ' · packages from ' + esc(d['First pack #']) + corrTag(d, 'First pack #') : '')
         : ' · in ' + esc(when(d.Intake))) + '</div>' +
       (lead.kind === 'mine' && donatedNoPack ? '<div class="note bad" style="margin:8px 0 0">Get package numbers before the grinder, so every label runs in order.</div>' : '') +
       // v132: the hunter of the deer in front of you, from Home as well as from its card.
@@ -1440,7 +1455,7 @@
 
     frame('home', '',
       (note ? '<div class="note ok">' + note + '</div>' : '') +
-      '<div id="alerts">' + alertsHtml() + dropCardsHtml() + '</div><div id="dhbox">' + donHeadsHtml() + '</div><div id="push"></div>' +
+      '<div id="alerts">' + alertsHtml() + dropCardsHtml() + '</div><div id="push"></div>' +
       (s.privateOpen === false && seesCounter() ? '<div class="note warn"><b>Private processing is paused</b>' + (s.privateNote ? ' (' + esc(s.privateNote) + ')' : '') +
         '. Donated deer and cold storage are open as usual.</div>' : '') +
       (lead ? leadCard(lead) : '') + clockStrip +
@@ -1634,7 +1649,6 @@
         catch (x) { bb.disabled = false; document.getElementById('eoerr').textContent = x.offline ? 'Needs signal.' : x.message; }
       });
     wireAlerts();
-    wireDonHeads();
     renderPush();
   }
   const tile = (n, label) => '<div class="tile"><div class="n">' + esc(n) + '</div><div class="l">' + esc(label) + '</div></div>';
@@ -1698,40 +1712,6 @@
       '<div class="status">' + esc(when(a.sent)) + (a.onWay.length ? ' · On the way: ' + esc(a.onWay.join(', ')) : '') + '</div>' +
       '<div class="actions">' + (!a.mine && a.onWay.indexOf(st.staff.name) < 0 ? '<button class="btn" data-ack="' + esc(a.id) + '">On my way</button>' : '') +
       (a.canClose ? '<button class="btn ghost" data-done="' + esc(a.id) + '">' + (a.mine ? 'Sorted, close it' : 'Close') + '</button>' : '') + '</div></div>').join('');
-  }
-  /* v146 (backend 131; Joe, 25 November): the head of a donated deer is no longer released. No
-     record from before was changed, so managers are shown, once, the donated deer still marked
-     to keep the skull, for Joe to decide how those hunters are told. It stays on Home until a
-     manager says the list has been seen; then it is gone for every manager. */
-  const DONATED_HEAD_NOTE = 'Donated deer: the head stays with the deer and can\'t be released.';
-  function donHeadsHtml() {
-    const list = isMgr() ? ((st.home || {}).donatedHeads || []) : [];
-    if (!list.length) return '';
-    return '<div class="card alert amber" id="dhcard"><b>' + list.length + ' donated deer ' + (list.length === 1 ? 'is' : 'are') + ' still marked to keep the skull</b>' +
-      '<div>The heads of donated deer are no longer released to hunters. These were checked in before that, and their records have not been changed. ' +
-      'Each hunter was told he would get the head back, so somebody has to tell him.</div>' +
-      '<table class="tbl" id="dhlist" style="margin:8px 0"><tr><th>Band</th><th>Hunter</th><th>Status</th></tr>' +
-      list.map(x => '<tr data-dh="' + esc(x.band) + '"><td>' + esc(x.band) + '</td><td>' + esc(x.hunter) + '</td><td>' + esc(x.status) +
-        (x.skinned && x.status !== 'Released' ? ', skinned' : '') + '</td></tr>').join('') + '</table>' +
-      '<div class="actions"><button class="btn" id="dhcopy">Copy the list</button> <button class="btn ghost" id="dhseen">Seen: don\'t show this again</button></div>' +
-      '<div class="status" id="dherr"></div></div>';
-  }
-  function wireDonHeads() {
-    const box = document.getElementById('dhbox'); if (!box) return;
-    const list = (st.home || {}).donatedHeads || [];
-    const cp = document.getElementById('dhcopy');
-    if (cp) cp.onclick = async () => {
-      const text = 'Band\tHunter\tStatus\n' + list.map(x => x.band + '\t' + x.hunter + '\t' + x.status + (x.skinned && x.status !== 'Released' ? ', skinned' : '')).join('\n');
-      try { await navigator.clipboard.writeText(text); toast('Copied ' + list.length + ' deer.'); }
-      catch (e) { document.getElementById('dherr').textContent = 'Copy did not work on this device. The list is above.'; }
-    };
-    const seen = document.getElementById('dhseen');
-    if (seen) seen.onclick = async () => {
-      if (!confirm('Hide this list for every manager? It can be shown again from the Settings tab.')) return;
-      seen.disabled = true;
-      try { await call({ action: 'donatedheadsseen' }); st.home.donatedHeads = null; save(); box.innerHTML = ''; }
-      catch (e) { seen.disabled = false; document.getElementById('dherr').textContent = e.offline ? 'Needs signal.' : e.message; }
-    };
   }
   function wireAlerts() {
     const box = document.getElementById('alerts');
@@ -2222,9 +2202,9 @@
       'in ' + esc(d.Intake) + ' · ' + esc(d.Deer || '') + (d['Antler points'] ? ' (' + esc(d['Antler points']) + ' pts)' : '') + ' · ' + esc(d['Hunter number'] || d['Hunter name'] || '') +
       (d['Skinner name'] ? ' · skinned by ' + esc(d['Skinner name']) : '') +
       (d.Butcher ? ' · ' + esc(d.Butcher) + (d['Processor number'] ? ' (' + esc(d['Processor number']) + ')' : '') : '') +
-      (d['Intake weight (lb)'] ? ' · ' + esc(d['Intake weight (lb)']) + ' lb in' + (d['Weighed as'] === 'Not dressed' ? ' (not dressed)' : '') : '') +
-      (d['Carcass weight (lb)'] ? ' · ' + esc(d['Carcass weight (lb)']) + ' lb carcass' : '') +
-      (d['Pounds packaged'] ? ' · ' + esc(d['Pounds packaged']) + ' lb packaged' : '') + '</div></div>' +
+      (d['Intake weight (lb)'] ? ' · ' + esc(d['Intake weight (lb)']) + ' lb in' + (d['Weighed as'] === 'Not dressed' ? ' (not dressed)' : '') + corrTag(d, 'Intake weight (lb)') : '') +
+      (d['Carcass weight (lb)'] ? ' · ' + esc(d['Carcass weight (lb)']) + ' lb carcass' + corrTag(d, 'Carcass weight (lb)') : '') +
+      (d['Pounds packaged'] ? ' · ' + esc(d['Pounds packaged']) + ' lb packaged' + corrTag(d, 'Pounds packaged') : '') + '</div></div>' +
       '<div class="hrs">' + (d.Status === 'Released' || d.Status === 'Discarded' ? '' : Math.floor(h) + ' h') + '</div></div>' +
       (d.Status === 'Discarded' ? '<div class="note bad" data-discarded><b>Discarded</b>' + (d['Discard reason'] ? ': ' + esc(d['Discard reason']) : '') +
         (d['Discarded by'] ? ' · ' + esc(d['Discarded by']) : '') + (d['Discarded'] ? ' · ' + esc(d['Discarded']) : '') + '</div>' : '') +
@@ -2232,6 +2212,7 @@
         (d['Voided by'] ? ' · ' + esc(d['Voided by']) : '') + '</div>' : '') +
       (d.Cuts && d.Status !== 'Released' ? '<div class="note ok"><b>Cuts:</b> ' + esc(d.Cuts) + '</div>' : '') +
       (d['Permit year'] && d.Type === 'Donated' ? '<div class="status" data-py>Free permit license year: <b>' + esc(d['Permit year']) + '</b></div>' : '') +   /* v146 */
+      correctedHtml(d) +   /* v147: every corrected food-safety value, who and when */
       /* Loud, and on every card, because it is read by whoever is about to take the head off and
          the cost of missing it cannot be undone. It stays visible after release too, so a hunter
          who comes back for the rack can be answered from the record. */
@@ -2415,6 +2396,76 @@
       '<option' + (String(cur) === x ? ' selected' : '') + '>' + esc(x) + '</option>')).join('');
     /* The two skinning forms share who and which lug (v129). Whoever started it is the default at
        the finish; a manager can name anybody, everyone else records themselves. */
+    /* v147 (backend 132): the full set, for the people on the Settings row "Full record
+       correction". Each row is [key the backend knows, label, kind, column, food-safety record?].
+       Every input carries what it showed when the form opened (data-was), and only a value that
+       was changed is sent, so opening the form and correcting a phone number corrects nothing else. */
+    const FULL_FIELDS = [
+      ['h', 'Check-in'],
+      ['intakeAt', 'Checked in', 'time', 'Intake', 1], ['shotAt', 'Shot', 'text', 'Shot at', 1],
+      ['intakeBy', 'Checked in by', 'text', 'Intake by'], ['hunterNumber', 'Hunter number', 'text', 'Hunter number'],
+      ['bandColour', 'Band color', 'text', 'Band colour'], ['confirmationChecked', 'Confirmation checked', 'yn', 'Confirmation checked'],
+      ['dressed4h', 'Field dressed within 4 h', 'yn', 'Field dressed within 4 h'], ['ddp', 'DDP deer', 'yn', 'DDP deer'], ['iap', 'IAP deer', 'yn', 'IAP deer'],
+      ['h', 'Where it is'],
+      ['status', 'Status', ['Hanging', 'Processing', 'Ready', 'Released'], 'Status'], ['location', 'Location', PLACES, 'Location'],
+      ['movedAt', 'Moved at', 'time', 'Moved at', 1], ['movedBy', 'Moved by', 'text', 'Moved by'],
+      ['h', 'Skinning'],
+      ['lug', 'Lug number', 'lug', 'Lug'], ['skinningStarted', 'Skinning started', 'time', 'Skinning started', 1],
+      ['skinningBy', 'Skinning started by', 'text', 'Skinning by'], ['skinner', 'Skinner', 'staff', 'Skinner'],
+      ['skinnedAt', 'Skinned at', 'time', 'Skinned at', 1], ['skinnedAtStation', 'Skinned at the station', 'yn', 'Skinned at station'],
+      ['antimicrobial', 'Antimicrobial spray', 'yn', 'Antimicrobial spray', 1],
+      ['h', 'Processing'],
+      ['processor', 'Butcher and processor', 'staff', 'Processor number'], ['processingStarted', 'Processing started', 'time', 'Processing started', 1],
+      ['processingFinished', 'Processing finished', 'time', 'Processing finished', 1], ['carcassWeight', 'Carcass weight (lb), or N/A', 'text', 'Carcass weight (lb)', 1],
+      ['trim', 'Trim discarded (lb)', 'num', 'Trim discarded (lb)', 1], ['porkFat', 'Pork fat added', ['Yes', 'No', 'No (out of stock)'], 'Pork fat added'],
+      ['groundPackages', 'Ground packages', 'int', 'Ground packages', 1], ['groundLb', 'Ground venison (lb)', 'num', 'Ground venison (lb)', 1],
+      ['porkLb', 'Pork fat (lb)', 'num', 'Pork fat (lb)', 1], ['intactPackages', 'Intact cut packages', 'int', 'Intact cut packages', 1],
+      ['intactLb', 'Intact cuts (lb)', 'num', 'Intact cuts (lb)', 1], ['poundsPackaged', 'Pounds packaged', 'num', 'Pounds packaged', 1],
+      ['firstPack', 'First pack #', 'text', 'First pack #', 1], ['lastPack', 'Last pack #', 'text', 'Last pack #', 1],
+      ['lot', 'Lot number', 'text', 'Lot number', 1], ['allergen', 'Allergen labels', 'yn', 'Allergen labels', 1],
+      ['grinderCleared', 'Grinder cleared', 'yn', 'Grinder cleared', 1], ['woundTrim', 'Wound trim confirmed', 'yn', 'Wound trim confirmed', 1],
+      ['h', 'Release'],
+      ['releasedAt', 'Released', 'time', 'Released', 1], ['releasedTo', 'Released to', 'text', 'Released to'],
+      ['releasedBy', 'Released by', 'text', 'Released by'], ['poundsOut', 'Pounds out', 'num', 'Pounds out', 1],
+    ];
+    // "11/5/2026 9:00" <-> "2026-11-05T09:00", which is what a date-and-time input holds.
+    const stampToLocal = t => { const m = String(t || '').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4}) (\d{1,2}):(\d{2})/); return m ? m[3] + '-' + pad(m[1]) + '-' + pad(m[2]) + 'T' + pad(m[4]) + ':' + m[5] : ''; };
+    const localToStamp = t => { const m = String(t || '').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/); return m ? Number(m[2]) + '/' + Number(m[3]) + '/' + m[1] + ' ' + Number(m[4]) + ':' + m[5] : String(t || '').trim(); };
+    const fullForm = () => {
+      const fs = '<span class="hint">food-safety record</span>';
+      const one = r => {
+        if (r[0] === 'h') return '</div><h3 style="margin:14px 0 4px">' + esc(r[1]) + '</h3><div class="grid2">';
+        const k = r[0], id = 'x_' + k, kind = r[2], raw = String(d[r[3]] == null ? '' : d[r[3]]).trim();
+        const lab = '<label for="' + id + '">' + esc(r[1]) + (r[4] ? ' ' + fs : '') + '</label>';
+        const was = w => ' data-full="' + k + '" data-was="' + esc(w) + '"';
+        if (Array.isArray(kind) || kind === 'yn') {
+          const list = kind === 'yn' ? ['Yes', 'No'] : kind, cur = list.indexOf(raw) >= 0 ? raw : '';
+          return '<div>' + lab + '<select id="' + id + '"' + was(cur) + '>' + opts(list, cur) + '</select>' +
+            (raw && !cur ? '<p class="status">Now: ' + esc(raw) + '. Left alone unless you choose.</p>' : '') + '</div>';
+        }
+        if (kind === 'staff') {
+          const list = (st.home.staff || []).slice();
+          if (raw && !list.some(x => x.number === raw)) list.unshift({ number: raw, name: d[r[3] === 'Skinner' ? 'Skinner name' : 'Butcher'] || raw });
+          return '<div>' + lab + '<select id="' + id + '"' + was(raw) + '><option value=""></option>' +
+            list.map(x => '<option value="' + esc(x.number) + '"' + (x.number === raw ? ' selected' : '') + '>' + esc(x.name + ' (' + x.number + ')') + '</option>').join('') + '</select></div>';
+        }
+        if (kind === 'time') {
+          const loc = stampToLocal(raw);
+          // A time the app cannot read as one is shown as it stands, to be typed over as 11/25/2026 14:05.
+          return '<div>' + lab + (loc || !raw ? '<input id="' + id + '" type="datetime-local" data-time="1"' + was(loc) + ' value="' + esc(loc) + '">'
+            : '<input id="' + id + '" type="text"' + was(raw) + ' value="' + esc(raw) + '">') + '</div>';
+        }
+        if (kind === 'lug') return '<div>' + lab + '<input id="' + id + '" type="number" inputmode="numeric" min="1" max="' + esc(nz(s.lugs, 24)) + '" step="1"' + was(raw) + ' value="' + esc(raw) + '"></div>';
+        if (kind === 'num' || kind === 'int') return '<div>' + lab + '<input id="' + id + '" type="number" inputmode="' + (kind === 'int' ? 'numeric' : 'decimal') + '" min="0" step="' + (kind === 'int' ? '1' : '0.1') + '"' + was(raw) + ' value="' + esc(raw) + '"></div>';
+        return '<div>' + lab + '<input id="' + id + '" type="text" autocomplete="off" autocorrect="off" spellcheck="false"' + was(raw) + ' value="' + esc(raw) + '"></div>';
+      };
+      return '<div id="e_full" style="margin-top:14px;border-top:2px solid #0002;padding-top:8px">' +
+        '<p class="note warn"><b>Full correction.</b> Only the people on the Settings row “Full record correction” see this part. ' +
+        'Change only what is wrong: a field left as it is stays as it is. The band cannot be changed. ' +
+        'Times, weights, packages, pounds, the lot number and the grinder, allergen, antimicrobial and wound-trim boxes are food-safety records: ' +
+        'the value there now is kept, and the deer’s card will say who corrected it and when.</p>' +
+        '<div class="grid2">' + FULL_FIELDS.map(one).join('') + '</div></div>';
+    };
     const skinBy = String(d['Skinning by'] || '').split(' ')[0];
     const skinDef = (st.home.staff || []).some(x => x.number === skinBy) ? skinBy : st.staff.number;
     const skinWho = label => isMgr()
@@ -2479,16 +2530,12 @@
         '<div class="grid2"><div><label for="e_deer">Deer</label><select id="e_deer">' + opts(['Doe', 'Button buck', 'Sub-legal adult male', 'Antlered buck'], d['Deer']) + '</select></div>' +
         '<div><label for="e_points">Antler points</label><input id="e_points" type="number" inputmode="numeric" min="0" step="1" value="' + esc(d['Antler points'] || '') + '"></div></div>' +
         // A hunter changes his mind about the rack, and he is usually standing there when he does.
-        /* v146: not on a donated deer, whose head is not released. One still marked Yes from
-           before the rule keeps the field, so it can be corrected to No; the backend refuses a
-           change to Yes either way. */
-        (/antlered/i.test(d['Deer'] || '') && d.Type === 'Donated' && d['Skull kept'] !== 'Yes'
-          ? '<p class="status" id="e_donhead">' + esc(DONATED_HEAD_NOTE) + '</p>'
-          : /antlered/i.test(d['Deer'] || '') && d.Type !== 'Cold storage'
+        /* v147: on a donated buck again. The v146 rule that a donated deer's head is not
+           released was wrong and is undone (Joe, 25 November). */
+        (/antlered/i.test(d['Deer'] || '') && d.Type !== 'Cold storage'
           ? '<label for="e_skull">Skull and antlers</label><select id="e_skull">' +
             opts(['Yes', 'No'], d['Skull kept']) + '</select>' +
-            (d.Type === 'Donated' ? '<p class="status" id="e_donhead">' + esc(DONATED_HEAD_NOTE) + ' This one was marked Yes before that rule; it can be changed to No.</p>'
-              : '<p class="status">Yes keeps the head for the hunter. Once it has gone out with the waste, changing this to Yes does not bring it back.</p>')
+            '<p class="status">Yes keeps the head for the hunter. Once it has gone out with the waste, changing this to Yes does not bring it back.</p>'
           : '') +
         /* v146 (MassWildlife, 24 November): the license year of the free replacement permit, on a
            donated deer. A manager's field; blank means 2027. */
@@ -2507,6 +2554,7 @@
         '<div><label for="e_weighedAs">Weighed as</label><select id="e_weighedAs">' +
           ['Field dressed', 'Not dressed'].map(x => '<option' + ((d['Weighed as'] || 'Field dressed') === x ? ' selected' : '') + '>' + x + '</option>').join('') + '</select></div></div>' +
         '<label for="e_notes">Notes</label><input id="e_notes" type="text" value="' + esc(d['Notes'] || '') + '">' +
+        (canFullEdit() ? fullForm() : '') +   /* v147 */
         '<label for="er">Why <span class="hint">goes on the record beside the change</span></label>' + chips('edit', 'er') + '<input id="er" type="text" placeholder="Or type what happened">',
       discard: () => '<div class="note warn" style="font-size:17px"><b>This deer is being thrown away.</b> Use this for a deer that was checked in and cannot be used. ' +
         'For a check-in that was a mistake or a duplicate, use Void instead.</div>' +
@@ -2634,7 +2682,7 @@
         '" value="' + esc(String(d['Lug'] || '').replace(/^0+/, '')) + '" placeholder="1 to ' + esc(s.lugs || 24) + '">',
       // Donated deer get their numbers before grinding, so by the time this form opens the first
       // number is known and the last one is on the bench in front of them.
-      finish: () => '<p class="status">Started ' + esc(d['Processing started'] || '') + ' · carcass ' + esc(d['Carcass weight (lb)'] || '?') + ' lb</p>' +
+      finish: () => '<p class="status">Started ' + esc(d['Processing started'] || '') + corrTag(d, 'Processing started') + ' · carcass ' + esc(d['Carcass weight (lb)'] || '?') + ' lb' + corrTag(d, 'Carcass weight (lb)') + '</p>' +
         // A processor at the end of a donated deer knows the number on the last label they wrote.
         // Counting the packages back is a second, avoidable chance to get it wrong, so ask for the
         // thing they are holding and work the count out from it. Private deer have no package
@@ -2813,6 +2861,12 @@
           changes.intakeWeight = wRaw; changes.weighedAs = v('e_weighedAs');
         }
         if (!changes.firstName && !changes.lastName) return err('A deer needs a hunter’s name on it.');
+        // v147: the full set. Only what was changed on the form goes; the backend checks who is asking.
+        document.querySelectorAll('#e_full [data-full]').forEach(el => {
+          const now = String(el.value || '').trim();
+          if (now === el.dataset.was) return;
+          changes[el.dataset.full] = el.dataset.time ? localToStamp(now) : now;
+        });
         // Live, like a void: the duplicate check and the Martin flag both need the whole log, and
         // replaying a blind correction from a phone that was offline is how records get worse.
         const btn = document.getElementById('fok');
@@ -2823,7 +2877,7 @@
             if (!out.changed) { toast('Nothing changed.'); return; }
             toast(out.changed + (out.changed === 1 ? ' change saved' : ' changes saved') + ' on ' + d.Band);
             if (out.martin) toast('Flagged: MassWildlife’s copy of this row needs correcting.', true);
-            if (changes.skull && changes.skull !== (d['Skull kept'] || '') && d['Type'] !== 'Cold storage' && d['Type'] !== 'Donated' && (changes.type || d['Type']) !== 'Donated')
+            if (changes.skull && changes.skull !== (d['Skull kept'] || '') && d['Type'] !== 'Cold storage')
               toast('Skull answer is now ' + changes.skull + '. Print a new antler band from the card and swap it on the rack.', true);
             refresh(); if (after) after();
           })
@@ -3175,9 +3229,6 @@
       '<div id="skullbox" hidden><label>Does he want the skull and antlers back?</label>' +
       '<label class="choice"><input type="radio" name="skull" value="Yes"> <span><b>Yes</b> — keep the head. It gets a <b>SAVE FOR HUNTER</b> antler band now and is set aside at the skinning station.</span></label>' +
       '<label class="choice"><input type="radio" name="skull" value="No"> <span><b>No</b> — the head goes out with the waste. It gets an <b>OK TO DISCARD</b> antler band now.</span></label></div>' +
-      /* v146 (Joe, 25 November, after talking with Tick Free MV): the whole carcass of a donated
-         deer stays with the program, so the question is not put for one. It is recorded as No. */
-      '<div class="note" id="donhead" hidden>' + esc(DONATED_HEAD_NOTE) + '</div>' +
       /* v146 (MassWildlife, 24 November): a deer donated during the island shotgun season. The
          hunter chooses the license year of his free replacement permit. Optional: left alone, it
          is 2027. Shown only for a donated deer taken or brought in during the season. */
@@ -3318,10 +3369,9 @@
     /* The skull question only arises where the head is going to come off. A hang-only deer is
        never skinned here — it goes back to the hunter whole, antlers and all — so asking would
        invite a "No" that could get a rack binned that was never ours to bin. */
-    /* v146: nor is it asked of a donated deer, whose head is not released (Joe, 25 November). */
+    /* v147: asked of a donated buck again. The v146 rule was wrong (Joe, 25 November). */
     const typeNow = () => (document.querySelector('input[name=type]:checked') || {}).value || '';
-    const skullAsked = () => v('deer') === 'Antlered buck' && typeNow() !== 'Cold storage' && typeNow() !== 'Donated';
-    const donHead = () => v('deer') === 'Antlered buck' && typeNow() === 'Donated';
+    const skullAsked = () => v('deer') === 'Antlered buck' && typeNow() !== 'Cold storage';
     /* v146: the free permit's license year. Donated, and checked in or shot on a day inside the
        shotgun season the backend sends (both days count). No season sent, no question. */
     const inShotgun = iso => { const g = S().shotgun; return !!(g && g.from && g.to && iso && iso >= g.from && iso <= g.to); };
@@ -3340,8 +3390,7 @@
       // Changing away clears the answer, so it cannot be saved against a doe because somebody
       // picked the wrong line and then corrected it.
       if (!show) document.querySelectorAll('input[name=skull]').forEach(r => { r.checked = false; });
-      // v146: the donated-deer note stands where the question would have, and the permit year comes and goes.
-      const dh = document.getElementById('donhead'); if (dh) dh.hidden = !donHead();
+      // v146: the permit year comes and goes.
       const pb = document.getElementById('pybox');
       if (pb) { pb.hidden = !pyAsked(); if (pb.hidden) document.getElementById('py').value = ''; }
       const sv = document.getElementById('save');
@@ -3838,7 +3887,7 @@
         : 'Take a photo of the hunter\u2019s phone showing his confirmed deer. If the camera isn\u2019t working, tick that box and say why.');
       const noCall = document.getElementById('nocallout');
       const f = { band: b, iap: iap === 'Yes', type, deer: v('deer'), points: v('deer') === 'Antlered buck' ? pts : '', firstName: v('fn'), lastName: v('ln'), customerId: lic, hunterPhone: v('ph'), confirmation: tribal ? '' : v('cf'), takenWith: v('tw'), ammunition: v('am'),
-        skull: skullAsked() ? skullPick === 'Yes' : donHead() ? false : undefined,   // v146: a donated buck's head is not released: No
+        skull: skullAsked() ? skullPick === 'Yes' : undefined,
         permitYear: pyAsked() ? v('py') : undefined,                                  // v146: '' is "no answer", which is 2027
         textConsent: txtYes || undefined,
         notCallout: !!(noCall && noCall.checked),
@@ -4264,13 +4313,10 @@
      one either way, so a head with no band is a question rather than a default: SAVE FOR HUNTER,
      or OK TO DISCARD. Cold storage leaves whole and is never asked, and a blank answer (deer in
      before 7 November) prints nothing rather than guess. */
-  const rackAnswered = d => !!d && /antlered/i.test(d.Deer || d['Deer'] || '') && d.Type !== 'Cold storage' &&
+  /* v147: donated and private alike. v146 printed no antler band for a donated deer; that rule
+     was wrong and is undone (Joe, 25 November). */
+  const antlerBandFor = d => !!d && /antlered/i.test(d.Deer || d['Deer'] || '') && d.Type !== 'Cold storage' &&
     (d['Skull kept'] === 'Yes' || d['Skull kept'] === 'No');
-  /* v146 (Joe, 25 November): a donated deer gets the intake band only. Its head is not released,
-     so there is nothing for an antler band to say. Private processing keeps both bands. A donated
-     deer banded before this still has its antler band on the rack, and scanning that band still
-     opens the rack view (rackAnswered), but no new one is printed for it. */
-  const antlerBandFor = d => rackAnswered(d) && d.Type !== 'Donated';
   /* What a rack scan shows first (v110). Big enough to read at arm's length in a cooler. */
   function rackBanner(d) {
     const keep = d['Skull kept'] === 'Yes';
@@ -4348,7 +4394,7 @@
       : '<div class="card"><b>' + esc(d.Status === 'Processing' ? 'Being processed' : d.Status === 'Ready' ? 'Processed: ready for pickup or delivery' : d.Status) + '</b></div>';
     /* The band is the screen's identity, so moving from one deer to another is a navigation and
        lands at the top, while redrawing the same deer keeps the scroll. */
-    const rack = rackView === b && rackAnswered(d);
+    const rack = rackView === b && antlerBandFor(d);
     frame('deer', 'Band ' + esc(band(d.Band)), (rack ? rackBanner(d) : head) + deerCard(d) + '<button class="btn ghost" id="ds" style="width:100%;margin-top:8px">Scan another band</button>', false, band(d.Band));
     const c = $app.querySelector('[data-band]');
     c.querySelectorAll('[data-a]').forEach(x => x.onclick = () => act(x.dataset.a, d, c.querySelector('.form'), () => showDeer(b)));
