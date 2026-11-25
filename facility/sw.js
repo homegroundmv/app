@@ -1,6 +1,6 @@
 // Home Ground Facility app — keeps the app working with no signal, and shows push notifications.
 // Bump VERSION whenever any app file changes so phones pick up the new copy.
-const VERSION = 'hg-facility-v142';
+const VERSION = 'hg-facility-v143';
 const ICON = 'icon-192.png';
 const SHELL = ['./', 'index.html', 'app.js', 'core.js', 'push.js', 'config.js', 'manifest.webmanifest',
   'logo.png', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png', 'qr.js'];
@@ -59,6 +59,11 @@ self.addEventListener('push', e => {
   let p = {};
   try { p = e.data ? e.data.json() : {}; } catch (err) { /* not JSON */ }
   const d = p.data || {}, n = p.notification || {};
+  /* v143: an open app is told a notification has just arrived, so the message counts at the top of
+     its screen are fetched now and not at the next minute. Nothing about the message is passed. */
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+    .then(list => { list.forEach(w => { try { w.postMessage({ hgPush: 1 }); } catch (err) { /* a closing window */ } }); })
+    .catch(() => {}));
   e.waitUntil(self.registration.showNotification(d.title || n.title || 'Home Ground Facility', {
     body: d.body || n.body || '', icon: ICON, badge: ICON, tag: d.tag || undefined, renotify: !!d.tag,
     requireInteraction: /^(URGENT|Help needed|Cooler full)/.test(d.title || ''), data: { url: d.url || self.registration.scope } }));

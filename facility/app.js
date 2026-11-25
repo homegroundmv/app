@@ -844,7 +844,93 @@
     return d + (d === 1 ? ' day ago' : ' days ago');
   };
 
+  /* ---------- v143: two message icons at the top of every screen ----------
+     Joe, 24 November: "add two message icons to the top bar on every screen, like Facebook's."
+     Team (two speech bubbles, green): unread team chat and direct messages, for everyone but a
+     view-only sign-in. Hunters (a phone with a text on it, orange): hunters' texts waiting on an
+     answer, only for the people who can see those texts — managers, intake, and whoever owns a
+     conversation — and counting only what the server already says is theirs (backend 123). A red
+     number when there is one, "9+" above nine, nothing at zero. Each has its word underneath, so
+     nobody has to learn which picture is which. */
+  const SVG_TEAM = '<svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true"><path fill="currentColor" d="M4 5h15a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3h-7l-5 4v-4H4a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3z"/>' +
+    '<path fill="currentColor" opacity=".55" d="M24 12h4a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3h-1v4l-5-4h-6a3 3 0 0 1-2.8-2H19a5 5 0 0 0 5-5z"/></svg>';
+  const SVG_HUNTER = '<svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true"><rect x="8" y="2" width="16" height="28" rx="3.5" fill="currentColor"/>' +
+    '<rect x="10.5" y="6" width="11" height="17" rx="1" fill="#fff"/><rect x="12.5" y="9" width="7" height="2" rx="1" fill="currentColor"/>' +
+    '<rect x="12.5" y="13" width="7" height="2" rx="1" fill="currentColor"/><rect x="12.5" y="17" width="4.5" height="2" rx="1" fill="currentColor"/><circle cx="16" cy="26.5" r="1.4" fill="#fff"/></svg>';
+  function micoCss() {
+    if (document.getElementById('mico-css')) return;
+    const c = document.createElement('style'); c.id = 'mico-css';
+    c.textContent = 'header.top .topmsg{margin-left:auto;display:flex;gap:6px;align-items:flex-start;flex:none}' +
+      '.mico{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:54px;min-height:54px;padding:4px 4px 2px;border:0;border-radius:12px;background:transparent;font:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent}' +
+      '.mico.team{color:var(--green,#4B5320)}.mico.hunter{color:#B8600F}' +
+      '.mico .mword{font-size:11.5px;font-weight:700;line-height:1.1;margin-top:1px}' +
+      '.mico .mbadge{position:absolute;top:0;right:2px;min-width:21px;height:21px;padding:0 5px;box-sizing:border-box;border-radius:11px;background:#B3261E;color:#fff;font-size:13px;font-weight:700;line-height:21px;text-align:center;box-shadow:0 0 0 2px var(--paper,#F9F6EE)}' +
+      '.mico:active{background:rgba(0,0,0,.06)}';
+    document.head.appendChild(c);
+  }
+  /** What each icon counts for the person signed in; null when that icon is not theirs to see. */
+  const msgCounts = () => {
+    const h = st.home || {}, ht = h.hunterTexts || null, n = v => Math.max(0, Math.round(Number(v) || 0));
+    if (!st.staff || isViewer()) return { team: null, hunter: null };
+    return { team: n(h.unread), hunter: atDoor() || (ht && ht.mine) ? n(ht && ht.unanswered) : null };
+  };
+  function msgIconsHtml() {
+    micoCss();
+    const c = msgCounts();
+    const one = (id, cls, n, word, what, tail, svg) => n === null ? '' :
+      '<button type="button" class="mico ' + cls + '" id="' + id + '" aria-label="' + what + (n ? ': ' + n + ' ' + tail : '') + '">' + svg +
+      (n ? '<span class="mbadge" data-n="' + n + '">' + (n > 9 ? '9+' : n) + '</span>' : '') + '<span class="mword">' + word + '</span></button>';
+    return one('mico-team', 'team', c.team, 'Team', 'Team messages', 'unread', SVG_TEAM) +
+      one('mico-hunter', 'hunter', c.hunter, 'Hunters', 'Messages from hunters', 'waiting on a reply', SVG_HUNTER);
+  }
+  /* The number on the app's own icon, where the phone has one: Android, Chrome on a computer, and
+     an iPhone with the app on its Home Screen. The two counts together; cleared at nothing. */
+  let badgeShown = -1;
+  function appBadge(n) {
+    try {
+      const p = n > 0 ? (navigator.setAppBadge && navigator.setAppBadge(n)) : (navigator.clearAppBadge && navigator.clearAppBadge());
+      if (p && p.catch) p.catch(() => {});
+    } catch (e) { /* a phone that has no badge */ }
+  }
+  /* Drawn again in place, without touching the rest of the screen, and only when the numbers have
+     changed, so a finger on its way to an icon is never beaten to it. */
+  function paintMsgIcons() {
+    const box = document.getElementById('topmsg');
+    if (box) { const html = msgIconsHtml(); if (box.innerHTML !== html && box._h !== html) box.innerHTML = html; box._h = html; }
+    const c = msgCounts(), total = (c.team || 0) + (c.hunter || 0);
+    if (total !== badgeShown) { badgeShown = total; appBadge(total); }
+  }
+  document.addEventListener('click', e => {
+    const b = e.target && e.target.closest && e.target.closest('.mico'); if (!b) return;
+    if (b.id === 'mico-team') showMessages(); else if (b.id === 'mico-hunter') showHunterInbox();
+  });
+  /* The counts are kept fresh on every screen: each minute while the app is open and showing, at
+     once when a notification arrives, and at once when the app comes back to the front. Home and
+     the board take the whole refresh, as their own poll does; any other screen takes only the two
+     numbers, so nothing somebody is filling in is redrawn under them. */
+  let countsBusy = false;
+  async function freshCounts() {
+    if (countsBusy || !st.pin || !st.staff || document.hidden || !navigator.onLine) return;
+    countsBusy = true;
+    try {
+      if (current === 'home' || current === 'board') { if (!flushing) await refresh(true); }
+      else {
+        const out = await call({ action: 'home' });
+        if (st.staff && st.home) { st.home.unread = out.unread; st.home.hunterTexts = out.hunterTexts; save(); }
+      }
+      status();
+    } catch (e) { /* the next one will try again */ }
+    finally { countsBusy = false; paintMsgIcons(); }
+  }
+  window.__hgCounts = freshCounts;   // so a test can fire it without waiting a minute
+  setInterval(freshCounts, 60000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) freshCounts(); });
+  window.addEventListener('pageshow', () => freshCounts());
+  if (navigator.serviceWorker && navigator.serviceWorker.addEventListener)
+    navigator.serviceWorker.addEventListener('message', e => { if (e && e.data && e.data.hgPush) freshCounts(); });
+
   function status() {
+    paintMsgIcons();
     const el = document.getElementById('sync');
     if (!el) return;
     const waiting = st.outbox.filter(x => !x.error), bad = st.outbox.filter(x => x.error);
@@ -1054,7 +1140,8 @@
       /* Sign out left the header in v99. It was a 59 by 18 px link beside the version number, at
          the top of every screen, acting on one touch: a gloved thumb reaching for Home signed
          people out, and signing back in needs signal and a PIN. It is at the foot of Home now. */
-      '<div class="sub">Home Ground Facility ' + esc(APP_VERSION) + '</div></div></header>' +
+      '<div class="sub">Home Ground Facility ' + esc(APP_VERSION) + '</div></div>' +
+      '<div class="topmsg" id="topmsg">' + msgIconsHtml() + '</div></header>' +   // v143: the two message icons
       /* v130: two real buttons, side by side, that stay at the top of the screen while it scrolls.
          It was one underlined word, "Home", that scrolled away with the page. */
       (noBack ? '' : '<nav class="navrow"><button class="navb" id="back-btn">← Back</button><button class="navb" id="home-btn">⌂ Home</button></nav>') +
@@ -1089,7 +1176,8 @@
   }
   // The cached front desk goes too: on a shared iPad the next person must not open to the last
   // person's counter, however briefly, and the manager-only controls are drawn from it.
-  function signOut(msg) { st.pin = ''; st.staff = null; st.home = {}; st.deskCache = null; st.screens = {}; st.slow = null; save(); showLogin(msg); }
+  function signOut(msg) { st.pin = ''; st.staff = null; st.home = {}; st.deskCache = null; st.screens = {}; st.slow = null; save(); showLogin(msg);
+    badgeShown = 0; appBadge(0); }   // v143: nobody is signed in, so the app's icon carries no number
 
   function showLogin(msg) {
     stopThread();
