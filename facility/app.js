@@ -1440,7 +1440,7 @@
 
     frame('home', '',
       (note ? '<div class="note ok">' + note + '</div>' : '') +
-      '<div id="alerts">' + alertsHtml() + dropCardsHtml() + '</div><div id="push"></div>' +
+      '<div id="alerts">' + alertsHtml() + dropCardsHtml() + '</div><div id="dhbox">' + donHeadsHtml() + '</div><div id="push"></div>' +
       (s.privateOpen === false && seesCounter() ? '<div class="note warn"><b>Private processing is paused</b>' + (s.privateNote ? ' (' + esc(s.privateNote) + ')' : '') +
         '. Donated deer and cold storage are open as usual.</div>' : '') +
       (lead ? leadCard(lead) : '') + clockStrip +
@@ -1634,6 +1634,7 @@
         catch (x) { bb.disabled = false; document.getElementById('eoerr').textContent = x.offline ? 'Needs signal.' : x.message; }
       });
     wireAlerts();
+    wireDonHeads();
     renderPush();
   }
   const tile = (n, label) => '<div class="tile"><div class="n">' + esc(n) + '</div><div class="l">' + esc(label) + '</div></div>';
@@ -1697,6 +1698,40 @@
       '<div class="status">' + esc(when(a.sent)) + (a.onWay.length ? ' · On the way: ' + esc(a.onWay.join(', ')) : '') + '</div>' +
       '<div class="actions">' + (!a.mine && a.onWay.indexOf(st.staff.name) < 0 ? '<button class="btn" data-ack="' + esc(a.id) + '">On my way</button>' : '') +
       (a.canClose ? '<button class="btn ghost" data-done="' + esc(a.id) + '">' + (a.mine ? 'Sorted, close it' : 'Close') + '</button>' : '') + '</div></div>').join('');
+  }
+  /* v146 (backend 131; Joe, 25 November): the head of a donated deer is no longer released. No
+     record from before was changed, so managers are shown, once, the donated deer still marked
+     to keep the skull, for Joe to decide how those hunters are told. It stays on Home until a
+     manager says the list has been seen; then it is gone for every manager. */
+  const DONATED_HEAD_NOTE = 'Donated deer: the head stays with the deer and can\'t be released.';
+  function donHeadsHtml() {
+    const list = isMgr() ? ((st.home || {}).donatedHeads || []) : [];
+    if (!list.length) return '';
+    return '<div class="card alert amber" id="dhcard"><b>' + list.length + ' donated deer ' + (list.length === 1 ? 'is' : 'are') + ' still marked to keep the skull</b>' +
+      '<div>The heads of donated deer are no longer released to hunters. These were checked in before that, and their records have not been changed. ' +
+      'Each hunter was told he would get the head back, so somebody has to tell him.</div>' +
+      '<table class="tbl" id="dhlist" style="margin:8px 0"><tr><th>Band</th><th>Hunter</th><th>Status</th></tr>' +
+      list.map(x => '<tr data-dh="' + esc(x.band) + '"><td>' + esc(x.band) + '</td><td>' + esc(x.hunter) + '</td><td>' + esc(x.status) +
+        (x.skinned && x.status !== 'Released' ? ', skinned' : '') + '</td></tr>').join('') + '</table>' +
+      '<div class="actions"><button class="btn" id="dhcopy">Copy the list</button> <button class="btn ghost" id="dhseen">Seen: don\'t show this again</button></div>' +
+      '<div class="status" id="dherr"></div></div>';
+  }
+  function wireDonHeads() {
+    const box = document.getElementById('dhbox'); if (!box) return;
+    const list = (st.home || {}).donatedHeads || [];
+    const cp = document.getElementById('dhcopy');
+    if (cp) cp.onclick = async () => {
+      const text = 'Band\tHunter\tStatus\n' + list.map(x => x.band + '\t' + x.hunter + '\t' + x.status + (x.skinned && x.status !== 'Released' ? ', skinned' : '')).join('\n');
+      try { await navigator.clipboard.writeText(text); toast('Copied ' + list.length + ' deer.'); }
+      catch (e) { document.getElementById('dherr').textContent = 'Copy did not work on this device. The list is above.'; }
+    };
+    const seen = document.getElementById('dhseen');
+    if (seen) seen.onclick = async () => {
+      if (!confirm('Hide this list for every manager? It can be shown again from the Settings tab.')) return;
+      seen.disabled = true;
+      try { await call({ action: 'donatedheadsseen' }); st.home.donatedHeads = null; save(); box.innerHTML = ''; }
+      catch (e) { seen.disabled = false; document.getElementById('dherr').textContent = e.offline ? 'Needs signal.' : e.message; }
+    };
   }
   function wireAlerts() {
     const box = document.getElementById('alerts');
@@ -2196,6 +2231,7 @@
       (d.Status === 'Voided' ? '<div class="note bad"><b>Voided</b>' + (d['Void reason'] ? ': ' + esc(d['Void reason']) : '') +
         (d['Voided by'] ? ' · ' + esc(d['Voided by']) : '') + '</div>' : '') +
       (d.Cuts && d.Status !== 'Released' ? '<div class="note ok"><b>Cuts:</b> ' + esc(d.Cuts) + '</div>' : '') +
+      (d['Permit year'] && d.Type === 'Donated' ? '<div class="status" data-py>Free permit license year: <b>' + esc(d['Permit year']) + '</b></div>' : '') +   /* v146 */
       /* Loud, and on every card, because it is read by whoever is about to take the head off and
          the cost of missing it cannot be undone. It stays visible after release too, so a hunter
          who comes back for the rack can be answered from the record. */
@@ -2443,10 +2479,22 @@
         '<div class="grid2"><div><label for="e_deer">Deer</label><select id="e_deer">' + opts(['Doe', 'Button buck', 'Sub-legal adult male', 'Antlered buck'], d['Deer']) + '</select></div>' +
         '<div><label for="e_points">Antler points</label><input id="e_points" type="number" inputmode="numeric" min="0" step="1" value="' + esc(d['Antler points'] || '') + '"></div></div>' +
         // A hunter changes his mind about the rack, and he is usually standing there when he does.
-        (/antlered/i.test(d['Deer'] || '') && d.Type !== 'Cold storage'
+        /* v146: not on a donated deer, whose head is not released. One still marked Yes from
+           before the rule keeps the field, so it can be corrected to No; the backend refuses a
+           change to Yes either way. */
+        (/antlered/i.test(d['Deer'] || '') && d.Type === 'Donated' && d['Skull kept'] !== 'Yes'
+          ? '<p class="status" id="e_donhead">' + esc(DONATED_HEAD_NOTE) + '</p>'
+          : /antlered/i.test(d['Deer'] || '') && d.Type !== 'Cold storage'
           ? '<label for="e_skull">Skull and antlers</label><select id="e_skull">' +
             opts(['Yes', 'No'], d['Skull kept']) + '</select>' +
-            '<p class="status">Yes keeps the head for the hunter. Once it has gone out with the waste, changing this to Yes does not bring it back.</p>'
+            (d.Type === 'Donated' ? '<p class="status" id="e_donhead">' + esc(DONATED_HEAD_NOTE) + ' This one was marked Yes before that rule; it can be changed to No.</p>'
+              : '<p class="status">Yes keeps the head for the hunter. Once it has gone out with the waste, changing this to Yes does not bring it back.</p>')
+          : '') +
+        /* v146 (MassWildlife, 24 November): the license year of the free replacement permit, on a
+           donated deer. A manager's field; blank means 2027. */
+        (isMgr() && d.Type === 'Donated'
+          ? '<label for="e_permitYear">Free permit license year <span class="hint">shotgun season; blank means ' + esc(((S().shotgun || {}).years || ['2026', '2027'])[1]) + '</span></label>' +
+            '<select id="e_permitYear" style="max-width:200px">' + opts((S().shotgun || {}).years || ['2026', '2027'], d['Permit year']) + '</select>'
           : '') +
         '<div class="grid2"><div><label for="e_takenWith">Taken with</label><select id="e_takenWith">' + opts(['Archery', 'Shotgun slug', 'Muzzleloader', 'Not known'], d['Taken with']) + '</select></div>' +
         '<div><label for="e_ammunition">Ammunition</label><select id="e_ammunition">' + opts(['Lead', 'Non-lead', 'Not known'], d['Ammunition']) + '</select></div></div>' +
@@ -2756,6 +2804,7 @@
         // Only sent when the question was on the form at all, so a correction to a doe cannot
         // write a skull answer onto a deer that never had one.
         if (document.getElementById('e_skull')) changes.skull = v('e_skull').trim();
+        if (document.getElementById('e_permitYear')) changes.permitYear = v('e_permitYear').trim();   // v146
         // v125: the door weight, and how it was weighed. Checked here so a slipped finger is caught
         // before the round trip; the server holds the same limits.
         if (document.getElementById('e_intakeWeight')) {
@@ -2774,7 +2823,7 @@
             if (!out.changed) { toast('Nothing changed.'); return; }
             toast(out.changed + (out.changed === 1 ? ' change saved' : ' changes saved') + ' on ' + d.Band);
             if (out.martin) toast('Flagged: MassWildlife’s copy of this row needs correcting.', true);
-            if (changes.skull && changes.skull !== (d['Skull kept'] || '') && d['Type'] !== 'Cold storage')
+            if (changes.skull && changes.skull !== (d['Skull kept'] || '') && d['Type'] !== 'Cold storage' && d['Type'] !== 'Donated' && (changes.type || d['Type']) !== 'Donated')
               toast('Skull answer is now ' + changes.skull + '. Print a new antler band from the card and swap it on the rack.', true);
             refresh(); if (after) after();
           })
@@ -3126,6 +3175,16 @@
       '<div id="skullbox" hidden><label>Does he want the skull and antlers back?</label>' +
       '<label class="choice"><input type="radio" name="skull" value="Yes"> <span><b>Yes</b> — keep the head. It gets a <b>SAVE FOR HUNTER</b> antler band now and is set aside at the skinning station.</span></label>' +
       '<label class="choice"><input type="radio" name="skull" value="No"> <span><b>No</b> — the head goes out with the waste. It gets an <b>OK TO DISCARD</b> antler band now.</span></label></div>' +
+      /* v146 (Joe, 25 November, after talking with Tick Free MV): the whole carcass of a donated
+         deer stays with the program, so the question is not put for one. It is recorded as No. */
+      '<div class="note" id="donhead" hidden>' + esc(DONATED_HEAD_NOTE) + '</div>' +
+      /* v146 (MassWildlife, 24 November): a deer donated during the island shotgun season. The
+         hunter chooses the license year of his free replacement permit. Optional: left alone, it
+         is 2027. Shown only for a donated deer taken or brought in during the season. */
+      '<div id="pybox" hidden><label for="py">Which license year should your free replacement permit be for? <span class="hint">optional</span></label>' +
+      '<select id="py" style="max-width:340px"><option value="">No answer (it will be ' + esc(((s.shotgun || {}).years || ['2026', '2027'])[1]) + ')</option>' +
+      ((s.shotgun || {}).years || ['2026', '2027']).map((y, i) => '<option value="' + esc(y) + '">' + esc(y) + (i === 0 ? ' (use it this season)' : '') + '</option>').join('') + '</select>' +
+      '<p class="status">Ask the hunter. Shotgun season only: MassWildlife gives a free replacement permit for a donated deer.</p></div>' +
       // Only the hunter knows this, so it is asked at the door. It decides how hard the wound
       // channel is trimmed later, and it is the one thing that makes the lead question answerable.
       '<div class="grid2"><div><label for="tw">Taken with</label><select id="tw"><option value="">Choose\u2026</option><option>Archery</option><option>Shotgun slug</option><option>Muzzleloader</option><option>Not known</option></select></div>' +
@@ -3259,8 +3318,14 @@
     /* The skull question only arises where the head is going to come off. A hang-only deer is
        never skinned here — it goes back to the hunter whole, antlers and all — so asking would
        invite a "No" that could get a rack binned that was never ours to bin. */
-    const skullAsked = () => v('deer') === 'Antlered buck' &&
-      ((document.querySelector('input[name=type]:checked') || {}).value || '') !== 'Cold storage';
+    /* v146: nor is it asked of a donated deer, whose head is not released (Joe, 25 November). */
+    const typeNow = () => (document.querySelector('input[name=type]:checked') || {}).value || '';
+    const skullAsked = () => v('deer') === 'Antlered buck' && typeNow() !== 'Cold storage' && typeNow() !== 'Donated';
+    const donHead = () => v('deer') === 'Antlered buck' && typeNow() === 'Donated';
+    /* v146: the free permit's license year. Donated, and checked in or shot on a day inside the
+       shotgun season the backend sends (both days count). No season sent, no question. */
+    const inShotgun = iso => { const g = S().shotgun; return !!(g && g.from && g.to && iso && iso >= g.from && iso <= g.to); };
+    const pyAsked = () => typeNow() === 'Donated' && (inShotgun(isoDate(new Date())) || inShotgun(v('sd')));
     /* v128: every hunter is asked, whatever the deer is here for (it was private deer and kept skulls only). */
     const txtAsked = () => true;
     const syncTxt = () => {
@@ -3275,6 +3340,10 @@
       // Changing away clears the answer, so it cannot be saved against a doe because somebody
       // picked the wrong line and then corrected it.
       if (!show) document.querySelectorAll('input[name=skull]').forEach(r => { r.checked = false; });
+      // v146: the donated-deer note stands where the question would have, and the permit year comes and goes.
+      const dh = document.getElementById('donhead'); if (dh) dh.hidden = !donHead();
+      const pb = document.getElementById('pybox');
+      if (pb) { pb.hidden = !pyAsked(); if (pb.hidden) document.getElementById('py').value = ''; }
       const sv = document.getElementById('save');
       if (sv) sv.textContent = show ? 'Check in and print 2 bands' : 'Check in and print band';
       syncTxt();
@@ -3347,6 +3416,10 @@
       setVal('ph', p.phone); setVal('hem', p.email);
       if (p.noConfirmation) setCheck('#cfna', true); else { setCheck('#cfna', false); setVal('cf', p.confirmation); }
       setVal('sd', p.shotDate); setVal('htown', p.townOfHarvest); setVal('tw', p.takenWith); setVal('am', p.ammunition);
+      /* v146: the license year he chose when he pre-registered, for staff to confirm or change.
+         Set after the type and the shot date, which decide whether the question is there at all. */
+      syncSkull();
+      { const pyEl = document.getElementById('py'); if (pyEl && !document.getElementById('pybox').hidden) pyEl.value = p.permitYear || ''; }
       if (p.type === 'Donated' && p.address) {
         const a = splitAddress(p.address);
         if (a) { setVal('ad1', a.street); setVal('adt', a.town); setVal('ads', a.state); setVal('adz', a.zip); } else setVal('ad1', p.address);
@@ -3534,7 +3607,7 @@
     }
     ['fn', 'ln'].forEach(id => { const el = document.getElementById(id); if (el) el.oninput = suggestHunters; });
     document.querySelectorAll('input[name=iap]').forEach(r => r.onchange = showId);
-    document.getElementById('sd').onchange = showId;
+    document.getElementById('sd').onchange = () => { showId(); syncSkull(); };   // v146: the shot date can put a donated deer inside the shotgun season
     document.getElementById('tw').onchange = e => {
       const fire = e.target.value === 'Shotgun slug' || e.target.value === 'Muzzleloader';
       document.getElementById('ammobox').hidden = !fire;
@@ -3765,7 +3838,8 @@
         : 'Take a photo of the hunter\u2019s phone showing his confirmed deer. If the camera isn\u2019t working, tick that box and say why.');
       const noCall = document.getElementById('nocallout');
       const f = { band: b, iap: iap === 'Yes', type, deer: v('deer'), points: v('deer') === 'Antlered buck' ? pts : '', firstName: v('fn'), lastName: v('ln'), customerId: lic, hunterPhone: v('ph'), confirmation: tribal ? '' : v('cf'), takenWith: v('tw'), ammunition: v('am'),
-        skull: skullAsked() ? skullPick === 'Yes' : undefined,
+        skull: skullAsked() ? skullPick === 'Yes' : donHead() ? false : undefined,   // v146: a donated buck's head is not released: No
+        permitYear: pyAsked() ? v('py') : undefined,                                  // v146: '' is "no answer", which is 2027
         textConsent: txtYes || undefined,
         notCallout: !!(noCall && noCall.checked),
         cuts: type === 'Private' ? readCuts() : '',
@@ -3856,7 +3930,11 @@
     return qrLib || (qrLib = new Promise((ok, no) => { const sc = document.createElement('script'); sc.src = 'qr.js'; sc.onload = ok; sc.onerror = () => { qrLib = null; no(new Error('Needs signal once to load the QR tools.')); }; document.head.appendChild(sc); }));
   }
   const deerLink = b => location.origin + location.pathname.replace(/[^/]*$/, '') + '#d=' + encodeURIComponent(band(b));
-  // Intake band: ScanBand S 1-1/8" x 11-1/2" on the PDC printer (203 dpi), printed from Chrome on the intake laptop.
+  // Intake band: ScanBand S on the PDC printer (203 dpi), printed from Chrome on the intake laptop.
+  /* v146 (Joe, 25 November): the stock is 1.14 in. x 11.34 in., and the page was 11.5 in. Every
+     band ran 0.16 in. past the black mark, which the printer reports as a paper jam (its own
+     self-test band prints cleanly). The page is the length of the stock now, in this one place. */
+  const BAND_H = 11.34;
   function bandCss() {
     const s = S(), off = Number(s.bandOffset == null ? 2.5 : s.bandOffset), rot = s.bandRotate !== false;
     /* v145: the antler band has its own offset (Settings "Antler band offset (in)", backend 130),
@@ -3864,7 +3942,7 @@
        an answer; a backend that does not send it yet gives 0.5. */
     const an = s.antlerOffset == null || s.antlerOffset === '' ? NaN : Number(s.antlerOffset), aoff = isFinite(an) && an >= 0 ? an : 0.5;
     let c = document.getElementById('band-css'); if (!c) { c = document.createElement('style'); c.id = 'band-css'; document.head.appendChild(c); }
-    c.textContent = '@media print{@page{size:1.125in 11.5in;margin:0}html,body{margin:0;padding:0;background:#fff;height:auto;min-height:0}' +
+    c.textContent = '@media print{@page{size:1.125in ' + BAND_H + 'in;margin:0}html,body{margin:0;padding:0;background:#fff;height:auto;min-height:0}' +
       /* The screen behind the band is taken out of the print altogether (v113). Hidden but still
          laid out, on a page 1-1/8 in. wide, it ran to extra blank pages after the band. */
       'body>*:not(#label){display:none!important}' +
@@ -3875,7 +3953,7 @@
       '#label div{color:#000;opacity:1}#label .bk{display:block;flex:0 0 auto}' +
       /* One .bp per band, each exactly one page down from the last (v113): two bands are two
          pages of one print job. */
-      '#label .bp{position:absolute;left:0;width:1.125in;height:11.5in;overflow:hidden}' +
+      '#label .bp{position:absolute;left:0;width:1.125in;height:' + BAND_H + 'in;overflow:hidden}' +
       '#label .bw{position:absolute;width:7.4in;height:1.05in;display:flex;align-items:center;gap:.12in;' +
       (rot ? 'left:1.09in;top:' + off + 'in;transform-origin:0 0;transform:rotate(90deg)}' : 'left:.04in;top:' + off + 'in}') +
       '#label .bt{font-size:11pt;font-weight:800;letter-spacing:1px;padding:.04in .08in;border:2px solid #000;white-space:nowrap}' +
@@ -3906,7 +3984,7 @@
      is page two of the same job: same roll, straight after the intake band, one dialog. */
   function printPages(pages) {
     document.getElementById('label').innerHTML = pages.map((h, i) =>
-      '<div class="bp" style="top:' + (i * 11.5) + 'in">' + h + '</div>').join('');
+      '<div class="bp" style="top:' + (i * BAND_H).toFixed(2) + 'in">' + h + '</div>').join('');
     setTimeout(() => window.print(), 80);
   }
   /* ---------- v144: the band print queue (backend 129) ----------
@@ -3990,7 +4068,7 @@
      opens and the job waits for it. */
   function stationPrint(pages) {
     return new Promise((ok, no) => {
-      document.getElementById('label').innerHTML = pages.map((h, i) => '<div class="bp" style="top:' + (i * 11.5) + 'in">' + h + '</div>').join('');
+      document.getElementById('label').innerHTML = pages.map((h, i) => '<div class="bp" style="top:' + (i * BAND_H).toFixed(2) + 'in">' + h + '</div>').join('');
       let fin = false;
       const done = () => { if (fin) return; fin = true; window.removeEventListener('afterprint', done); ok(); };
       window.addEventListener('afterprint', done);
@@ -4186,8 +4264,13 @@
      one either way, so a head with no band is a question rather than a default: SAVE FOR HUNTER,
      or OK TO DISCARD. Cold storage leaves whole and is never asked, and a blank answer (deer in
      before 7 November) prints nothing rather than guess. */
-  const antlerBandFor = d => !!d && /antlered/i.test(d.Deer || d['Deer'] || '') && d.Type !== 'Cold storage' &&
+  const rackAnswered = d => !!d && /antlered/i.test(d.Deer || d['Deer'] || '') && d.Type !== 'Cold storage' &&
     (d['Skull kept'] === 'Yes' || d['Skull kept'] === 'No');
+  /* v146 (Joe, 25 November): a donated deer gets the intake band only. Its head is not released,
+     so there is nothing for an antler band to say. Private processing keeps both bands. A donated
+     deer banded before this still has its antler band on the rack, and scanning that band still
+     opens the rack view (rackAnswered), but no new one is printed for it. */
+  const antlerBandFor = d => rackAnswered(d) && d.Type !== 'Donated';
   /* What a rack scan shows first (v110). Big enough to read at arm's length in a cooler. */
   function rackBanner(d) {
     const keep = d['Skull kept'] === 'Yes';
@@ -4265,7 +4348,7 @@
       : '<div class="card"><b>' + esc(d.Status === 'Processing' ? 'Being processed' : d.Status === 'Ready' ? 'Processed: ready for pickup or delivery' : d.Status) + '</b></div>';
     /* The band is the screen's identity, so moving from one deer to another is a navigation and
        lands at the top, while redrawing the same deer keeps the scroll. */
-    const rack = rackView === b && antlerBandFor(d);
+    const rack = rackView === b && rackAnswered(d);
     frame('deer', 'Band ' + esc(band(d.Band)), (rack ? rackBanner(d) : head) + deerCard(d) + '<button class="btn ghost" id="ds" style="width:100%;margin-top:8px">Scan another band</button>', false, band(d.Band));
     const c = $app.querySelector('[data-band]');
     c.querySelectorAll('[data-a]').forEach(x => x.onclick = () => act(x.dataset.a, d, c.querySelector('.form'), () => showDeer(b)));

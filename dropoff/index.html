@@ -276,11 +276,21 @@ footer a{color:var(--orange)}
             <label class="ch"><input type="radio" name="skull" value="No"><span>No</span></label>
           </div>
         </div>
+        <!-- v12: the head of a donated deer is not released, so the question is not asked for one -->
+        <div class="warnbox" id="donHead" hidden>Donated deer: the head stays with the deer and can’t be released.</div>
         <div class="q"><span class="ql">When did you shoot it?</span>
           <div class="choices">
             <label class="ch"><input type="radio" name="when" value="0"><span>Today</span></label>
             <label class="ch"><input type="radio" name="when" value="1"><span>Yesterday</span></label>
           </div>
+        </div>
+        <!-- v12 (MassWildlife, 24 Nov 2026): donated deer, shotgun season only. Optional; blank means the later year. -->
+        <div class="q" id="pyQ" hidden><span class="ql">Which license year should your free replacement permit be for? <span class="hint">optional</span></span>
+          <div class="choices">
+            <label class="ch"><input type="radio" name="py" value="2026"><span><i id="py0" style="font-style:normal">2026</i><small>use it this season</small></span></label>
+            <label class="ch"><input type="radio" name="py" value="2027"><span><i id="py1" style="font-style:normal">2027</i></span></label>
+          </div>
+          <div class="hint" style="margin-top:8px">For a deer donated during shotgun season. Tap your choice again to clear it. Left blank, it will be for <span id="pyDef">2027</span>.</div>
         </div>
         <div class="q"><span class="ql">Town of harvest</span>
           <div class="choices c3">
@@ -455,7 +465,7 @@ footer a{color:var(--orange)}
    stock and cooler space come from the public ?scoreboard=1 reply, which carries no personal data. */
 var BACKEND = "https://script.google.com/macros/s/AKfycbwJbxYLDa5uAXwuHI_kF7vD_Panq2ZxNNV2EFofWqJAZkQRWy0j9Ns7ceKQ4-8zwUo3/exec";
 var DEMO = false;   // the mockup sets this: nothing is sent
-var SVC = { privatePrice: 300, porkAddOn: 20, porkInStock: true, porkPct: 10, privateOpen: true, privateNote: "" };
+var SVC = { privatePrice: 300, porkAddOn: 20, porkInStock: true, porkPct: 10, privateOpen: true, privateNote: "", shotgun: null };   // v12: shotgun = { from, to, years }, from the backend
 var COOLER = null;
 // The intake app's cut sheet (app.js CUTS), same order and words. First four default to Ground.
 var CUTS = [["Backstraps", ["Whole", "Steaks", "Butterflied", "Ground"]], ["Tenderloins", ["Whole", "Ground"]],
@@ -505,7 +515,8 @@ function loadLive(){
     if (!j || !j.ok) return;
     if (j.cooler) { COOLER = j.cooler; drawCooler(); }
     if (j.services) { SVC.privatePrice = +j.services.privatePrice || SVC.privatePrice; SVC.porkAddOn = +j.services.porkAddOn || SVC.porkAddOn; SVC.porkInStock = j.services.porkInStock !== false;
-      SVC.privateOpen = j.services.privateOpen !== false; SVC.privateNote = j.services.privateNote || ""; drawPrices(); drawPrivate(); }
+      SVC.privateOpen = j.services.privateOpen !== false; SVC.privateNote = j.services.privateNote || ""; drawPrices(); drawPrivate();
+      SVC.shotgun = j.services.shotgun || null; drawPy(); syncDeer(); }
   }).catch(function(){});
 }
 
@@ -609,10 +620,35 @@ function syncPlan(){
 function syncDeer(){
   var deer = pick("deer"), t = pick("type");
   $("ptsQ").hidden = deer !== "Antlered buck";
-  $("skullQ").hidden = !(deer === "Antlered buck" && t !== "Cold storage");
+  /* v12 (Joe, 25 Nov 2026): the head of a donated deer is not released, so only a deer being
+     processed for the hunter is asked. A donated buck gets the one-line note in its place. */
+  $("skullQ").hidden = !(deer === "Antlered buck" && t === "Private");
+  $("donHead").hidden = !(deer === "Antlered buck" && t === "Donated");
+  if ($("skullQ").hidden) document.querySelectorAll('input[name="skull"]').forEach(function(x){ x.checked = false; });
+  var ask = pyAsked(); $("pyQ").hidden = !ask;
+  // Not cleared while the season is still on its way from the backend: a reloaded page keeps his answer.
+  if (!ask && (SVC.shotgun || t !== "Donated")) { document.querySelectorAll('input[name="py"]').forEach(function(x){ x.checked = false; }); pyWas = ""; }
   $("ammoQ").hidden = !/slug|Muzzle/.test(pick("tw"));
   $("fdWarn").hidden = pick("fd") !== "No";
 }
+/* v12 (MassWildlife, 24 Nov 2026): a deer donated during the island shotgun season. The hunter may
+   choose the license year of his free replacement permit; left blank it is the later year. Asked
+   only when the deer is donated and today, or the day it was shot, is inside the season the
+   backend sends. No season sent (offline, or an older backend): not asked, and the counter asks. */
+function dayIso(back){ var d = new Date(Date.now() - (back || 0) * 864e5); return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2); }
+function inShotgun(iso){ var s = SVC.shotgun; return !!(s && s.from && s.to && iso >= s.from && iso <= s.to); }
+function pyAsked(){ return pick("type") === "Donated" && (inShotgun(dayIso(0)) || (pick("when") !== "" && inShotgun(dayIso(+pick("when") || 0)))); }
+function drawPy(){
+  var y = (SVC.shotgun && SVC.shotgun.years) || ["2026", "2027"], r = document.querySelectorAll('input[name="py"]');
+  r[0].value = y[0]; r[1].value = y[1]; $("py0").textContent = y[0]; $("py1").textContent = y[1]; $("pyDef").textContent = y[1];
+}
+// It is optional, and a radio cannot be un-chosen by itself: a second tap on the chosen year clears it.
+var pyWas = "";
+document.querySelectorAll('input[name="py"]').forEach(function(x){
+  x.addEventListener("click", function(){
+    if (pyWas === x.value) { x.checked = false; pyWas = ""; saveDraft(); } else pyWas = x.value;
+  });
+});
 var pts = 0;
 function drawPts(){ $("pts").textContent = pts || "\u2013"; }
 $("ptsDn").onclick = function(){ pts = Math.max(1, pts - 1); drawPts(); saveDraft(); };
@@ -729,7 +765,7 @@ function check(step){
   if (step === "deer") {
     if (!deer) return "Choose which deer.";
     if (deer === "Antlered buck" && !(pts >= 1)) return "Tap + to count the points 1 inch and longer.";
-    if (deer === "Antlered buck" && t !== "Cold storage" && !pick("skull")) return "Say whether you want the skull and antlers back.";
+    if (deer === "Antlered buck" && t === "Private" && !pick("skull")) return "Say whether you want the skull and antlers back.";
     if (!pick("when")) return "Say whether you shot it today or yesterday.";
     if (!pick("town")) return "Choose the town it was taken in.";
     if (!pick("tw")) return "Say how it was taken.";
@@ -762,12 +798,13 @@ function bad(step){
 }
 
 /* ---------- review ---------- */
-function shotIso(){ var d = new Date(Date.now() - (+pick("when") || 0) * 864e5); return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2); }
+function shotIso(){ return dayIso(+pick("when") || 0); }
 function deerName(){ var d = pick("deer"); return d === "Sub-legal adult male" ? "Spike buck under 3 in." : d === "Antlered buck" ? "Antlered buck, " + pts + " points" : d; }
 function drawReview(){
   var t = pick("type"), rows = [];
   var plan = { "Donated": "Donate", "Private": "Process it for me (" + money(SVC.privatePrice + (SVC.porkInStock && pick("pork") === "Yes" ? SVC.porkAddOn : 0)) + " at pickup)", "Cold storage": "Cold storage" }[t];
   rows.push(["plan", "Plan", plan]);
+  if (pyAsked()) rows.push(["deer", "Free permit", pick("py") ? "License year " + pick("py") : "License year " + $("pyDef").textContent + " (no choice made)"]);
   rows.push(["deer", "Deer", deerName() + (pick("skull") && !$("skullQ").hidden ? ", skull " + (pick("skull") === "Yes" ? "kept" : "not kept") : "") + " · " +
     (pick("when") === "1" ? "shot yesterday" : "shot today") + " in " + pick("town") + " · " + pick("tw").toLowerCase() + (pick("am") && !$("ammoQ").hidden ? " (" + pick("am").toLowerCase() + ")" : "") +
     " · field dressed within 4 h: " + pick("fd").toLowerCase()]);
@@ -786,7 +823,8 @@ function drawReview(){
 function fields(){
   var t = pick("type"), deer = pick("deer");
   return { firstName: g("fn"), lastName: g("ln"), phone: g("ph"), email: g("em"), type: t, deer: deer,
-    points: deer === "Antlered buck" ? String(pts) : "", skull: deer === "Antlered buck" && t !== "Cold storage" ? pick("skull") === "Yes" : undefined,
+    points: deer === "Antlered buck" ? String(pts) : "", skull: deer === "Antlered buck" && t === "Private" ? pick("skull") === "Yes" : undefined,
+    permitYear: pyAsked() ? pick("py") : undefined,   // v12: "" is no choice, which MassWildlife reads as the later year
     shotDate: shotIso(), townOfHarvest: pick("town"), customerId: g("lic"), confirmation: $("cfna").checked ? "" : g("cf"), noConfirmation: $("cfna").checked,
     takenWith: pick("tw"), ammunition: $("ammoQ").hidden ? "" : pick("am"),
     address: t === "Donated" ? g("ad1") + ", " + g("adt") + ", " + (g("ads") || "MA").toUpperCase() + " " + g("adz") : "",
@@ -956,6 +994,7 @@ $("goRegister").addEventListener("click", function(e){
 
 drawOpen(); setInterval(drawOpen, 60000);
 var startAt = restore();
+pyWas = pick("py");   // v12: so one tap on a restored choice clears it
 syncPlan(); syncDeer(); drawPrices();
 show(startAt, false);
 loadLive();

@@ -1,7 +1,7 @@
 // Deer Drop-Off Pre-Check: lets the page open from a phone's home screen with no signal.
 // Bump VERSION whenever dropoff/index.html changes so phones pick up the new copy.
 // Its scope is this folder only; the hunter app's worker (../sw.js) is left alone.
-const VERSION = 'hg-dropoff-v11';
+const VERSION = 'hg-dropoff-v12';
 const SHELL = ['./', 'index.html', 'manifest.webmanifest', '../logo.png', '../icon-192.png'];
 
 self.addEventListener('install', e => {
