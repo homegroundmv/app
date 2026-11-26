@@ -3203,7 +3203,7 @@
       '<label>Did this deer come through the Island Access Program?</label>' +
       '<label class="choice"><input type="radio" name="iap" value="Yes"> <span><b>Yes</b>: the hunter is enrolled and took it on an enrolled property</span></label>' +
       '<label class="choice"><input type="radio" name="iap" value="No"> <span><b>No</b>: any other hunter</span></label>' +
-      '<div class="note ok">Band number: <b id="genid">enter the date of the shot below</b><br><span class="status">Every deer gets one here, printed on the intake band. It stays with the deer from intake to release.</span></div>' +
+      '<div class="note ok">Band number: <b id="genid"></b><br><span class="status">Every deer gets one here, printed on the intake band. It stays with the deer from intake to release.</span></div>' +
       '<label>What is happening to this deer?</label>' +
       '<label class="choice"><input type="radio" name="type" value="Donated"> <span><b>Donated</b> (Share the Harvest). TFMV mails the hunter a check: $' + esc(nz(s.payDoe, 150)) + ' a doe, $' + esc(nz(s.payBuck, 100)) + ' a buck (any male deer).</span></label>' +
       (s.privateOpen === false
@@ -3286,7 +3286,7 @@
          nothing else about his row changes. */
       '<div id="cfbox"><label for="cf">MassWildlife confirmation number</label><input id="cf" type="text" autocapitalize="characters" autocorrect="off" autocomplete="off" spellcheck="false">' +
         '<label class="choice" style="margin-top:6px"><input id="cfna" type="checkbox"> <span><b>Hunter unable to obtain number</b><br><span class="hint">The state system would not give one. Add it later with Fix the record.</span></span></label></div>' +
-      '<div><label for="sd">Date of the shot <span class="hint">the band number is built from it</span></label><input id="sd" type="date" value="' + isoDate(now) + '" max="' + isoDate(now) + '"></div>' +
+      '<div><label for="sd">Date of the shot</label><input id="sd" type="date" value="' + isoDate(now) + '" max="' + isoDate(now) + '"></div>' +
       // Every deer from v106 (Joe, 14 November). A tribal deer keeps its own town field above.
       '<div id="htownbox"><label for="htown">Town of harvest</label><select id="htown">' + townOptions('') + '</select></div>' +
       '</div>' +
@@ -3358,10 +3358,16 @@
       '<div class="err" id="err"></div><button class="submit" id="save">Check in and print band</button>' +
       '<button class="btn ghost" id="away" style="width:100%">Turn this deer away instead</button><div id="awaybox"></div></div>');
     const v = id => document.getElementById(id).value.trim();
-    // Every deer: ID = date of the shot (MMDDYYYY) + a two-digit count for that day, e.g. 0908202601
+    /* Every deer: ID = the day it is CHECKED IN (MMDDYYYY) + a two-digit count for that day, e.g.
+       0908202601. v148 (Joe, 26 November): it was built from the date of the shot, so a deer shot
+       last night and checked in this morning took yesterday's number. A deer carried over from
+       the cooler ("already in the cooler before today") takes the day it arrived. */
+    const checkInDay = () => {
+      const arr = document.getElementById('earlier').checked ? v('arr') : '';
+      return /^\d{4}-\d{2}-\d{2}/.test(arr) ? arr.slice(0, 10) : isoDate(new Date());
+    };
     const genId = () => {
-      const sd = v('sd'); if (!sd) return '';
-      const [y, m, d] = sd.split('-'), pre = m + d + y;
+      const [y, m, d] = checkInDay().split('-'), pre = m + d + y;
       const used = deerList().map(x => band(x.Band)).concat(st.outbox.map(x => band((x.fields || {}).band)))
         .filter(x => x.length === 10 && x.indexOf(pre) === 0).map(x => parseInt(x.slice(8), 10) || 0);
       return pre + ('0' + (Math.max(0, ...used) + 1)).slice(-2);
@@ -3548,7 +3554,7 @@
       c.textContent = '.mrow{width:100%;table-layout:fixed;border-collapse:collapse;margin:10px 0;font-size:15px}.mrow th{text-align:left;font-weight:600;font-size:14px;color:var(--muted);padding:7px 8px 7px 0;width:45%;vertical-align:top;white-space:normal}.mrow td{padding:7px 0;border-bottom:1px solid var(--line);text-align:left;white-space:normal;overflow-wrap:anywhere}.mrow th{border-bottom:1px solid var(--line)}';
       document.head.appendChild(c); }
     const iapNow = () => (document.querySelector('input[name=iap]:checked') || {}).value;
-    const showId = () => { document.getElementById('genid').textContent = genId() || 'enter the date of the shot below'; };
+    const showId = () => { document.getElementById('genid').textContent = genId(); };
 
     /* A hunter the log has already seen fills himself in once his name is typed: customer ID,
        phone, email and mailing address, straight into the fields, no tap.
@@ -3693,7 +3699,10 @@
       const box = document.getElementById('arrbox'), arr = document.getElementById('arr');
       box.hidden = !e.target.checked;
       if (e.target.checked && !arr.value) arr.value = (v('sd') || isoDate(now)) + 'T12:00';
+      showId();   // v148: the band number follows the day the deer arrived
     };
+    document.getElementById('arr').onchange = showId;
+    showId();   // v148: nothing to wait for now that the number does not come from the date of the shot
     /* The two W-9 tickboxes are alternatives, so the screen says so rather than leaving somebody to
        work out that a man who has filed the form does not also need a link to it. */
     const tfl = document.getElementById('taxfiled'), tfe = document.getElementById('taxf');
@@ -3812,9 +3821,8 @@
       const type = (document.querySelector('input[name=type]:checked') || {}).value;
       const iap = iapNow();
       if (!iap) return err('Say whether it\'s an Island Access Program (IAP) deer.');
-      if (!v('sd')) return err('Enter the date of the shot: the band number is built from it.');
+      if (!v('sd')) return err('Enter the date of the shot.');
       const b = genId();
-      if (!b) return err('Enter the date of the shot: the band number is built from it.');
       if (deerList().some(d => band(d.Band) === b && d.Status !== 'Released')) return err('Band ' + b + ' is already in the cooler.');
       if (!type) return err('Choose donated, private or cold storage only.');
       const privPaused = type === 'Private' && S().privateOpen === false;
