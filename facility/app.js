@@ -237,7 +237,82 @@
   }
   const outOfDate = c => (c.asked || c.at) <= (st.staleAt || 0);
 
+  /* ---------- v149: one tap, one write (Joe, 26 November 2026) ----------
+     Staff could not tell a slow save from a missed tap, so they tapped again. Every button that
+     sends something to the backend now answers the finger at once, and a second tap is ignored.
+
+     ONE helper, two ways in:
+     - call() does it by itself for any write: the button that was just tapped goes dark, shows a
+       spinner and "Saving…", and is disabled until the answer is back. Nothing has to be wired
+       per button, so a button added later is covered too.
+     - The deer form (Save on a card) also WAITS for its queued action to land before it redraws,
+       so the tick and the toast mean the save happened. See pressQueued in act().
+
+     While a request for a deer is in flight, every other button on that deer's card is refused.
+     Every write carries a clientId; the backend answers a repeat as a duplicate (backend 133). */
+  const READS = ['login', 'ping', 'home', 'board', 'status', 'sensors', 'temprecord', 'donations', 'martin',
+    'hunter', 'hunters', 'drops', 'oncall', 'fees', 'coldgate', 'priority', 'undostate', 'desk',
+    'tocollect', 'shifts', 'shiftlog', 'deeredits', 'stats', 'team', 'threads', 'thread', 'supplies', 'ssop',
+    'records', 'finddeer', 'tagimg', 'prechecks', 'precheckimg', 'printqueue', 'stationbeat', 'dropthread',
+    'deerthread', 'hunterinbox', 'hunterthread', 'deernotes', 'deernoteimg', 'printpending'];
+  const TICK_MS = CFG.TICK_MS != null ? Number(CFG.TICK_MS) : 1000;   // how long the green check stays up
+  const SLOW_MS = CFG.SLOW_MS != null ? Number(CFG.SLOW_MS) : 4000, STALL_MS = CFG.STALL_MS != null ? Number(CFG.STALL_MS) : 20000;
+  const acting = {};     // band -> requests in flight for that deer
+  const waiters = {};    // clientId of a queued action -> the form waiting for it to land
+  let lastTap = { el: null, at: 0 };
+  const cardBand = el => { const c = el && el.closest ? el.closest('[data-band]') : null; return c ? band(c.dataset.band) : ''; };
+  document.addEventListener('click', e => {
+    const b = e.target && e.target.closest ? e.target.closest('button') : null;
+    if (!b) return;
+    const cb = cardBand(b);
+    if (b.dataset.pressing || (cb && acting[cb])) {
+      e.stopPropagation(); e.preventDefault();
+      if (!b.dataset.pressing) toast('Still saving band ' + cb + '. One moment.');
+      return;
+    }
+    lastTap = { el: b, at: Date.now() };
+  }, true);
+  function deerLock(b) {
+    document.querySelectorAll('[data-band]').forEach(c => { if (band(c.dataset.band) === b) c.classList.toggle('saving', !!acting[b]); });
+  }
+  function pressOn(btn, bnd) {
+    const b = band(bnd || '');
+    const h = { btn: btn, b: b, was: btn ? btn.innerHTML : '', wasDis: btn ? btn.disabled : false, timers: [], onStall: null };
+    h.say = t => { if (btn && btn.isConnected) btn.innerHTML = '<span class="spin" aria-hidden="true"></span>' + esc(t); };
+    h.tick = () => { h.timers.forEach(clearTimeout); if (!btn) return; btn.classList.remove('pressing'); btn.classList.add('pressed');
+      btn.innerHTML = '<span class="tick" aria-hidden="true">\u2713</span>Saved'; };
+    if (btn) { btn.dataset.pressing = '1'; btn.classList.add('pressing'); btn.disabled = true; h.say('Saving\u2026'); }
+    try { if (navigator.vibrate) navigator.vibrate(30); } catch (e) { /* no vibration here: nothing to do */ }
+    if (b) { acting[b] = (acting[b] || 0) + 1; deerLock(b); }
+    h.timers.push(setTimeout(() => h.say('Still saving, don\u2019t tap again.'), SLOW_MS));
+    h.timers.push(setTimeout(() => { h.say('No signal? It will retry.'); if (h.onStall) h.onStall(); }, STALL_MS));
+    return h;
+  }
+  function pressOff(h, ok) {
+    h.timers.forEach(clearTimeout);
+    if (h.b && acting[h.b]) { acting[h.b]--; if (acting[h.b] <= 0) delete acting[h.b]; deerLock(h.b); }
+    const btn = h.btn; if (!btn) return;
+    const back = () => { delete btn.dataset.pressing; btn.classList.remove('pressing', 'pressed'); btn.innerHTML = h.was; btn.disabled = h.wasDis; };
+    if (!ok) return back();
+    h.tick(); h.ticked = true;
+    /* The screen's own code runs next and usually redraws. Where it does not, the button comes
+       back after the check; where it wrote its own label meanwhile, that label is left alone. */
+    delete btn.dataset.pressing;
+    setTimeout(() => { if (btn.isConnected && btn.classList.contains('pressed') && btn.querySelector('.tick')) back(); else btn.classList.remove('pressed'); }, TICK_MS);
+  }
+  const whenLanded = (id, onHeld) => new Promise((res, rej) => { waiters[id] = { res: res, rej: rej, onHeld: onHeld }; });
+
   async function call(body) {
+    const write = !!(body && body.action) && READS.indexOf(body.action) < 0;
+    if (!write) return callRaw(body);
+    if (!body.clientId) body = Object.assign({}, body, { clientId: uid() });
+    const el = lastTap.el, fresh = Date.now() - lastTap.at < 600;
+    lastTap = { el: null, at: 0 };                    // one tap, one button: a follow-up request does not take it again
+    const h = (el && fresh && el.isConnected && !el.dataset.pressing) ? pressOn(el, body.band || (body.fields || {}).band) : null;
+    try { const out = await callRaw(body); if (h) pressOff(h, true); return out; }
+    catch (e) { if (h) pressOff(h, false); throw e; }
+  }
+  async function callRaw(body) {
     const by = (body && body.__by) || current;
     /* Served from the last answer, with a refresh started behind it. The screen that asked gets
        its data in the same tick, so it paints at once; when the real answer differs, the screen
@@ -321,13 +396,15 @@
 
   /* ---------- outbox: deer actions and log entries wait here until sent ---------- */
   function queue(action, fields, label, extra) {
-    st.outbox.push(Object.assign({ clientId: uid(), action, fields, at: stamp(), label, created: Date.now(), by: st.number }, extra || {}));
+    const id = uid();
+    st.outbox.push(Object.assign({ clientId: id, action, fields, at: stamp(), label, created: Date.now(), by: st.number }, extra || {}));
     /* Put out of date the moment the action is queued, not when it finishes sending. Screens are
        redrawn immediately after a tap — openCheckout calls showDesk() on the next line — and the
        send is still in flight at that point, so a saved front desk shown as it stood would repaint
        the deer that was just handed over as still waiting. wrote() makes that next screen fetch. */
     wrote();
     save(); flush();
+    return id;   // v149: so a form can wait for it to land
   }
   // Blank is allowed (not every deer is weighed at the door); otherwise 0 to 500 lb, as the backend rules.
   const weightOk = w => String(w == null ? '' : w).trim() === '' || (Number(w) >= 0 && Number(w) <= 500);
@@ -370,8 +447,10 @@
   async function flush() {
     if (flushing || !st.pin) return;
     flushing = true;
+    let broke = false; const tried = {};
     try {
       for (const it of st.outbox.slice()) {
+        tried[it.clientId] = 1;
         if (it.error) continue;
         if (it.by && it.by !== st.number) continue;   // someone else's entry (or demo vs real): it waits for them to sign in here again
         try {
@@ -380,19 +459,26 @@
           if (it.action === 'intake' && out && out.band && band(out.band) !== band((it.fields || {}).band)) rebanded(it, band(out.band));
           st.outbox = st.outbox.filter(x => x.clientId !== it.clientId);
           busyN = 0;
+          if (waiters[it.clientId]) { const w = waiters[it.clientId]; delete waiters[it.clientId]; w.res(out); }   // v149
         } catch (e) {
           if (e.fatal) {
             it.error = e.message;
+            // v149: a form is waiting on this one and shows the refusal itself, where the finger is.
+            if (waiters[it.clientId]) { const w = waiters[it.clientId]; delete waiters[it.clientId]; save(); w.rej(e); continue; }
             /* v117: said where it will be seen. The refusal used to appear only in the strip at
                the top of the screen, which is off the top of a phone the moment the board is
                scrolled, so a check-in could sit refused with nobody the wiser. */
             toast((it.label || it.action) + ' was not accepted: ' + e.message + ' It is at the top of the screen to put right.');
-          } else { if (e.busy) busyAgain(); break; }
+          } else { if (e.busy) busyAgain(); if (waiters[it.clientId] && waiters[it.clientId].onHeld) waiters[it.clientId].onHeld(); broke = true; break; }
         }
         save();
       }
       if (!st.outbox.some(x => !x.error && (!x.by || x.by === st.number))) await refresh(true);
-    } finally { flushing = false; status(); setTimeout(flushPhotos, 0); }
+    } finally {
+      flushing = false; status(); setTimeout(flushPhotos, 0);
+      // v149: something queued while this pass was running was not in it. Send it now, not at the next poll.
+      if (!broke && st.outbox.some(x => !x.error && !tried[x.clientId] && (!x.by || x.by === st.number))) setTimeout(flush, 0);
+    }
   }
 
   /* ---------- tag photos: their own outbox (v105) ----------
@@ -2911,18 +2997,24 @@
           .catch(e => { btn.disabled = false; err(e.offline ? 'Needs signal to void a check-in.' : e.message); });
         return;
       }
+      /* v149: every action below is queued through q(), which darkens this button and blocks a
+         second tap BEFORE anything is sent, and the success message is held by say() until the
+         save has landed. */
+      const sent = []; let H = null, said = '';
+      const q = function () { if (!H) H = pressOn(document.getElementById('fok'), d.Band); const id = queue.apply(null, arguments); sent.push(id); return id; };
+      const say = m => { said = m; };
       if (kind === 'move') {
         const pick = document.querySelector('input[name="mv"]:checked');
         if (!pick) return err('Choose where it went.');
-        queue('move', { band: d.Band, to: pick.value }, 'Move ' + d.Band + ' to ' + pick.value);
-        toast((d['Hunter name'] || d.Band) + ' moved to ' + pick.value + '.', true);
+        q('move', { band: d.Band, to: pick.value }, 'Move ' + d.Band + ' to ' + pick.value);
+        say((d['Hunter name'] || d.Band) + ' moved to ' + pick.value + '.', true);
       }
       if (kind === 'skin') {
         const lugK = skinLugAsked(err); if (!lugK) return;
         const who = isMgr() ? v('sk') : st.staff.number;
         const wn = ((st.home.staff || []).find(x => x.number === who) || st.staff).name;
-        queue('skinbegin', { band: d.Band, skinner: who, skinnerName: wn, lug: lugK }, 'Skinning ' + d.Band);
-        toast('Skinning ' + d.Band + ' in lug ' + ('0' + lugK).slice(-2) + '. Tap Finished skinning when it is done.', true);
+        q('skinbegin', { band: d.Band, skinner: who, skinnerName: wn, lug: lugK }, 'Skinning ' + d.Band);
+        say('Skinning started, band ' + d.Band + ', lug ' + ('0' + lugK).slice(-2) + '. Tap Finished skinning when it is done.', true);
       }
       if (kind === 'skindone') {
         if (!document.getElementById('k1').checked) return err('Skin it and remove the head inside MHU #1, then check the box.');
@@ -2933,32 +3025,32 @@
         const lugK = skinLugAsked(err); if (!lugK) return;
         const who = isMgr() ? v('sk') : st.staff.number;
         const wn = ((st.home.staff || []).find(x => x.number === who) || st.staff).name;
-        queue('skin', { band: d.Band, skinner: who, skinnerName: wn, antimicrobial: true, lug: lugK, weight: v('kw') }, 'Skin ' + d.Band);
+        q('skin', { band: d.Band, skinner: who, skinnerName: wn, antimicrobial: true, lug: lugK, weight: v('kw') }, 'Skin ' + d.Band);
       }
       if (kind === 'cw') {
         const cw = num(v('cwv'));
         if (!(cw > 0)) return err('Enter the carcass weight.');
         if (cw < 15 || cw > 250) return err(v('cwv') + ' lb is outside the range a deer carcass falls in (15–250 lb). Check the scale.');
         if (cw === num(d['Carcass weight (lb)'])) return err('That is the weight already on the record.');
-        queue('carcassweight', { band: d.Band, weight: v('cwv') }, 'Carcass weight ' + d.Band);
-        toast(d.Band + ': carcass weight ' + cw + ' lb.', true);
+        q('carcassweight', { band: d.Band, weight: v('cwv') }, 'Carcass weight ' + d.Band);
+        say(d.Band + ': carcass weight ' + cw + ' lb.', true);
       }
       if (kind === 'recharge') {
-        queue('nocharge', { band: d.Band, charge: true }, 'Charge put back ' + d.Band);
-        toast('The charge is back on ' + d.Band + '.', true);
+        q('nocharge', { band: d.Band, charge: true }, 'Charge put back ' + d.Band);
+        say('The charge is back on ' + d.Band + '.', true);
       }
       if (kind === 'pay' && (document.getElementById('pnc') || {}).checked) {
         const why = v('pncw').trim();
         if (!why) return err('Say why there is no charge.');
-        queue('nocharge', { band: d.Band, reason: why }, 'No charge ' + d.Band);
-        toast(d.Band + ' is marked no charge.', true);
+        q('nocharge', { band: d.Band, reason: why }, 'No charge ' + d.Band);
+        say(d.Band + ' is marked no charge.', true);
       } else if (kind === 'pay') {
         const m = v('pm2'), amt = Number(v('pa2'));
         if (!m) return err('Choose how they paid.');
         if (!(amt > 0)) return err('Enter the amount taken.');
         if (owe && amt > owe.owing + 0.005) return err('That is more than the $' + owe.owing + ' owing.');
-        queue('paydeer', { band: d.Band, method: m, amount: amt }, 'Payment ' + d.Band);
-        toast('$' + amt + ' recorded against ' + d.Band + '.', true);
+        q('paydeer', { band: d.Band, method: m, amount: amt }, 'Payment ' + d.Band);
+        say('$' + amt + ' recorded against ' + d.Band + '.', true);
       }
       if (kind === 'start') {
         /* The one hard block on this screen. Priority, below, is a judgement the person at the
@@ -2999,7 +3091,7 @@
           '\n\nStart ' + d.Band + ' anyway? This is recorded.')) {
           return err('Start ' + ahead[0].Band + ' instead, or confirm the override.');
         }
-        queue('start', { band: d.Band, processor: p, processorName: pn, weight: naW ? 'N/A' : v('f1'), notWeighed: naW, confirmationChecked: true, skinned: true, antimicrobial: true, ack: ahead.length > 0, lug: lugS,
+        q('start', { band: d.Band, processor: p, processorName: pn, weight: naW ? 'N/A' : v('f1'), notWeighed: naW, confirmationChecked: true, skinned: true, antimicrobial: true, ack: ahead.length > 0, lug: lugS,
           // v124: only when the deer was skinned here and now. One already skinned keeps its skinner.
           skinner: skWho, skinnerName: skName,
           unpaidReason: (owe && !owe.settled) ? v('fup').trim() : '' }, 'Start ' + d.Band);
@@ -3023,7 +3115,7 @@
             ? 'Which lug did the trim go into? Read the number off the side of it.'
             : 'There is no lug ' + esc(v('flug').trim()) + '. The lugs are numbered 1 to ' + maxLug + '.');
         }
-        queue('finish', { band: d.Band, groundPackages: c.pk, lastPack: byLast ? Math.round(num(v('f1'))) : '', intactPackages: ip, intactLb: c.il, total: c.total, allergen: true, woundTrim: true, trim: num(v('f4')), lug: lug, grinderCleared: d.Type === 'Private', noPork: !!(document.getElementById('f7') || {}).checked }, 'Finish ' + d.Band);
+        q('finish', { band: d.Band, groundPackages: c.pk, lastPack: byLast ? Math.round(num(v('f1'))) : '', intactPackages: ip, intactLb: c.il, total: c.total, allergen: true, woundTrim: true, trim: num(v('f4')), lug: lug, grinderCleared: d.Type === 'Private', noPork: !!(document.getElementById('f7') || {}).checked }, 'Finish ' + d.Band);
       }
       if (kind === 'release') {
         const to = v('f1') === 'other' ? v('f3').trim() : v('f1');
@@ -3037,9 +3129,30 @@
           if (pay.paid === '' || !(Number(pay.paid) >= 0)) return err('Enter the amount collected.');
           if (Number(pay.paid) !== owe.owing && !pay.payNote) return err('That isn\'t the $' + owe.owing + ' owing. Say why in the note.');
         }
-        queue('release', Object.assign({ band: d.Band, to, pounds: v('f2') }, pay), 'Release ' + d.Band);
+        q('release', Object.assign({ band: d.Band, to, pounds: v('f2') }, pay), 'Release ' + d.Band);
       }
-      (after || showBoard)();
+      const go = after || showBoard;
+      if (!H) return go();
+      const msg = said || ({ skindone: 'Skinning finished', start: 'Processing started', finish: 'Processing finished', release: 'Released' }[kind] || 'Saved') + ', band ' + d.Band + '.';
+      let moved = false;
+      const moveOn = () => { if (moved) return; moved = true; sent.forEach(id => { delete waiters[id]; }); pressOff(H, false); go(); };
+      /* No answer: offline, busy, or 20 seconds gone. The action stays queued and is sent again on
+         its own, so say so and carry on, as the app always has without signal. */
+      const held = () => { if (moved || H.held) return; H.held = true; H.say('No signal? It will retry.');
+        setTimeout(() => { if (!moved) { toast(msg + ' It will send when there is signal.', true); moveOn(); } }, 1500); };
+      H.onStall = held;
+      Promise.all(sent.map(id => whenLanded(id, held))).then(() => {
+        if (moved) return;
+        H.tick(); toast(msg, true);
+        setTimeout(moveOn, TICK_MS);
+      }, e => {
+        if (moved) return; moved = true;
+        // Refused: nothing was saved. Take it out of the queue and put the button back, with the reason beside it.
+        st.outbox = st.outbox.filter(x => sent.indexOf(x.clientId) < 0); save(); status();
+        sent.forEach(id => { delete waiters[id]; });
+        pressOff(H, false);
+        err(e.message);
+      });
     };
   }
 

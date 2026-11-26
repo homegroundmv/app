@@ -66,6 +66,13 @@
      eats a tap — pointer-events stay off. */
   #toast { position: fixed; left: 12px; right: 12px; bottom: 16px; z-index: 60; pointer-events: none; }
   #toast:empty { display: none; }
+  /* v149: a button that has been tapped and is saving, and one that has saved. */
+  .pressing, .pressing:disabled { filter: brightness(.7); opacity: 1; cursor: progress; }
+  .spin { display: inline-block; width: 1em; height: 1em; margin-right: .5em; vertical-align: -.15em; border: .16em solid currentColor; border-right-color: transparent; border-radius: 50%; animation: hgspin .7s linear infinite; }
+  @keyframes hgspin { to { transform: rotate(360deg); } }
+  .pressed, .pressed:disabled { background: #1f8a3b !important; color: #fff !important; border-color: #1f8a3b !important; opacity: 1; filter: none; }
+  .tick { margin-right: .4em; font-weight: 800; }
+  [data-band].saving button:not(.pressing):not(.pressed) { opacity: .45; }
   #toast .note { margin: 0; box-shadow: 0 6px 24px rgba(0, 0, 0, .28); }
   /* "A newer version is ready." Same corner as the toast and for the same reason: the person is
      told where they already are. It used to be a banner at the top with a scroll to match, which
