@@ -4153,8 +4153,11 @@
       if (tagLost && scrShot) enqueuePhoto(b, 'screen', scrShot);
       /* The hunter roster is cached for six hours, which is fine for a hunter who was here last
          week and useless for the one standing in front of you with a second deer. A check-in is
-         exactly the event that makes the cache wrong, so refresh it on the spot. */
-      loadHunters(true).catch(() => {});
+         exactly the event that makes the cache wrong. Until v150 it was downloaded again right
+         here, at the door, beside the check-in itself, Home and the tag photo. Now it is marked
+         out of date, and the check-in form (the only thing that reads it) fetches it when it
+         next opens, so the second deer's form still gets him. */
+      st.hunters.at = 0;
       /* Paying is a separate transaction from the deer and is never a condition of taking it in.
          The charge is raised by the check-in itself, so an unpaid deer is a row on the Cold
          storage screen rather than an argument at the counter. This only fires when they paid
