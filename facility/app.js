@@ -171,6 +171,7 @@
      later is slow-but-correct rather than fast-but-wrong. */
   // v144: the print queue's own traffic changes nothing a saved screen shows, so it does not put them out of date.
   const PRINT_ACTIONS = ['queueprint', 'nextprint', 'printdone', 'printfail', 'stationbeat', 'stationset', 'printpending', 'printqueue', 'printclear', 'printreprint'];
+  const OPENS_THREAD = ['thread', 'dropthread', 'deerthread', 'hunterthread'];
   const CACHEABLE = ['desk', 'fees', 'oncall', 'drops', 'priority', 'martin', 'records', 'ssop',
     'stats', 'team', 'shifts', 'shiftlog', 'supplies', 'threads', 'status', 'sensors',
     'donations', 'tocollect', 'temprecord', 'deeredits', 'hunters'];
@@ -394,7 +395,12 @@
     /* Anything that writes puts every saved screen out of date. A forfeit, a release, a payment —
        any of them can change a screen somewhere else, and working out which would be a list nobody
        maintains. Until v136 this threw the lot away; see wrote() for what it does now and why. */
-    else if (body && body.action && body.action !== 'login' && body.action !== 'home' && body.action !== 'tagimg' && PRINT_ACTIONS.indexOf(body.action) < 0) wrote();
+    /* v150: only what writes. A read used to count as a write here unless it was one of four
+       named ones, so a search of the board, opening the check-in form or looking at a deer's
+       photos threw away the saved copy of the next screen, which then sat on "Loading" for a
+       round trip. Opening a conversation still counts (OPENS_THREAD): it marks messages read,
+       which changes the unread counts other screens show. */
+    else if (body && body.action && (READS.indexOf(body.action) < 0 || OPENS_THREAD.indexOf(body.action) >= 0) && PRINT_ACTIONS.indexOf(body.action) < 0) wrote();
     return out;
   }
 
