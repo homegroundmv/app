@@ -3,7 +3,9 @@
 const VERSION = 'hg-facility-v149';
 const ICON = 'icon-192.png';
 const SHELL = ['./', 'index.html', 'app.js', 'core.js', 'push.js', 'config.js', 'manifest.webmanifest',
-  'logo.png', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png', 'qr.js'];
+  'logo.png', 'icon-192.png', 'apple-touch-icon.png', 'qr.js'];
+// v150: icon-512.png is not in the set. Only the manifest names it, the browser fetches it when the
+// app is installed, and every release was making every phone download its 95 KB again.
 
 /* A new version is saved as a complete set or not at all: addAll() fails if any one file fails or
    comes back as an error page, and the version already on the phone carries on. Each file is
