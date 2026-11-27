@@ -110,7 +110,15 @@
   // Check-ins the server recorded under a different band (v116, see rebanded()). Kept a week.
   st.reband = (st.reband || []).filter(r => Date.now() - (r.landed || 0) < 7 * 864e5);
   st.hunters = st.hunters || { at: 0, list: [] };
-  function save() { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { /* keep in memory */ } }
+  /* v150. Several save() calls in one run of code are written once. One deer action called this
+     five or six times in a row, each a full copy of everything the app holds (Home, the roster,
+     the saved screens, the outbox) turned to text and written to the phone. The write happens as
+     soon as the code that asked for it finishes, before the browser does anything else, so
+     nothing that was saved before can now be lost: the outbox included. */
+  let savePending = false;
+  function saveNow() { savePending = false; try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { /* keep in memory */ } }
+  function save() { if (savePending) return; savePending = true; Promise.resolve().then(saveNow); }
+  window.addEventListener('pagehide', () => { if (savePending) saveNow(); });
   save();
   /* v119. Used only until the server's settings arrive. These are the backend's own fallbacks (backend 97), which are the
      values the Settings tab is seeded with: the app said 30 deer in the cooler and start by 72 hours where the backend
@@ -4934,16 +4942,24 @@
       box.innerHTML = (lastHtml || pending.length) ? lastHtml + pendHtml() : '<span class="status">No messages yet.</span>';
       box.scrollTop = box.scrollHeight;
     };
-    const draw = async () => {
+    /* v150: the ten-second reread (quiet) does not start while one is still out, and repaints
+       only when the conversation has changed. It used to rebuild the list and jump to the bottom
+       every ten seconds whether or not anything was new. */
+    let rereading = false;
+    const draw = async quiet => {
+      if (quiet && rereading) return;
+      rereading = true;
       try {
         const out = await call({ action: 'thread', channel: ch });
         const box = document.getElementById('msgs');
         if (!box) return stopThread();
         document.getElementById('th-title').textContent = out.label;
+        const was = lastHtml;
         lastHtml = out.messages.map(m => m.system ? '<p class="status center">' + esc(m.text) + '</p>'
           : '<div class="bubble ' + (m.mine ? 'mine' : 'theirs') + '">' + esc(m.text) + '<div class="meta">' + (m.mine ? 'You' : esc(m.from)) + ' · ' + esc(when(m.at)) + '</div></div>').join('');
-        paint();
+        if (!(quiet && lastHtml === was)) paint();
       } catch (e) { if (pending.length) return; const box = document.getElementById('msgs'); if (box) box.innerHTML = '<span class="status">' + esc(e.offline ? 'Messages need signal.' : e.message) + '</span>'; }
+      finally { rereading = false; }
     };
     const send = document.getElementById('send');
     send.onclick = () => {
@@ -4972,7 +4988,7 @@
       });
     };
     await draw();
-    threadTimer = setInterval(() => { if (!document.hidden && navigator.onLine) draw(); }, 10000);
+    threadTimer = setInterval(() => { if (!document.hidden && navigator.onLine) draw(true); }, 10000);
   }
 
   /* ---------- need help ---------- */
