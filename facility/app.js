@@ -516,7 +516,20 @@
   async function pAll() { try { return (await pTx('readonly', q => q.getAll())) || []; } catch (e) { return photoQ.slice(); } }
   async function pPut(it) { try { await pTx('readwrite', q => q.put(it)); } catch (e) { /* kept in memory */ } }
   async function pDel(id) { try { await pTx('readwrite', q => q.delete(id)); } catch (e) { /* ignore */ } }
+  /* v150. A deer's photo, kept for as long as the app stays open, so drawing its card again does
+     not fetch the same picture again (the card opens its tag photo by itself, and is redrawn
+     after every save and background refresh). Only a photo that came back is kept, never "no
+     photo", and a new photo for that deer drops what is held. The last dozen only. */
+  const tagImgs = {};
+  const tagImgKey = (b, kind) => band(b) + '|' + kind;
+  function tagImgKeep(b, kind, r) {
+    const keys = Object.keys(tagImgs);
+    if (keys.length >= 12) delete tagImgs[keys[0]];
+    tagImgs[tagImgKey(b, kind)] = r;
+  }
+  function tagImgDrop(b) { Object.keys(tagImgs).forEach(k => { if (k.indexOf(band(b) + '|') === 0) delete tagImgs[k]; }); }
   async function enqueuePhoto(b, kind, data) {
+    tagImgDrop(b);
     const it = { id: uid(), band: band(b), kind, data, by: st.number, created: Date.now() };
     for (const old of photoQ.filter(x => x.band === it.band && x.kind === kind)) await pDel(old.id);
     photoQ = photoQ.filter(x => !(x.band === it.band && x.kind === kind)).concat(it);
@@ -545,6 +558,7 @@
         try {
           const mv = rebandFor(it.band, it.created);   // v116: the photo follows its deer to the band it was recorded under
           await call({ action: 'tagphoto', band: mv ? mv.to : it.band, kind: it.kind, data: it.data, clientId: it.id });
+          tagImgDrop(mv ? mv.to : it.band);
           await pDel(it.id);
           photoQ = photoQ.filter(x => x.id !== it.id);
           if (before) toast('The ' + (it.kind === 'screen' ? 'phone photo' : 'tag photo') + ' for band ' + it.band + ' has saved now.', true);
@@ -660,9 +674,11 @@
     const out = (card && card.querySelector('.tagimg')) || box;
     const local = pendingPhoto(d.Band, kind);
     if (local) { out.innerHTML = '<img class="tagpic" alt="" src="' + local.data + '"><div class="status">Still sending.</div>'; return; }
-    out.innerHTML = '<div class="status">Loading the photo\u2026</div>';
+    const held = tagImgs[tagImgKey(d.Band, kind)];
+    if (!held) out.innerHTML = '<div class="status">Loading the photo\u2026</div>';
     try {
-      const r = await call({ action: 'tagimg', band: d.Band, kind });
+      const r = held || await call({ action: 'tagimg', band: d.Band, kind });
+      if (!held && !r.none) tagImgKeep(d.Band, kind, r);
       out.innerHTML = r.none ? '<div class="status">No photo on this deer.</div>'
         : '<img class="tagpic" alt="' + (kind === 'tag' ? 'Tag photo' : 'Hunter\u2019s phone') + '" src="data:' + esc(r.mime) + ';base64,' + r.data + '">';
     } catch (e) { out.innerHTML = '<div class="note warn">' + esc(e.offline ? 'The photo needs signal.' : e.message) + '</div>'; }
