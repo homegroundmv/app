@@ -457,7 +457,7 @@
   async function flush() {
     if (flushing || !st.pin) return;
     flushing = true;
-    let broke = false; const tried = {};
+    let broke = false, drawAfter = false; const tried = {};
     try {
       for (const it of st.outbox.slice()) {
         tried[it.clientId] = 1;
@@ -483,9 +483,13 @@
         }
         save();
       }
-      if (!st.outbox.some(x => !x.error && (!x.by || x.by === st.number))) await refresh(true);
+      /* v150: the refresh that follows is started once this pass has let go, not waited for inside
+         it. While it was waited for here, a save tapped in the meantime was not sent until that
+         whole Home request had come back, and its button said "Saving" for all of it. */
+      if (!st.outbox.some(x => !x.error && (!x.by || x.by === st.number))) drawAfter = true;
     } finally {
       flushing = false; status(); setTimeout(flushPhotos, 0);
+      if (drawAfter) refresh(true);
       // v149: something queued while this pass was running was not in it. Send it now, not at the next poll.
       if (!broke && st.outbox.some(x => !x.error && !tried[x.clientId] && (!x.by || x.by === st.number))) setTimeout(flush, 0);
     }
