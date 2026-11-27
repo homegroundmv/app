@@ -222,7 +222,11 @@
      An answer is dated by when it was ASKED for, not when it arrived. One that was already on its
      way when the write happened may or may not include it, so it counts as out of date. */
   let honestArmed = false, honestFor = '', wroteFrom = '';
+  /* v150: counts the writes, so a Home request can tell whether it was asked before or after the
+     latest one (see refresh). */
+  let wroteN = 0;
   function wrote() {
+    wroteN++;
     st.staleAt = Date.now();
     const sc = st.screens || {};
     Object.keys(sc).forEach(k => { if (sc[k].by === current) delete sc[k]; });
@@ -733,9 +737,38 @@
       }
     };
   }
-  async function refresh(quiet) {
+  /* v150. One Home request at a time.
+
+     Home was asked for twice at the same moment whenever the app opened, signed in or came back
+     to the front, and by two timers on Home and the board, each a full download of the board.
+     Now a second caller while one is in flight shares that one: it gets the same answer and the
+     same redraw. The exception is a request that was asked BEFORE the latest write: its answer
+     may not show that write, so a caller after the write gets a request of its own, exactly as
+     before, and an answer older than one already on the screen is dropped rather than drawn. */
+  let homeAsk = null, homeRun = null, homeShownN = -1, homeAskN = 0;
+  function askHome() {
+    if (homeAsk && homeAsk.wrote === wroteN) return homeAsk.p;
+    const mine = { wrote: wroteN, p: call({ action: 'home' }) };
+    homeAsk = mine;
+    const clear = () => { if (homeAsk === mine) homeAsk = null; };
+    mine.p.then(clear, clear);
+    return mine.p;
+  }
+  function refresh(quiet) {
+    if (homeRun && homeRun.wrote === wroteN) { if (!quiet) homeRun.loud = true; return homeRun.p; }
+    const run = { wrote: wroteN, loud: !quiet, n: ++homeAskN };
+    homeRun = run;
+    run.p = refreshNow(run);
+    const clear = () => { if (homeRun === run) homeRun = null; };
+    run.p.then(clear, clear);
+    return run.p;
+  }
+  async function refreshNow(run) {
     try {
-      const out = await call({ action: 'home' });
+      const out = await askHome();
+      const quiet = !run.loud;
+      if (run.n < homeShownN) return;   // a later request has already been drawn
+      homeShownN = run.n;
       /* If the facility has not changed since the last poll there is nothing to repaint, and
          repainting anyway is how a background refresh eats a tap for no gain at all. The outbox
          counts as part of the picture, because a queued action that has just landed changes what
@@ -748,7 +781,7 @@
       notifyNewAlerts();
     } catch (e) {
       if (e.fatal && /PIN|switched off/.test(e.message)) { signOut(e.message); return; }
-      if (!quiet) toast(e.message);
+      if (run.loud) toast(e.message);
     }
   }
   /* The hunter roster: name, MassWildlife customer ID, phone and mailing address for everyone the
@@ -1018,7 +1051,7 @@
     try {
       if (current === 'home' || current === 'board') { if (!flushing) await refresh(true); }
       else {
-        const out = await call({ action: 'home' });
+        const out = await askHome();   // v150: shared with a refresh already in flight
         if (st.staff && st.home) { st.home.unread = out.unread; st.home.hunterTexts = out.hunterTexts; save(); }
       }
       status();
@@ -1026,7 +1059,8 @@
     finally { countsBusy = false; paintMsgIcons(); }
   }
   window.__hgCounts = freshCounts;   // so a test can fire it without waiting a minute
-  setInterval(freshCounts, 60000);
+  // v150: on Home and the board the 45-second poll already brings the counts, so this one stands down there.
+  setInterval(() => { if (current !== 'home' && current !== 'board') freshCounts(); }, 60000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) freshCounts(); });
   window.addEventListener('pageshow', () => freshCounts());
   if (navigator.serviceWorker && navigator.serviceWorker.addEventListener)
