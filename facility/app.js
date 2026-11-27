@@ -4888,25 +4888,43 @@
   /* ---------- messages ---------- */
   /* v130 (backend 117): every hunter who has texted the line in the last three days, newest
      first, and which of them is waiting on us. Managers and intake. */
-  async function showHunterInbox() {
-    frame('hunterinbox', 'Messages from hunters', '<p class="status">Texts sent to the Home Ground line. A reply goes out from that number, never from your own. ' +
-      'A conversation stays with whoever started it, and the hunter’s texts go to that one person.</p>' +
+  /* v151 (backend 135): what kind of text it is. Drop-off, Hunter inquiry or Not a hunter. */
+  const CAT_WORD = { 'Drop-off': 'Drop-off', 'Hunter inquiry': 'Inquiry', 'Not a hunter': 'Not a hunter' };
+  const catPill = c => !CAT_WORD[c] ? '' : ' <span class="pill' + (c === 'Hunter inquiry' ? ' wait' : '') + '" data-cat="' + esc(c) + '"' +
+    (c === 'Not a hunter' ? ' style="background:#e9e9e6;color:#555"' : '') + '>' + CAT_WORD[c] + '</span>';
+  async function showHunterInbox(which) {
+    /* v151: two lists. Hunters is every conversation the line sorted as a drop-off or an
+       inquiry. Other messages is what it sorted as not from a hunter: nobody was notified, and
+       a text sorted wrong is moved from its conversation. Managers and intake. */
+    const other = which === 'other';
+    frame('hunterinbox', other ? 'Other messages' : 'Messages from hunters',
+      (atDoor() ? '<div class="row" id="hboxes" style="margin-bottom:10px"><button class="btn ' + (other ? 'ghost' : 'alt') + '" id="hbox-h">Hunters</button>' +
+        '<button class="btn ' + (other ? 'alt' : 'ghost') + '" id="hbox-o">Other messages</button></div>' : '') +
+      '<p class="status">' + (other ? 'Texts the line sorted as not from a hunter: vendors, landowners, press, wrong numbers, spam. Nobody was notified. ' +
+        'Open one to move it if it was sorted wrong.'
+        : 'Texts sent to the Home Ground line. A reply goes out from that number, never from your own. ' +
+      'A conversation stays with whoever started it, and the hunter’s texts go to that one person.') + '</p>' +
       '<div id="hbox" class="card"><span class="status">Loading…</span></div>');
+    const hh = document.getElementById('hbox-h'), ho = document.getElementById('hbox-o');
+    if (hh) hh.onclick = () => showHunterInbox();
+    if (ho) ho.onclick = () => showHunterInbox('other');
     const box = document.getElementById('hbox');
     try {
-      const out = await call({ action: 'hunterinbox' });
+      const out = await call(other ? { action: 'hunterinbox', box: 'other' } : { action: 'hunterinbox' });
+      if (ho && document.getElementById('hbox-o') === ho && out.others) ho.textContent = 'Other messages (' + out.others + ')';
       if (!document.getElementById('hbox')) return;
       box.innerHTML = out.threads.length ? out.threads.map((t, i) =>
         /* v135 (backend 123): by number for the people who see numbers; an owner who does not is
            sent his conversation's drop-off or deer instead. And whose it is. */
         '<button class="plain row-btn" ' + (t.phone ? 'data-hp="' + esc(t.phone) + '"' : t.drop ? 'data-hd="' + esc(t.drop) + '"' : 'data-hb="' + esc(t.band || '') + '"') +
         ' style="text-decoration:none;text-align:left;width:100%' + (i ? ';border-top:1px solid var(--line)' : '') + '">' +
-        '<b>' + esc(t.hunter || t.phone || 'A hunter') + '</b>' + (t.hunter && t.phone ? ' <span class="status">' + esc(t.phone) + '</span>' : '') +
+        '<b>' + esc(t.hunter || t.phone || (other ? 'Unknown number' : 'A hunter')) + '</b>' + (t.hunter && t.phone ? ' <span class="status">' + esc(t.phone) + '</span>' : '') +
+        catPill(t.cat) +
         (t.unanswered ? ' <span class="pill wait">' + (t.escalated ? 'still waiting' : 'needs a reply') + '</span>' : '') +
         (t.owner ? ' <span class="status" data-owner>· ' + (t.mine ? 'yours' : 'with ' + esc(t.owner)) + '</span>' : '') +
         '<br><span class="status">' + esc(t.last || '') + ' · ' + esc(t.minsAgo < 2 ? 'just now' : t.minsAgo < 90 ? t.minsAgo + ' min ago' : when(t.at)) + '</span></button>').join('')
-        : '<span class="status">No hunter has texted in the last ' + esc(Math.round((out.hours || 72) / 24)) + ' days.</span>';
-      box.querySelectorAll('[data-hp]').forEach(b => b.onclick = () => showDropTexts(b.dataset.hp, '', null, true));
+        : '<span class="status">' + (other ? 'Nothing sorted as “not a hunter” in the last ' : 'No hunter has texted in the last ') + esc(Math.round((out.hours || 72) / 24)) + ' days.</span>';
+      box.querySelectorAll('[data-hp]').forEach(b => b.onclick = () => showDropTexts(b.dataset.hp, '', null, other ? 'other' : true));
       box.querySelectorAll('[data-hd]').forEach(b => b.onclick = () => showDropTexts(b.dataset.hd));
       box.querySelectorAll('[data-hb]').forEach(b => b.onclick = () => showDropTexts(b.dataset.hb, '', () => showHunterInbox()));
     } catch (e) { box.innerHTML = '<span class="status">' + esc(e.offline ? 'Hunters’ messages need signal.' : e.message) + '</span>'; }
@@ -5069,7 +5087,7 @@
      ten seconds while it is open. "His reply text wasn't showing until I hit Home then went back
      to Text hunter." */
   async function showDropTexts(id, note, deerBack, byPhone) {
-    const back = () => (byPhone ? showHunterInbox() : deerBack ? deerBack() : showHome());
+    const back = () => (byPhone ? showHunterInbox(byPhone === 'other' ? 'other' : undefined) : deerBack ? deerBack() : showHome());
     const ask = () => call(byPhone ? { action: 'hunterthread', phone: id } : deerBack ? { action: 'deerthread', band: id } : { action: 'dropthread', id: id });
     frame(byPhone ? 'huntertexts' : deerBack ? 'deertexts' : 'droptexts', byPhone ? 'Message from a hunter' : deerBack ? 'Message hunter' : 'Text the hunter', '<div id="dtx"><p class="status">Loading the conversation…</p></div>', false, id);
     const box = document.getElementById('dtx');
@@ -5077,13 +5095,31 @@
     try { t = await ask(); }
     catch (e) { box.innerHTML = '<div class="note bad">' + esc(e.offline ? 'The conversation needs signal.' : e.message) + '</div>' +
       '<button class="btn ghost" id="dtback">Back</button>'; document.getElementById('dtback').onclick = back; return; }
+    /* v151 (backend 135): what the line took each of his texts for, and one tap to say
+       otherwise. Managers and intake get a button for each of the other two categories. */
+    const moveRow = (t, m) => m.dir !== 'in' || !CAT_WORD[m.cat] ? '' :
+      '<div class="dtcat" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px;align-items:center">' + catPill(m.cat) +
+      (m.movedBy ? '<span class="status">moved by ' + esc(m.movedBy) + '</span>' : '') +
+      (t.canMove && m.ref ? '<span class="status">Move to:</span>' + Object.keys(CAT_WORD).filter(c => c !== m.cat).map(c =>
+        '<button type="button" class="btn ghost" data-mv="' + esc(c) + '" data-ref="' + esc(m.ref) + '" data-was="' + esc(m.cat) + '" ' +
+        'style="padding:6px 12px;min-height:38px;font-size:14px;width:auto">' + CAT_WORD[c] + '</button>').join('') : '') + '</div>';
     const listHtml = t => (t.texts.length ? t.texts.map(m =>
       '<div class="dtmsg" data-dir="' + m.dir + '" style="margin:8px 0;display:flex;justify-content:' + (m.dir === 'out' ? 'flex-end' : 'flex-start') + '">' +
       '<div style="max-width:86%;padding:9px 12px;border-radius:12px;border:1px solid var(--line);background:' + (m.dir === 'out' ? 'var(--paper)' : '#fff') + '">' +
       '<div style="white-space:pre-wrap;word-break:break-word">' + esc(m.body) + '</div>' +
-      '<div class="status">' + esc(m.dir === 'out' ? (m.auto ? 'Sent automatically' : 'Sent by ' + (m.by || 'us')) : 'From the hunter') + ' · ' + esc(m.at) + '</div></div></div>').join('')
+      '<div class="status">' + esc(m.dir === 'out' ? (m.auto ? 'Sent automatically' : 'Sent by ' + (m.by || 'us')) : 'From the hunter') + ' · ' + esc(m.at) + '</div>' + moveRow(t, m) + '</div></div>').join('')
       : '<p class="status">No texts with this hunter in the last ' + (t.days ? esc(t.days) + ' days' : 'three days') + '.</p>');
-    const sig = t => (t.texts || []).length + '|' + (((t.texts || []).slice(-1)[0] || {}).at || '') + '|' + (((t.texts || []).slice(-1)[0] || {}).body || '');
+    const sig = t => (t.texts || []).length + '|' + (((t.texts || []).slice(-1)[0] || {}).at || '') + '|' + (((t.texts || []).slice(-1)[0] || {}).body || '') +
+      '|' + (t.texts || []).map(m => m.cat || '').join(',');   // v151: a text moved on another phone redraws the list
+    let remOpen = false, remHint = '';
+    const REM = [['hunter', 'Hunter'], ['non-hunter', 'Not a hunter'], ['blocked', 'Blocked'], ['staff', 'Staff']];
+    const lastRef = t => (((t.texts || []).filter(m => m.dir === 'in' && m.ref).pop()) || {}).ref || '';
+    const remHtml = t => !t.canMove || !lastRef(t) ? '' : remOpen
+      ? '<div class="card" id="dtrem"><b>Remember this number as…</b><div class="status">The next text from it is sorted by this. ' +
+        'Not a hunter and Blocked never raise a drop-off.</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">' +
+        REM.map(x => '<button type="button" class="btn ' + (x[0] === remHint ? 'alt' : 'ghost') + '" data-rem="' + x[0] + '" style="padding:8px 12px;min-height:40px;width:auto">' + x[1] + '</button>').join('') +
+        '<button type="button" class="plain" id="dtremno">Not now</button></div></div>'
+      : '<button class="btn ghost" id="dtremopen" style="width:100%;margin:0 0 8px">Remember this number as…</button>';
     let shown = '', marked = false;
     /* Is "Message received" worth offering: the people who answer hunters, a number to mark, and
        his text still waiting. By number the server says so; from a drop-off or a deer it is his
@@ -5101,6 +5137,7 @@
            nobody wonders why his texts are not reaching everyone. */
         (t.owner ? '<div class="status" id="dtowner">' + (t.mine ? 'This conversation is yours. Their texts come to you alone.'
           : esc(t.owner) + ' has this conversation. Their texts go to ' + esc(t.owner) + ' alone.') + '</div>' : '') +
+        (t.contact ? '<div class="status" id="dtcontact">Contacts has this number as <b>' + esc(t.contact.type) + '</b>' + (t.contact.by ? ', set by ' + esc(t.contact.by) : '') + '.</div>' : '') +
         '<div id="dtlist" style="margin-top:10px">' + listHtml(t) + '</div>' +
         '<div class="status" id="dtlive">New texts show here by themselves.</div></div>' +
         (said ? '<div class="note ok" id="dtsaid">' + esc(said) + '</div>' : '') +
@@ -5108,6 +5145,7 @@
            that says his text was read and needs no answer: nothing is sent, and the banner goes.
            It was a faint "No reply needed" on one of the three ways into this screen; it is a
            full button now, on all three, whenever his is the last word. */
+        remHtml(t) +
         (received(t) ? '<button class="btn alt" id="dtnone" style="width:100%;margin:0 0 8px">Message received<small style="display:block;font-weight:400">Conversation over. Nothing is sent to the hunter</small></button>' : '') +
         (t.canTake ? '<button class="btn alt" id="dttake" style="width:100%;margin:0 0 8px">Take over<small style="display:block;font-weight:400">Their texts come to you from now on. ' +
           esc(t.owner || 'The owner') + ' is told</small></button>' : '') +
@@ -5119,6 +5157,15 @@
           : '<div class="note warn" id="dtwhy">' + esc(t.why || 'A text cannot be sent to this hunter.') + '</div>') +
         '<button class="btn ghost" id="dtback" style="width:100%;margin-top:8px">Back</button>';
       document.getElementById('dtback').onclick = back;
+      const ro = document.getElementById('dtremopen'); if (ro) ro.onclick = () => { remOpen = true; remHint = ''; draw(t, ''); };
+      const rn = document.getElementById('dtremno'); if (rn) rn.onclick = () => { remOpen = false; draw(t, ''); };
+      box.querySelectorAll('[data-rem]').forEach(b => b.onclick = async () => {
+        try {
+          await call({ action: 'contactset', ref: lastRef(t), type: b.dataset.rem });
+          remOpen = false;
+          draw(await ask(), 'Remembered as ' + b.textContent.toLowerCase() + '. The next text from this number is sorted by that.');
+        } catch (e) { toast(e.offline ? 'Remembering a number needs signal.' : e.message); }
+      });
       const none = document.getElementById('dtnone');
       if (none) none.onclick = async () => {
         none.disabled = true;
@@ -5154,6 +5201,25 @@
       const list = document.getElementById('dtlist'); if (list && list.lastElementChild) list.lastElementChild.scrollIntoView({ block: 'nearest' });
     };
     draw(t, note || '');
+    /* v151: Move to. One listener on the screen, because the list of texts is drawn again every
+       ten seconds. call() gives the button its "Saving…" and refuses a second tap; after the
+       confirm the tap is handed back to it, since it only takes one from the last 600 ms. */
+    box.onclick = async e => {
+      const b = e.target && e.target.closest ? e.target.closest('[data-mv]') : null;
+      if (!b || b.dataset.pressing) return;
+      const to = b.dataset.mv, was = b.dataset.was;
+      if (was === 'Drop-off' && !confirm('Move this text out of Drop-off?\n\nIts open drop-off is released: closed as cancelled, with a note saying why. ' +
+        'Nothing is deleted, and nothing is texted to the sender.')) return;
+      lastTap = { el: b, at: Date.now() };
+      try {
+        const out = await call({ action: 'textmove', ref: b.dataset.ref, to: to });
+        remOpen = true; remHint = to === 'Not a hunter' ? 'non-hunter' : 'hunter';
+        draw(await ask(), 'Moved to ' + CAT_WORD[to] + '. ' + (to === 'Drop-off'
+          ? (out.raised ? 'A drop-off is raised and the team is told.' : 'This number already has an open drop-off.')
+          : out.released ? 'Its drop-off was released. Nothing was deleted.' : 'Nothing else changed.'));
+        refresh(true);
+      } catch (x) { toast(x.offline ? 'Moving a text needs signal.' : x.message); }
+    };
     /* Read it again every ten seconds while it is open. Only the list of texts is replaced, so a
        reply half typed is left alone. frame() stops this when the screen is left. */
     const mine = frameKey;
