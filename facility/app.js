@@ -768,9 +768,45 @@
      may not show that write, so a caller after the write gets a request of its own, exactly as
      before, and an answer older than one already on the screen is dropped rather than drawn. */
   let homeAsk = null, homeRun = null, homeShownN = -1, homeAskN = 0;
+  /* v150, with backend 134. Home is asked for lean: each deer comes without its blank fields (a
+     deer has a hundred columns and fills about eighteen) and `deerKeys` lists the fields once.
+     unpackHome() puts the blanks back, in the same order, before anything else sees the answer,
+     so st.home is exactly what the full answer would have been. `have` names the deer list this
+     phone already holds; when the list has not changed the backend leaves it out (deerSame) and
+     the held one is used. It is held in memory only, as text, so nothing the screens do to
+     st.home can alter it. A backend that knows none of this sends the full answer, which passes
+     through untouched. */
+  let leanHeld = null;
+  function unpackHome(out) {
+    if (!out || typeof out !== 'object') return out;
+    if (out.deerSame) {
+      if (!leanHeld || leanHeld.sig !== out.hsig) { const e = new Error('The deer list was not sent.'); e.resend = true; throw e; }
+      const k = JSON.parse(leanHeld.json); out.deer = k.deer; out.deerKeys = k.deerKeys;
+    } else if (out.hsig && Array.isArray(out.deer)) {
+      leanHeld = { sig: out.hsig, json: JSON.stringify({ deer: out.deer, deerKeys: out.deerKeys || null }) };
+    }
+    const keys = out.deerKeys;
+    if (Array.isArray(keys) && Array.isArray(out.deer)) out.deer = out.deer.map(d => {
+      const o = {};
+      keys.forEach(k => { o[k] = Object.prototype.hasOwnProperty.call(d, k) ? d[k] : ''; });
+      Object.keys(d).forEach(k => { if (!(k in o)) o[k] = d[k]; });
+      return o;
+    });
+    delete out.deerKeys; delete out.hsig; delete out.deerSame;
+    return out;
+  }
+  const homeCall = extra => call(Object.assign({ action: 'home', lean: 1 }, leanHeld ? { have: leanHeld.sig } : {}, extra || {}))
+    .then(unpackHome)
+    .catch(e => { if (!e || !e.resend) throw e; leanHeld = null; return call(Object.assign({ action: 'home', lean: 1 }, extra || {})).then(unpackHome); });
+  /* A Home answer that is already in hand (sign-in fetches one) is handed to the next refresh. */
+  function primeHome(out) {
+    const mine = { wrote: wroteN, p: Promise.resolve(out) };
+    homeAsk = mine;
+    setTimeout(() => { if (homeAsk === mine) homeAsk = null; }, 0);
+  }
   function askHome() {
     if (homeAsk && homeAsk.wrote === wroteN) return homeAsk.p;
-    const mine = { wrote: wroteN, p: call({ action: 'home' }) };
+    const mine = { wrote: wroteN, p: homeCall() };
     homeAsk = mine;
     const clear = () => { if (homeAsk === mine) homeAsk = null; };
     mine.p.then(clear, clear);
@@ -1336,7 +1372,7 @@
   }
   // The cached front desk goes too: on a shared iPad the next person must not open to the last
   // person's counter, however briefly, and the manager-only controls are drawn from it.
-  function signOut(msg) { st.pin = ''; st.staff = null; st.home = {}; st.deskCache = null; st.screens = {}; st.slow = null; save(); showLogin(msg);
+  function signOut(msg) { leanHeld = null; st.pin = ''; st.staff = null; st.home = {}; st.deskCache = null; st.screens = {}; st.slow = null; save(); showLogin(msg);
     badgeShown = 0; appBadge(0); }   // v143: nobody is signed in, so the app's icon carries no number
 
   function showLogin(msg) {
@@ -1350,7 +1386,16 @@
     const go = async () => {
       const btn = document.getElementById('go'); btn.disabled = true;
       st.number = document.getElementById('num').value.trim(); st.pin = document.getElementById('pin').value.trim();
-      try { const out = await call({ action: 'login' }); st.staff = out.staff; st.number = out.staff.number; dropContactUnlessCounter(true); save(); showHome(); refresh().then(() => { if (pendingBand) { const b = pendingBand; pendingBand = null; showDeer(b); } }); flush(); }
+      try {
+        /* v150: one request, not two. Home is asked for with the staff record login returns
+           (backend 134, `me`); a backend that does not send it is asked the old way. Either way
+           the Home answer already in hand is the one the first refresh uses. */
+        leanHeld = null;
+        const first = await homeCall({ withMe: 1 });
+        const me = first.me; delete first.me;
+        const out = me ? { staff: me } : await call({ action: 'login' });
+        primeHome(first);
+        st.staff = out.staff; st.number = out.staff.number; dropContactUnlessCounter(true); save(); showHome(); refresh().then(() => { if (pendingBand) { const b = pendingBand; pendingBand = null; showDeer(b); } }); flush(); }
       catch (e) { st.pin = ''; save(); showLogin(e.offline ? 'No signal. Sign-in needs a connection.' : e.message); }
     };
     document.getElementById('go').onclick = go;
