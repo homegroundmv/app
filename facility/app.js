@@ -925,6 +925,7 @@
      Home was rebuilt on every 45-second poll. sameAnswer() already left them out for the cached
      screens; the home poll did not. (The test stub sends no timing fields, which is how every
      suite missed it.) */
+  const money = n => '$' + (Math.round(n * 100) / 100);   // v150: one copy; four screens each had their own
   const sansTiming = o => { const c = Object.assign({}, o); delete c.ms; delete c.lockMs; delete c.fromCache; return c; };
   // Cheap, order-independent enough for "did anything change?", and far cheaper than diffing.
   const sigOf = o => { const s = JSON.stringify(o) || ''; let h = 5381;
@@ -3552,11 +3553,9 @@
     const inShotgun = iso => { const g = S().shotgun; return !!(g && g.from && g.to && iso && iso >= g.from && iso <= g.to); };
     const pyAsked = () => typeNow() === 'Donated' && (inShotgun(isoDate(new Date())) || inShotgun(v('sd')));
     /* v128: every hunter is asked, whatever the deer is here for (it was private deer and kept skulls only). */
-    const txtAsked = () => true;
     const syncTxt = () => {
       const box = document.getElementById('txtbox'); if (!box) return;
-      const show = txtAsked(); box.hidden = !show;
-      if (!show) document.getElementById('txtok').checked = false;
+      box.hidden = false;
     };
     const syncSkull = () => {
       const show = skullAsked();
@@ -4008,7 +4007,7 @@
       /* v114 (Joe, 16 November): the backend refuses a weight over 500 lb, and it refuses the whole
          check-in with it. Caught here, a slipped digit is fixed while the form is still open. */
       if (!weightOk(v('iw'))) return err('Check the weight: ' + v('iw') + ' lb is not a deer. Type it again, or leave it blank.');
-      const txtYes = txtAsked() && !!(document.getElementById('txtok') || {}).checked;
+      const txtYes = !!(document.getElementById('txtok') || {}).checked;
       if (txtYes && String(v('ph')).replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '').length !== 10) return err('He said yes to texts: enter his mobile number, or untick the box.');
       /* A tribal deer has no MassWildlife customer ID and no confirmation number: ticking the box
          hides and clears both. The two checks below used to demand them anyway, so a tribal deer
@@ -4642,7 +4641,6 @@
   }
   const shade = (n, max, past) => past ? '#E4DED2' : n >= max ? '#C0392B' : n === 0 ? '#EEF0E0' : n >= max - 1 ? '#E0A526' : ['#D3D8B0', '#B3BB80', '#8C9652', '#69722F'][Math.min(3, Math.floor((n - 1) * 4 / Math.max(1, max - 2)))];
 
-  const s2 = S;
   async function showShifts(data, msg, kind) {
     bookCss();
     if (kind) bookKind = kind === 'Skinning' ? 'Skinning' : 'Processing';
@@ -4695,7 +4693,7 @@
       (skinning ? 'skinners' : 'processors') + ' booked at the same moment' +
       (skinning ? ', and skinning places are separate from processing places' : '') +
       '. Cancel any time before you start. Clock in when you arrive.' +
-      (skinning ? ' Skinning is paid at $' + esc(nz(s2().skinRate, 25)) + ' a deer skinned.' : '') +
+      (skinning ? ' Skinning is paid at $' + esc(nz(S().skinRate, 25)) + ' a deer skinned.' : '') +
       '</div></div>' +
       '<div class="chips">' + data.days.map(d => {
         const peak = Math.max(0, ...d.counts);
@@ -4733,7 +4731,7 @@
       showShifts(out, { text: (bookKind === 'Skinning' ? 'Skinning booked: ' : 'Booked: ') + dayName(out.booked.date) + ', ' + t12(out.booked.start) + '–' + t12(out.booked.end) + '.' }, bookKind);
     });
     box.querySelectorAll('[data-day]').forEach(b => b.onclick = () => { bookDay = b.dataset.day; showShifts(data, null, bookKind); });
-    box.querySelectorAll('[data-cancel]').forEach(b => b.onclick = () => { if (confirmCancel()) go(b, { action: 'cancel', id: b.dataset.cancel }, out => showShifts(out, { text: 'Canceled.' }, out.kind)); });
+    box.querySelectorAll('[data-cancel]').forEach(b => b.onclick = () => { go(b, { action: 'cancel', id: b.dataset.cancel }, out => showShifts(out, { text: 'Canceled.' }, out.kind)); });
     const sugg = list => {
       const el = document.getElementById('bk-sugg'); if (!el) return;
       el.innerHTML = list && list.length ? '<div class="status" style="margin-top:8px">Open times the same length:</div>' + list.map((x, i) =>
@@ -4790,7 +4788,6 @@
     const cov = document.getElementById('bk-cover');
     if (cov) cov.onclick = () => go(cov, { action: 'cover', date: bookPick.date, start: bookPick.start, end: bookPick.end, kind: bookKind }, out => { cov.textContent = 'Sent to ' + out.sent + ' phone' + (out.sent === 1 ? '' : 's'); });
   }
-  const confirmCancel = () => true;
   /** Donated deer: reserve the next MassWildlife package number before grinding.
 
       This used to replace the whole form with a red box when it failed, which left Graham on
@@ -5391,7 +5388,6 @@
   function drawDesk(d, cachedAt) {
     frame('desk', 'Front desk', '<div id="dk"></div>');
     const box = document.getElementById('dk');
-    const money = n => '$' + (Math.round(n * 100) / 100);
 
     const row = x => {
       const tone = x.forfeitDue ? 'bad' : x.overdue ? 'warn' : '';
@@ -5513,7 +5509,6 @@
   function openCheckout(band, d) {
     const x = d.collect.filter(r => r.band === band)[0];
     if (!x) return;
-    const money = n => '$' + (Math.round(n * 100) / 100);
     const ob = document.getElementById('outbox');
     const owes = !x.waived && x.owing > 0;
     const priv = x.kind === 'private';
@@ -5620,7 +5615,6 @@
     try { d = await call({ action: 'fees' }); }
     catch (e) { document.getElementById('fb').innerHTML = '<div class="note bad">' + esc(e.offline ? 'Needs signal.' : e.message) + '</div>'; return; }
     const box = document.getElementById('fb');
-    const money = n => '$' + (Math.round(n * 100) / 100);
     const row = x => {
       const tone = x.forfeitDue ? 'bad' : x.overdue ? 'warn' : '';
       const state = x.waived ? 'free — donated this season'
@@ -5672,7 +5666,6 @@
     const x = d.deer.filter(r => r.band === band)[0];
     if (!x) return;
     const ab = document.getElementById('actbox');
-    const money = n => '$' + (Math.round(n * 100) / 100);
     ab.innerHTML = '<div class="card"><b>' + esc(band) + '</b> · ' + esc(x.hunter || 'no name') +
       '<div class="status">In ' + x.daysHeld + ' days. ' +
       (x.waived ? 'Free: they donated this season.' : money(x.owing) + ' owing of ' + money(x.due) + '.') +
