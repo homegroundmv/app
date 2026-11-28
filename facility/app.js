@@ -1031,7 +1031,7 @@
     // v135 (backend 123): a processor's own conversation is opened by its drop-off or its deer, never a number.
     else if (ht.unanswered === 1 && ht.drop) showDropTexts(ht.drop);
     else if (ht.unanswered === 1 && ht.band) showDropTexts(ht.band, '', () => showHome());
-    else showHunterInbox();
+    else showHunterInbox(ht.inquiry && ht.inquiry >= ht.unanswered ? 'inquiry' : undefined);
   });
   // Exposed so the tests can fire the 45-second poll's redraw without waiting 45 seconds for it.
   window.__hgRedraw = redraw;
@@ -1064,12 +1064,14 @@
   const SVG_HUNTER = '<svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true"><rect x="8" y="2" width="16" height="28" rx="3.5" fill="currentColor"/>' +
     '<rect x="10.5" y="6" width="11" height="17" rx="1" fill="#fff"/><rect x="12.5" y="9" width="7" height="2" rx="1" fill="currentColor"/>' +
     '<rect x="12.5" y="13" width="7" height="2" rx="1" fill="currentColor"/><rect x="12.5" y="17" width="4.5" height="2" rx="1" fill="currentColor"/><circle cx="16" cy="26.5" r="1.4" fill="#fff"/></svg>';
+  const SVG_INQUIRY = '<svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true"><path fill="currentColor" d="M6 3h20a4 4 0 0 1 4 4v13a4 4 0 0 1-4 4H15l-7 6v-6H6a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4z"/>' +
+    '<path fill="#fff" d="M16 6.5c-2.9 0-4.8 1.7-5 4.2h2.7c.1-1.1.9-1.8 2.2-1.8 1.2 0 2 .7 2 1.6 0 .8-.4 1.3-1.5 2-1.4.9-2 1.8-1.9 3.4v.6h2.6v-.5c0-.9.4-1.4 1.5-2.1 1.4-.9 2.2-2 2.2-3.5 0-2.3-1.9-3.9-4.8-3.9z"/><circle cx="16.2" cy="19.6" r="1.7" fill="#fff"/></svg>';
   function micoCss() {
     if (document.getElementById('mico-css')) return;
     const c = document.createElement('style'); c.id = 'mico-css';
     c.textContent = 'header.top .topmsg{margin-left:auto;display:flex;gap:6px;align-items:flex-start;flex:none}' +
       '.mico{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:54px;min-height:54px;padding:4px 4px 2px;border:0;border-radius:12px;background:transparent;font:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent}' +
-      '.mico.team{color:var(--green,#4B5320)}.mico.hunter{color:#B8600F}' +
+      '.mico.team{color:var(--green,#4B5320)}.mico.hunter{color:#B8600F}.mico.inquiry{color:#2B5F8A}' +
       '.mico .mword{font-size:11.5px;font-weight:700;line-height:1.1;margin-top:1px}' +
       '.mico .mbadge{position:absolute;top:0;right:2px;min-width:21px;height:21px;padding:0 5px;box-sizing:border-box;border-radius:11px;background:#B3261E;color:#fff;font-size:13px;font-weight:700;line-height:21px;text-align:center;box-shadow:0 0 0 2px var(--paper,#F9F6EE)}' +
       '.mico:active{background:rgba(0,0,0,.06)}';
@@ -1078,8 +1080,10 @@
   /** What each icon counts for the person signed in; null when that icon is not theirs to see. */
   const msgCounts = () => {
     const h = st.home || {}, ht = h.hunterTexts || null, n = v => Math.max(0, Math.round(Number(v) || 0));
-    if (!st.staff || isViewer()) return { team: null, hunter: null };
-    return { team: n(h.unread), hunter: atDoor() || (ht && ht.mine) ? n(ht && ht.unanswered) : null };
+    if (!st.staff || isViewer()) return { team: null, hunter: null, inquiry: null };
+    /* v152 (backend 136): Hunters is the drop-offs waiting, Inquiry the inquiries waiting. */
+    const see = atDoor() || (ht && ht.mine), q = Math.min(n(ht && ht.inquiry), n(ht && ht.unanswered));
+    return { team: n(h.unread), hunter: see ? n(ht && ht.unanswered) - q : null, inquiry: see ? q : null };
   };
   function msgIconsHtml() {
     micoCss();
@@ -1088,7 +1092,8 @@
       '<button type="button" class="mico ' + cls + '" id="' + id + '" aria-label="' + what + (n ? ': ' + n + ' ' + tail : '') + '">' + svg +
       (n ? '<span class="mbadge" data-n="' + n + '">' + (n > 9 ? '9+' : n) + '</span>' : '') + '<span class="mword">' + word + '</span></button>';
     return one('mico-team', 'team', c.team, 'Team', 'Team messages', 'unread', SVG_TEAM) +
-      one('mico-hunter', 'hunter', c.hunter, 'Hunters', 'Messages from hunters', 'waiting on a reply', SVG_HUNTER);
+      one('mico-hunter', 'hunter', c.hunter, 'Hunters', 'Messages from hunters', 'waiting on a reply', SVG_HUNTER) +
+      one('mico-inquiry', 'inquiry', c.inquiry, 'Inquiry', 'Hunter inquiries', 'waiting on a reply', SVG_INQUIRY);
   }
   /* The number on the app's own icon, where the phone has one: Android, Chrome on a computer, and
      an iPhone with the app on its Home Screen. The two counts together; cleared at nothing. */
@@ -1104,12 +1109,12 @@
   function paintMsgIcons() {
     const box = document.getElementById('topmsg');
     if (box) { const html = msgIconsHtml(); if (box.innerHTML !== html && box._h !== html) box.innerHTML = html; box._h = html; }
-    const c = msgCounts(), total = (c.team || 0) + (c.hunter || 0);
+    const c = msgCounts(), total = (c.team || 0) + (c.hunter || 0) + (c.inquiry || 0);
     if (total !== badgeShown) { badgeShown = total; appBadge(total); }
   }
   document.addEventListener('click', e => {
     const b = e.target && e.target.closest && e.target.closest('.mico'); if (!b) return;
-    if (b.id === 'mico-team') showMessages(); else if (b.id === 'mico-hunter') showHunterInbox();
+    if (b.id === 'mico-team') showMessages(); else if (b.id === 'mico-hunter') showHunterInbox(); else if (b.id === 'mico-inquiry') showHunterInbox('inquiry');
   });
   /* The counts are kept fresh on every screen: each minute while the app is open and showing, at
      once when a notification arrives, and at once when the app comes back to the front. Home and
@@ -4893,27 +4898,31 @@
   const catPill = c => !CAT_WORD[c] ? '' : ' <span class="pill' + (c === 'Hunter inquiry' ? ' wait' : '') + '" data-cat="' + esc(c) + '"' +
     (c === 'Not a hunter' ? ' style="background:#e9e9e6;color:#555"' : '') + '>' + CAT_WORD[c] + '</span>';
   async function showHunterInbox(which) {
-    /* v151: two lists. Hunters is every conversation the line sorted as a drop-off or an
-       inquiry. Other messages is what it sorted as not from a hunter: nobody was notified, and
-       a text sorted wrong is moved from its conversation. Managers and intake. */
-    const other = which === 'other';
-    frame('hunterinbox', other ? 'Other messages' : 'Messages from hunters',
-      (atDoor() ? '<div class="row" id="hboxes" style="margin-bottom:10px"><button class="btn ' + (other ? 'ghost' : 'alt') + '" id="hbox-h">Hunters</button>' +
-        '<button class="btn ' + (other ? 'alt' : 'ghost') + '" id="hbox-o">Other messages</button></div>' : '') +
+    /* v152: three lists, no tabs. Hunters (the icon) is every conversation the line sorted as
+       a drop-off. Inquiry (its own icon) is the hunters' questions. Other messages is what the
+       line sorted as not from a hunter: nobody was notified, and it is opened from the bottom
+       of Inquiry by managers and intake. */
+    const other = which === 'other', inq = which === 'inquiry';
+    frame('hunterinbox', other ? 'Other messages' : inq ? 'Inquiries' : 'Messages from hunters',
       '<p class="status">' + (other ? 'Texts the line sorted as not from a hunter: vendors, landowners, press, wrong numbers, spam. Nobody was notified. ' +
         'Open one to move it if it was sorted wrong.'
-        : 'Texts sent to the Home Ground line. A reply goes out from that number, never from your own. ' +
+        : (inq ? 'Questions hunters texted to the Home Ground line: hours, pickups, anything that is not a deer on its way. '
+          : 'Hunters who texted the Home Ground line about a deer coming in. ') + 'A reply goes out from that number, never from your own. ' +
       'A conversation stays with whoever started it, and the hunter’s texts go to that one person.') + '</p>' +
-      '<div id="hbox" class="card"><span class="status">Loading…</span></div>');
-    const hh = document.getElementById('hbox-h'), ho = document.getElementById('hbox-o');
-    if (hh) hh.onclick = () => showHunterInbox();
+      '<div id="hbox" class="card"><span class="status">Loading…</span></div>' +
+      (inq && atDoor() ? '<button class="plain" id="hbox-o" style="display:block;margin:14px auto 0;padding:10px">Other messages</button>' : '') +
+      (other ? '<button class="btn ghost" id="hbox-back" style="width:100%;margin-top:10px">Back to Inquiry</button>' : ''));
+    const ho = document.getElementById('hbox-o'), hb = document.getElementById('hbox-back');
     if (ho) ho.onclick = () => showHunterInbox('other');
+    if (hb) hb.onclick = () => showHunterInbox('inquiry');
     const box = document.getElementById('hbox');
     try {
       const out = await call(other ? { action: 'hunterinbox', box: 'other' } : { action: 'hunterinbox' });
       if (ho && document.getElementById('hbox-o') === ho && out.others) ho.textContent = 'Other messages (' + out.others + ')';
       if (!document.getElementById('hbox')) return;
-      box.innerHTML = out.threads.length ? out.threads.map((t, i) =>
+      // The backend sends drop-offs and inquiries together; each list keeps its own.
+      const list = other ? out.threads : out.threads.filter(t => (t.cat === 'Hunter inquiry') === inq);
+      box.innerHTML = list.length ? list.map((t, i) =>
         /* v135 (backend 123): by number for the people who see numbers; an owner who does not is
            sent his conversation's drop-off or deer instead. And whose it is. */
         '<button class="plain row-btn" ' + (t.phone ? 'data-hp="' + esc(t.phone) + '"' : t.drop ? 'data-hd="' + esc(t.drop) + '"' : 'data-hb="' + esc(t.band || '') + '"') +
@@ -4923,15 +4932,15 @@
         (t.unanswered ? ' <span class="pill wait">' + (t.escalated ? 'still waiting' : 'needs a reply') + '</span>' : '') +
         (t.owner ? ' <span class="status" data-owner>· ' + (t.mine ? 'yours' : 'with ' + esc(t.owner)) + '</span>' : '') +
         '<br><span class="status">' + esc(t.last || '') + ' · ' + esc(t.minsAgo < 2 ? 'just now' : t.minsAgo < 90 ? t.minsAgo + ' min ago' : when(t.at)) + '</span></button>').join('')
-        : '<span class="status">' + (other ? 'Nothing sorted as “not a hunter” in the last ' : 'No hunter has texted in the last ') + esc(Math.round((out.hours || 72) / 24)) + ' days.</span>';
-      box.querySelectorAll('[data-hp]').forEach(b => b.onclick = () => showDropTexts(b.dataset.hp, '', null, other ? 'other' : true));
+        : '<span class="status">' + (other ? 'Nothing sorted as “not a hunter” in the last ' : inq ? 'No hunter has texted a question in the last ' : 'No hunter has texted about a deer in the last ') + esc(Math.round((out.hours || 72) / 24)) + ' days.</span>';
+      box.querySelectorAll('[data-hp]').forEach(b => b.onclick = () => showDropTexts(b.dataset.hp, '', null, which || true));
       box.querySelectorAll('[data-hd]').forEach(b => b.onclick = () => showDropTexts(b.dataset.hd));
-      box.querySelectorAll('[data-hb]').forEach(b => b.onclick = () => showDropTexts(b.dataset.hb, '', () => showHunterInbox()));
+      box.querySelectorAll('[data-hb]').forEach(b => b.onclick = () => showDropTexts(b.dataset.hb, '', () => showHunterInbox(which)));
     } catch (e) { box.innerHTML = '<span class="status">' + esc(e.offline ? 'Hunters’ messages need signal.' : e.message) + '</span>'; }
   }
   async function showMessages() {
     frame('messages', 'Messages', (atDoor() || (st.home.hunterTexts || {}).mine ? '<button class="btn alt" id="tohunters" style="width:100%;margin-bottom:10px">Messages from hunters' +
-      ((st.home.hunterTexts || {}).unanswered ? ' (' + st.home.hunterTexts.unanswered + ' waiting)' : '') + '</button>' : '') +
+      (msgCounts().hunter ? ' (' + msgCounts().hunter + ' waiting)' : '') + '</button>' : '') +
       '<p class="status">Messages stay on the facility record. Keep them about the work.</p><div id="threads" class="card"><span class="status">Loading…</span></div>');
     const th = document.getElementById('tohunters'); if (th) th.onclick = () => showHunterInbox();
     const box = document.getElementById('threads');
@@ -5087,7 +5096,7 @@
      ten seconds while it is open. "His reply text wasn't showing until I hit Home then went back
      to Text hunter." */
   async function showDropTexts(id, note, deerBack, byPhone) {
-    const back = () => (byPhone ? showHunterInbox(byPhone === 'other' ? 'other' : undefined) : deerBack ? deerBack() : showHome());
+    const back = () => (byPhone ? showHunterInbox(byPhone === true ? undefined : byPhone) : deerBack ? deerBack() : showHome());
     const ask = () => call(byPhone ? { action: 'hunterthread', phone: id } : deerBack ? { action: 'deerthread', band: id } : { action: 'dropthread', id: id });
     frame(byPhone ? 'huntertexts' : deerBack ? 'deertexts' : 'droptexts', byPhone ? 'Message from a hunter' : deerBack ? 'Message hunter' : 'Text the hunter', '<div id="dtx"><p class="status">Loading the conversation…</p></div>', false, id);
     const box = document.getElementById('dtx');
